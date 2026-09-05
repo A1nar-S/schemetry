@@ -1,0 +1,46 @@
+# Rust
+/target/
+/src-tauri/target/
+**/*.rs.bk
+
+# Node / frontend
+node_modules/
+dist/
+src/dist/
+
+# Vite
+.vite/
+
+# Cargo
+Cargo.lock
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local config/secrets
+config.local.ini
+.env
+.env.*
+*.pem
+*.key
+
+# WebView2 runtime caches (if generated)
+**/*.WebView2/
+
+# Generated reports/exports (adjust if you want tracked)
+/reports/
+/output/
+
+# SQLite databases
+*.db
+src-tauri/gen/

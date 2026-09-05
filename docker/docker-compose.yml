@@ -1,0 +1,85 @@
+# Two independent Oracle instances used by the integration tests in
+# `src-tauri/tests/`. "source" is the reference schema; "target" is migrated with an
+# intentionally divergent schema so compare/fix logic has real discrepancies to find.
+#
+# Usage:
+#   cd docker
+#   docker compose up -d --build
+#   docker compose ps            # wait until both oracle-* services are "healthy"
+#   docker compose logs -f flyway-source flyway-target   # confirm migrations applied
+#
+# Teardown (drops the data volumes too):
+#   docker compose down -v
+
+services:
+  oracle-source:
+    image: gvenzl/oracle-free:23-slim-faststart
+    container_name: schemetry-oracle-source
+    environment:
+      ORACLE_PASSWORD: OracleTest_2024
+      APP_USER: SCHEMETRY
+      APP_USER_PASSWORD: SchemetryTest_2024
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle-source-data:/opt/oracle/oradata
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  oracle-target:
+    image: gvenzl/oracle-free:23-slim-faststart
+    container_name: schemetry-oracle-target
+    environment:
+      ORACLE_PASSWORD: OracleTest_2024
+      APP_USER: SCHEMETRY
+      APP_USER_PASSWORD: SchemetryTest_2024
+    ports:
+      - "1522:1521"
+    volumes:
+      - oracle-target-data:/opt/oracle/oradata
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  flyway-source:
+    build: ./flyway
+    container_name: schemetry-flyway-source
+    depends_on:
+      oracle-source:
+        condition: service_healthy
+    volumes:
+      - ./migrations/source:/flyway/sql
+    command: >
+      -url=jdbc:oracle:thin:@oracle-source:1521/FREEPDB1
+      -user=SCHEMETRY
+      -password=SchemetryTest_2024
+      -connectRetries=20
+      -locations=filesystem:/flyway/sql
+      migrate
+
+  flyway-target:
+    build: ./flyway
+    container_name: schemetry-flyway-target
+    depends_on:
+      oracle-target:
+        condition: service_healthy
+    volumes:
+      - ./migrations/target:/flyway/sql
+    command: >
+      -url=jdbc:oracle:thin:@oracle-target:1521/FREEPDB1
+      -user=SCHEMETRY
+      -password=SchemetryTest_2024
+      -connectRetries=20
+      -locations=filesystem:/flyway/sql
+      migrate
+
+volumes:
+  oracle-source-data:
+  oracle-target-data:

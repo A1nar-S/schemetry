@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <filter id="elevate" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#0b1f30" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+
+  <!-- Relationships -->
+  <g stroke="#b54f2e" stroke-width="9" stroke-linecap="round">
+    <line x1="256" y1="192" x2="167" y2="322"/>
+    <line x1="256" y1="192" x2="345" y2="322"/>
+  </g>
+  <g fill="#b54f2e">
+    <circle cx="256" cy="192" r="11"/>
+    <circle cx="167" cy="322" r="11"/>
+    <circle cx="345" cy="322" r="11"/>
+  </g>
+
+  <!-- Nodes -->
+  <rect x="181" y="92" width="150" height="100" rx="30" fill="#255f85" filter="url(#elevate)"/>
+  <rect x="92" y="322" width="150" height="100" rx="30" fill="#255f85" filter="url(#elevate)"/>
+  <rect x="270" y="322" width="150" height="100" rx="30" fill="#b54f2e" filter="url(#elevate)"/>
+</svg>

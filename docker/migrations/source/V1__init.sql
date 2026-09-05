@@ -1,0 +1,45 @@
+-- Reference schema used by the integration tests. The "target" migration
+-- (docker/migrations/target/V1__init.sql) intentionally diverges from this one:
+--   - it has no AUDIT_LOG table
+--   - EMPLOYEES has no EMAIL column
+--   - EMPLOYEES.FIRST_NAME is shorter (VARCHAR2(30) instead of VARCHAR2(50))
+-- so that schema-compare has real discrepancies to detect and fix.
+
+CREATE TABLE DEPARTMENTS (
+    DEPT_ID   NUMBER(6)    NOT NULL,
+    DEPT_NAME VARCHAR2(50) NOT NULL,
+    CONSTRAINT PK_DEPARTMENTS PRIMARY KEY (DEPT_ID)
+);
+
+COMMENT ON TABLE DEPARTMENTS IS 'Company departments';
+COMMENT ON COLUMN DEPARTMENTS.DEPT_NAME IS 'Department display name';
+
+CREATE TABLE EMPLOYEES (
+    EMP_ID     NUMBER(10)   NOT NULL,
+    FIRST_NAME VARCHAR2(50) NOT NULL,
+    LAST_NAME  VARCHAR2(50) NOT NULL,
+    EMAIL      VARCHAR2(100),
+    SALARY     NUMBER(10,2) DEFAULT 0,
+    DEPT_ID    NUMBER(6),
+    CONSTRAINT PK_EMPLOYEES PRIMARY KEY (EMP_ID),
+    CONSTRAINT FK_EMP_DEPT FOREIGN KEY (DEPT_ID) REFERENCES DEPARTMENTS (DEPT_ID)
+);
+
+COMMENT ON COLUMN EMPLOYEES.EMAIL IS 'Work email address';
+
+CREATE TABLE AUDIT_LOG (
+    LOG_ID     NUMBER(10)    NOT NULL,
+    ACTION     VARCHAR2(200) NOT NULL,
+    CREATED_AT DATE          DEFAULT SYSDATE,
+    CONSTRAINT PK_AUDIT_LOG PRIMARY KEY (LOG_ID)
+);
+
+INSERT INTO DEPARTMENTS (DEPT_ID, DEPT_NAME) VALUES (10, 'Engineering');
+INSERT INTO DEPARTMENTS (DEPT_ID, DEPT_NAME) VALUES (20, 'Sales');
+
+INSERT INTO EMPLOYEES (EMP_ID, FIRST_NAME, LAST_NAME, EMAIL, SALARY, DEPT_ID)
+VALUES (100, 'Ada', 'Lovelace', 'ada@schemetry.test', 9500.50, 10);
+INSERT INTO EMPLOYEES (EMP_ID, FIRST_NAME, LAST_NAME, EMAIL, SALARY, DEPT_ID)
+VALUES (101, 'Grace', 'Hopper', 'grace@schemetry.test', 9800.00, 10);
+
+COMMIT;
