@@ -3,15 +3,21 @@ export type SchemaObject = {
   object_type: string;
 };
 
+export type DbType = 'oracle' | 'postgres';
+
 export type ConnectionRecord = {
   id: number;
   name: string;
+  db_type: DbType;
   host: string;
   port: number;
+  /** Oracle: the service name (e.g. ORCL). Postgres: the database name. */
   service_name: string;
   username: string;
   password: string;
   group_name: string;
+  /** Postgres only: schema to introspect/target within `service_name`'s database. Empty means `public`. */
+  pg_schema?: string;
   password_broken?: boolean;
 };
 

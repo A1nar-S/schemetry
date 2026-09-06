@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -6,6 +6,26 @@ use serde::{Deserialize, Serialize};
 use crate::models::{ColumnInfo, Discrepancy, ServerTableDdls, ServersData, TableColumns};
 
 const NULL_TOKEN: &str = "#NULL#";
+
+/// Which SQL dialect a fix statement should be rendered in — determined by the
+/// *target* server's engine (the one the statement will run against), not the
+/// reference server's. Defaults to `Oracle` for a server this module can't identify
+/// (e.g. one that was renamed/removed since the compare ran), matching the app's only
+/// engine before Postgres support existed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Dialect {
+    #[default]
+    Oracle,
+    Postgres,
+}
+
+fn resolve_dialect(server_dialects: &HashMap<String, Dialect>, server: &str) -> Dialect {
+    server_dialects
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(server))
+        .map(|(_, d)| *d)
+        .unwrap_or_default()
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FixScriptResult {
@@ -475,6 +495,132 @@ fn build_comment_block(table: &str, column: &str, reference_col: &ColumnInfo) ->
     ))
 }
 
+// ── Postgres block builders ──────────────────────────────────────────────────
+//
+// Postgres has native `IF NOT EXISTS`/`CREATE OR REPLACE` support for almost every
+// statement shape below, so — unlike the Oracle builders above — most of these don't
+// need a hand-rolled existence-check guard at all.
+
+fn build_create_table_block_pg(table: &str, reference_table_ddl: &str) -> Option<String> {
+    let ddl = normalize_ddl_for_execute_immediate(reference_table_ddl)?;
+    Some(crate::repositories::postgres_repository::build_deploy_script("TABLE", table, &ddl))
+}
+
+fn build_create_table_from_columns_block_pg(table: &str, reference_columns: &TableColumns) -> Option<String> {
+    if reference_columns.is_empty() {
+        return None;
+    }
+
+    let mut column_names: Vec<&String> = reference_columns.keys().collect();
+    column_names.sort_unstable();
+
+    let mut definitions = Vec::with_capacity(column_names.len());
+    for column_name in &column_names {
+        let reference_col = reference_columns.get(*column_name)?;
+        definitions.push(build_column_definition_sql(column_name, reference_col)?);
+    }
+
+    let mut out = format!(
+        "CREATE TABLE IF NOT EXISTS {} ({});",
+        quoted_ident(table),
+        definitions.join(", ")
+    );
+
+    for column_name in &column_names {
+        let col = reference_columns.get(*column_name)?;
+        if let Some(comment) = col.comments.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            out.push_str(&format!(
+                "\nCOMMENT ON COLUMN {}.{} IS {};",
+                quoted_ident(table),
+                quoted_ident(column_name),
+                sql_literal(comment)
+            ));
+        }
+    }
+
+    let mut index_columns: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for column_name in &column_names {
+        let col = reference_columns.get(*column_name)?;
+        if let Some(idx) = col.index_name.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            index_columns.entry(idx.to_string()).or_default().push((*column_name).clone());
+        }
+    }
+    for (index_name, cols) in &index_columns {
+        let col_list = cols.iter().map(|c| quoted_ident(c)).collect::<Vec<_>>().join(", ");
+        out.push_str(&format!(
+            "\nCREATE INDEX IF NOT EXISTS {} ON {} ({});",
+            quoted_ident(index_name),
+            quoted_ident(table),
+            col_list
+        ));
+    }
+
+    Some(out)
+}
+
+fn build_add_column_block_pg(table: &str, column: &str, reference_col: &ColumnInfo) -> Option<String> {
+    let type_sql = desired_type_sql(reference_col)?;
+    let mut block = format!(
+        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}{};",
+        quoted_ident(table),
+        quoted_ident(column),
+        type_sql,
+        default_clause(reference_col)
+    );
+
+    if let Some(comment) = reference_col.comments.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        block.push_str(&format!(
+            "\nCOMMENT ON COLUMN {}.{} IS {};",
+            quoted_ident(table),
+            quoted_ident(column),
+            sql_literal(comment)
+        ));
+    }
+
+    Some(block)
+}
+
+/// Postgres has no conditional "only if the type actually differs" form, but
+/// `ALTER COLUMN ... TYPE` is itself safe to reissue (a no-op if already that type),
+/// so this — unlike the Oracle version — doesn't need a guard block.
+fn build_modify_type_block_pg(table: &str, column: &str, reference_col: &ColumnInfo) -> Option<String> {
+    let type_sql = desired_type_sql(reference_col)?;
+    Some(format!(
+        "ALTER TABLE {} ALTER COLUMN {} TYPE {} USING {}::{};",
+        quoted_ident(table),
+        quoted_ident(column),
+        type_sql,
+        quoted_ident(column),
+        type_sql
+    ))
+}
+
+fn build_default_block_pg(table: &str, column: &str, reference_col: &ColumnInfo) -> Option<String> {
+    Some(match desired_default_expr(reference_col) {
+        Some(expr) => format!(
+            "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {};",
+            quoted_ident(table),
+            quoted_ident(column),
+            expr
+        ),
+        None => format!(
+            "ALTER TABLE {} ALTER COLUMN {} DROP DEFAULT;",
+            quoted_ident(table),
+            quoted_ident(column)
+        ),
+    })
+}
+
+fn build_comment_block_pg(table: &str, column: &str, reference_col: &ColumnInfo) -> Option<String> {
+    let desired_comment = reference_col.comments.as_deref().map(str::trim).unwrap_or("");
+    Some(format!(
+        "COMMENT ON COLUMN {}.{} IS {};",
+        quoted_ident(table),
+        quoted_ident(column),
+        sql_literal(desired_comment)
+    ))
+}
+
 fn classify_skip_reason(kind: FixKind) -> &'static str {
     match kind {
         FixKind::IndexName => {
@@ -505,6 +651,7 @@ pub fn generate_fix_script(
     servers: &ServersData,
     server_table_ddls: &ServerTableDdls,
     reference_server: &str,
+    server_dialects: &HashMap<String, Dialect>,
 ) -> Result<FixScriptResult> {
     if selected_ids.is_empty() {
         return Err(anyhow!("Select at least one discrepancy first."));
@@ -572,6 +719,8 @@ pub fn generate_fix_script(
             continue;
         }
 
+        let dialect = resolve_dialect(server_dialects, &target_server);
+
         let block = match kind {
             FixKind::MissingTable => {
                 if row.server_name.eq_ignore_ascii_case(reference_server) {
@@ -588,9 +737,16 @@ pub fn generate_fix_script(
                     reference_server,
                     row.table_name.trim(),
                 ) {
-                    if let Some(block) = build_create_table_block(row.table_name.trim(), table_ddl) {
+                    let built = match dialect {
+                        Dialect::Oracle => build_create_table_block(row.table_name.trim(), table_ddl),
+                        Dialect::Postgres => build_create_table_block_pg(row.table_name.trim(), table_ddl),
+                    };
+                    if let Some(block) = built {
                         let suffix = find_reference_table_columns(servers, reference_server, row.table_name.trim())
-                            .map(|cols| build_comments_and_indexes_suffix(row.table_name.trim(), cols))
+                            .map(|cols| match dialect {
+                                Dialect::Oracle => build_comments_and_indexes_suffix(row.table_name.trim(), cols),
+                                Dialect::Postgres => String::new(),
+                            })
                             .unwrap_or_default();
                         Some(format!("{}{}", block, suffix))
                     } else {
@@ -608,9 +764,11 @@ pub fn generate_fix_script(
                             continue;
                         };
 
-                        let Some(fallback_block) =
-                            build_create_table_from_columns_block(row.table_name.trim(), reference_columns)
-                        else {
+                        let fallback_block = match dialect {
+                            Dialect::Oracle => build_create_table_from_columns_block(row.table_name.trim(), reference_columns),
+                            Dialect::Postgres => build_create_table_from_columns_block_pg(row.table_name.trim(), reference_columns),
+                        };
+                        let Some(fallback_block) = fallback_block else {
                             skipped_count += 1;
                             skipped_messages.push(format!(
                                 "#{}: failed to build fallback CREATE TABLE for {} from column metadata.",
@@ -621,7 +779,7 @@ pub fn generate_fix_script(
                         };
 
                         Some(format!(
-                            "-- Fallback: DBMS_METADATA DDL could not be normalized, using column metadata definition.\n{}",
+                            "-- Fallback: full DDL could not be normalized, using column metadata definition.\n{}",
                             fallback_block
                         ))
                     }
@@ -640,9 +798,11 @@ pub fn generate_fix_script(
                         continue;
                     };
 
-                    let Some(fallback_block) =
-                        build_create_table_from_columns_block(row.table_name.trim(), reference_columns)
-                    else {
+                    let fallback_block = match dialect {
+                        Dialect::Oracle => build_create_table_from_columns_block(row.table_name.trim(), reference_columns),
+                        Dialect::Postgres => build_create_table_from_columns_block_pg(row.table_name.trim(), reference_columns),
+                    };
+                    let Some(fallback_block) = fallback_block else {
                         skipped_count += 1;
                         skipped_messages.push(format!(
                             "#{}: failed to build fallback CREATE TABLE for {} from column metadata.",
@@ -653,7 +813,7 @@ pub fn generate_fix_script(
                     };
 
                     Some(format!(
-                        "-- Fallback: DBMS_METADATA DDL unavailable, using column metadata definition.\n{}",
+                        "-- Fallback: full DDL unavailable, using column metadata definition.\n{}",
                         fallback_block
                     ))
                 }
@@ -674,7 +834,10 @@ pub fn generate_fix_script(
                     ));
                     continue;
                 };
-                build_add_column_block(row.table_name.trim(), row.column_name.trim(), reference_col)
+                match dialect {
+                    Dialect::Oracle => build_add_column_block(row.table_name.trim(), row.column_name.trim(), reference_col),
+                    Dialect::Postgres => build_add_column_block_pg(row.table_name.trim(), row.column_name.trim(), reference_col),
+                }
             }
             FixKind::DataType | FixKind::DataLength => {
                 let Some(reference_col) = find_reference_column(
@@ -692,7 +855,10 @@ pub fn generate_fix_script(
                     ));
                     continue;
                 };
-                build_modify_type_block(row.table_name.trim(), row.column_name.trim(), reference_col)
+                match dialect {
+                    Dialect::Oracle => build_modify_type_block(row.table_name.trim(), row.column_name.trim(), reference_col),
+                    Dialect::Postgres => build_modify_type_block_pg(row.table_name.trim(), row.column_name.trim(), reference_col),
+                }
             }
             FixKind::DataDefault => {
                 let Some(reference_col) = find_reference_column(
@@ -710,7 +876,10 @@ pub fn generate_fix_script(
                     ));
                     continue;
                 };
-                build_default_block(row.table_name.trim(), row.column_name.trim(), reference_col)
+                match dialect {
+                    Dialect::Oracle => build_default_block(row.table_name.trim(), row.column_name.trim(), reference_col),
+                    Dialect::Postgres => build_default_block_pg(row.table_name.trim(), row.column_name.trim(), reference_col),
+                }
             }
             FixKind::Comments => {
                 let Some(reference_col) = find_reference_column(
@@ -728,7 +897,10 @@ pub fn generate_fix_script(
                     ));
                     continue;
                 };
-                build_comment_block(row.table_name.trim(), row.column_name.trim(), reference_col)
+                match dialect {
+                    Dialect::Oracle => build_comment_block(row.table_name.trim(), row.column_name.trim(), reference_col),
+                    Dialect::Postgres => build_comment_block_pg(row.table_name.trim(), row.column_name.trim(), reference_col),
+                }
             }
             _ => None,
         };

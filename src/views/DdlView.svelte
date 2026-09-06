@@ -25,7 +25,10 @@
   let showSaveModal = false;
   let saveDescription = '';
 
-  $: schema = connections.find(c => c.name === $selectedServer)?.username ?? '';
+  $: activeConnection = connections.find(c => c.name === $selectedServer);
+  $: schema = activeConnection?.db_type === 'postgres'
+    ? (activeConnection.pg_schema?.trim() || 'public')
+    : (activeConnection?.username ?? '');
 
   function openSaveModal() {
     saveDescription = '';
@@ -52,6 +55,7 @@
         object_type: obj.object_type,
         ddl,
         description: saveDescription.trim(),
+        db_type: activeConnection?.db_type ?? 'oracle',
       });
       const paths = [result.code_path, result.migration_path].filter((p): p is string => !!p);
       const folder = (paths[0] ?? '').replace(/[/\\][^/\\]+$/, '');
@@ -304,7 +308,7 @@
           {#if ddlLoading}
             <div class="empty-state">Generating DDL…</div>
           {:else if $generatedDdl}
-            <SqlEditor value={$generatedDdl} readonly height="100%" />
+            <SqlEditor value={$generatedDdl} dialect={activeConnection?.db_type ?? 'oracle'} readonly height="100%" />
           {/if}
         {:else}
           <div class="empty-state">Select an object from the list to generate its raw DDL. The idempotent migration script is produced when you save to the folder.</div>

@@ -67,6 +67,13 @@
     selectedServers.set(new Set());
   }
 
+  // Dialect for the editor: the active/first-selected server's engine. Mixed-engine
+  // selections just highlight for whichever one happens to be picked first.
+  $: queryDialect = (
+    connections.find(c => c.name === $activeServer)
+    ?? connections.find(c => $selectedServers.has(c.name))
+  )?.db_type ?? 'oracle';
+
   // ── VirtualTable data ─────────────────────────────────────────────
   $: activeResult = $results.find(r => r.server_name === $activeServer);
   $: singleView = $exportMode === 'single';
@@ -81,9 +88,11 @@
     : {};
 
   // 'binary' = BLOB-family (rich viewer), 'text' = CLOB-family (text viewer), null = plain.
+  // Covers both engines: Oracle's LOB types and Postgres's `bytea` (its only real
+  // binary-LOB-like type — Postgres text/varchar are already fully materialized).
   function lobKind(colKey: string): 'binary' | 'text' | null {
     const t = colType[colKey];
-    if (t === 'BLOB' || t === 'BFILE' || t === 'LONG RAW') return 'binary';
+    if (t === 'BLOB' || t === 'BFILE' || t === 'LONG RAW' || t === 'BYTEA') return 'binary';
     if (t === 'CLOB' || t === 'NCLOB' || t === 'LONG') return 'text';
     return null;
   }
@@ -456,7 +465,7 @@
   <div style="display:flex;flex-direction:column;overflow:hidden;flex:1;">
     <!-- SQL editor + toolbar -->
     <div style="padding:10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;flex-shrink:0;">
-      <SqlEditor bind:value={$sql} height="140px" />
+      <SqlEditor bind:value={$sql} dialect={queryDialect} height="140px" />
       <div class="row">
         <button
           class="btn-primary"

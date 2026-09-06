@@ -394,7 +394,12 @@
           {/each}
         </div>
       {/if}
-      <SqlEditor value={$generatedScripts.get($activeSqlServer)?.script ?? ''} readonly height="260px" />
+      <SqlEditor
+        value={$generatedScripts.get($activeSqlServer)?.script ?? ''}
+        dialect={connections.find(c => c.name === $activeSqlServer)?.db_type ?? 'oracle'}
+        readonly
+        height="260px"
+      />
     {:else}
       <div class="empty-state">
         {#if !$discrepancies.length}

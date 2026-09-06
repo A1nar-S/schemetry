@@ -4,7 +4,7 @@ use tauri::State;
 use tokio;
 
 use crate::models::{QueryHistoryEntry, QueryServerResult};
-use crate::repositories::oracle_repository::LobCell;
+use crate::repositories::db_repository::LobCell;
 use crate::services;
 use crate::state::AppState;
 

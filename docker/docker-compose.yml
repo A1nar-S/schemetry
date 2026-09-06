@@ -1,12 +1,13 @@
-# Two independent Oracle instances used by the integration tests in
-# `src-tauri/tests/`. "source" is the reference schema; "target" is migrated with an
-# intentionally divergent schema so compare/fix logic has real discrepancies to find.
+# Two independent Oracle instances plus two independent Postgres instances, used by
+# the integration tests in `src-tauri/tests/`. Within each engine, "source" is the
+# reference schema; "target" is migrated with an intentionally divergent schema so
+# compare/fix logic has real discrepancies to find.
 #
 # Usage:
 #   cd docker
 #   docker compose up -d --build
-#   docker compose ps            # wait until both oracle-* services are "healthy"
-#   docker compose logs -f flyway-source flyway-target   # confirm migrations applied
+#   docker compose ps            # wait until all oracle-*/postgres-* services are "healthy"
+#   docker compose logs -f flyway-source flyway-target flyway-pg-source flyway-pg-target
 #
 # Teardown (drops the data volumes too):
 #   docker compose down -v
@@ -80,6 +81,78 @@ services:
       -locations=filesystem:/flyway/sql
       migrate
 
+  postgres-source:
+    image: postgres:16-alpine
+    container_name: schemetry-postgres-source
+    environment:
+      POSTGRES_USER: schemetry
+      POSTGRES_PASSWORD: SchemetryTest_2024
+      POSTGRES_DB: schemetry
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-source-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U schemetry -d schemetry"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  postgres-target:
+    image: postgres:16-alpine
+    container_name: schemetry-postgres-target
+    environment:
+      POSTGRES_USER: schemetry
+      POSTGRES_PASSWORD: SchemetryTest_2024
+      POSTGRES_DB: schemetry
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-target-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U schemetry -d schemetry"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # Postgres needs no custom Flyway image — the official image already bundles the
+  # Postgres JDBC driver (unlike Oracle's, which is license-restricted).
+  flyway-pg-source:
+    image: flyway/flyway:13.5.0-alpine
+    container_name: schemetry-flyway-pg-source
+    depends_on:
+      postgres-source:
+        condition: service_healthy
+    volumes:
+      - ./migrations/pg-source:/flyway/sql
+    command: >
+      -url=jdbc:postgresql://postgres-source:5432/schemetry
+      -user=schemetry
+      -password=SchemetryTest_2024
+      -connectRetries=20
+      -locations=filesystem:/flyway/sql
+      migrate
+
+  flyway-pg-target:
+    image: flyway/flyway:13.5.0-alpine
+    container_name: schemetry-flyway-pg-target
+    depends_on:
+      postgres-target:
+        condition: service_healthy
+    volumes:
+      - ./migrations/pg-target:/flyway/sql
+    command: >
+      -url=jdbc:postgresql://postgres-target:5432/schemetry
+      -user=schemetry
+      -password=SchemetryTest_2024
+      -connectRetries=20
+      -locations=filesystem:/flyway/sql
+      migrate
+
 volumes:
   oracle-source-data:
   oracle-target-data:
+  postgres-source-data:
+  postgres-target-data:

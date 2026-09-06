@@ -111,6 +111,19 @@ pub async fn generate_fix_script(
 
     let diff_svc = Arc::clone(&state.diff_svc);
     let snapshot_lock = Arc::clone(&state.snapshot);
+    let server_dialects: HashMap<String, services::fix::Dialect> = state
+        .catalog
+        .get_all_connections()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|c| {
+            let dialect = match c.db_type {
+                crate::models::DbType::Oracle => services::fix::Dialect::Oracle,
+                crate::models::DbType::Postgres => services::fix::Dialect::Postgres,
+            };
+            (c.name, dialect)
+        })
+        .collect();
 
     tokio::task::spawn_blocking(move || {
         // Lazily fetch only the DDLs actually needed for this fix generation.
@@ -134,6 +147,7 @@ pub async fn generate_fix_script(
             &snapshot.servers,
             &server_table_ddls,
             &reference_server,
+            &server_dialects,
         )
         .map_err(|e| e.to_string())
     })

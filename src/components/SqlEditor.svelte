@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { EditorView, basicSetup } from 'codemirror';
   import { EditorState, Compartment } from '@codemirror/state';
-  import { sql } from '@codemirror/lang-sql';
+  import { sql, PostgreSQL, PLSQL } from '@codemirror/lang-sql';
   import { githubLight, githubDark } from '@uiw/codemirror-theme-github';
   import { get } from 'svelte/store';
   import { resolvedTheme } from '../hooks/useTheme';
@@ -13,15 +13,22 @@
   export let readonly = false;
   /** CSS height string, e.g. "140px". Defaults to "140px". */
   export let height = '140px';
+  /** Which SQL dialect to highlight/autocomplete for. Defaults to Oracle's PL/SQL. */
+  export let dialect: 'oracle' | 'postgres' = 'oracle';
 
   let container: HTMLDivElement;
   let view: EditorView;
   let internalChange = false;
 
   const themeCompartment = new Compartment();
+  const languageCompartment = new Compartment();
 
   function themeExt(t: 'dark' | 'light') {
     return t === 'dark' ? githubDark : githubLight;
+  }
+
+  function languageExt(d: 'oracle' | 'postgres') {
+    return sql({ dialect: d === 'postgres' ? PostgreSQL : PLSQL });
   }
 
   onMount(() => {
@@ -32,7 +39,7 @@
         doc: value,
         extensions: [
           basicSetup,
-          sql(),
+          languageCompartment.of(languageExt(dialect)),
           EditorState.readOnly.of(readonly),
           EditorView.editable.of(!readonly),
           themeCompartment.of(themeExt(initialTheme)),
@@ -58,6 +65,11 @@
       view?.destroy();
     };
   });
+
+  // React to dialect changes (e.g. switching the selected server) after mount
+  $: if (view) {
+    view.dispatch({ effects: languageCompartment.reconfigure(languageExt(dialect)) });
+  }
 
   // Sync external value changes (e.g. recall from history) → editor
   $: if (view) {

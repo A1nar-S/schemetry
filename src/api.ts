@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   AppSettings,
   ConnectionRecord,
+  DbType,
   Discrepancy,
   FetchServersResponse,
   FixScriptResult,
@@ -241,6 +242,7 @@ export async function saveDdlToFolder(args: {
   object_type: string;
   ddl: string;
   description: string;
+  db_type: DbType;
 }): Promise<SaveDdlResult> {
   return invoke('save_ddl_to_folder', {
     schema: args.schema,
@@ -248,6 +250,7 @@ export async function saveDdlToFolder(args: {
     objectType: args.object_type,
     ddl: args.ddl,
     description: args.description,
+    dbType: args.db_type,
   });
 }
 

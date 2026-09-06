@@ -8,16 +8,15 @@ use crate::models::{
     ConnectionRecord, HistoryFixResult, HistoryNamingRule, SchemaObject, ServersData, TableDdls,
     TableFilterRule,
 };
-use crate::repositories::oracle_repository::{
-    configure_client_lib_dir, OracleRepository,
-};
+use crate::repositories::db_repository::DbRepository;
+use crate::repositories::oracle_repository::configure_client_lib_dir;
 
 pub struct SchemaDiffService {
-    repo: Arc<dyn OracleRepository>,
+    repo: Arc<dyn DbRepository>,
 }
 
 impl SchemaDiffService {
-    pub fn new(repo: Arc<dyn OracleRepository>) -> Self {
+    pub fn new(repo: Arc<dyn DbRepository>) -> Self {
         Self { repo }
     }
 

@@ -9,7 +9,8 @@ use crate::models::{
     ColumnInfo, ConnectionRecord, HistoryFixResult, HistoryNamingRule, HistoryTableIssue,
     MatchType, SchemaObject, TableDdls, TableFilterRule,
 };
-use crate::repositories::filter_rule_repository::build_predicate;
+use crate::repositories::db_repository::{DbRepository, LobCell};
+use crate::repositories::filter_rule_repository::{build_predicate, ParamStyle};
 
 /// Stores the Oracle Instant Client directory path set at startup or via Settings.
 /// Using a static RwLock avoids touching the process environment (which requires `unsafe`).
@@ -97,77 +98,6 @@ BEGIN
 END;
 "#;
 
-pub trait OracleRepository: Send + Sync {
-    fn test_connection(&self, conn: &ConnectionRecord) -> Result<()>;
-    fn fetch_single(
-        &self,
-        conn: &ConnectionRecord,
-        filter_rules: &[TableFilterRule],
-    ) -> Result<crate::models::ServerTables>;
-    fn fetch_table_ddls(
-        &self,
-        conn: &ConnectionRecord,
-        filter_rules: &[TableFilterRule],
-    ) -> Result<TableDdls>;
-    fn fetch_table_ddls_for_tables(
-        &self,
-        conn: &ConnectionRecord,
-        table_names: &[String],
-    ) -> Result<TableDdls>;
-    fn fetch_schema_objects(
-        &self,
-        conn: &ConnectionRecord,
-        filter_rules: &[TableFilterRule],
-    ) -> Result<Vec<SchemaObject>>;
-    fn fetch_object_ddl(&self, conn: &ConnectionRecord, name: &str, object_type: &str) -> Result<String>;
-    /// Pair up main tables with their history-table counterpart using the given
-    /// enabled naming rules (e.g. a `HIST_` prefix and/or a `_HIST` suffix rule) and
-    /// report any column drift between them. Only `Prefix`/`Suffix` rules are honored;
-    /// other match types are ignored. An empty rule list yields an empty result.
-    fn generate_history_fix(
-        &self,
-        conn: &ConnectionRecord,
-        naming_rules: &[HistoryNamingRule],
-    ) -> Result<HistoryFixResult>;
-    /// Returns `(column names, column type labels, rows)`. When `materialize_lobs` is
-    /// false, binary LOB cells render as `<BLOB>` and text LOB cells as `<CLOB>` (their
-    /// content can be fetched lazily via [`OracleRepository::fetch_lob_cell`]). When
-    /// true, LOB content is materialized inline (capped): CLOB → text, BLOB → decoded
-    /// text or hex.
-    fn run_query(
-        &self,
-        conn: &ConnectionRecord,
-        sql: &str,
-        materialize_lobs: bool,
-    ) -> Result<(Vec<String>, Vec<String>, Vec<Vec<Option<String>>>)>;
-    /// Re-run `sql` and read the raw bytes of a single BLOB/binary cell, capped at
-    /// `max_bytes`. Used for the full-bytes "Save to file" path.
-    fn fetch_blob_cell(
-        &self,
-        conn: &ConnectionRecord,
-        sql: &str,
-        row_index: usize,
-        col_index: usize,
-        max_bytes: usize,
-    ) -> Result<Vec<u8>>;
-    /// Re-run `sql` and read a single LOB cell, returning text for CLOB-like columns
-    /// and bytes (capped at `max_bytes`) for binary columns, based on the column type.
-    fn fetch_lob_cell(
-        &self,
-        conn: &ConnectionRecord,
-        sql: &str,
-        row_index: usize,
-        col_index: usize,
-        max_bytes: usize,
-    ) -> Result<LobCell>;
-}
-
-/// A single LOB cell fetched on demand for the content viewer.
-pub enum LobCell {
-    Text(Option<String>),
-    Binary(Vec<u8>),
-}
-
 pub struct DbOracleRepository;
 
 impl DbOracleRepository {
@@ -227,7 +157,7 @@ impl DbOracleRepository {
     }
 }
 
-impl OracleRepository for DbOracleRepository {
+impl DbRepository for DbOracleRepository {
     fn test_connection(&self, conn: &ConnectionRecord) -> Result<()> {
         let db = self.connect(conn)?;
         db.ping().map_err(|e| anyhow!(e.to_string()))?;
@@ -242,7 +172,7 @@ impl OracleRepository for DbOracleRepository {
         let db = self.connect(conn)?;
         let schema = conn.username.to_ascii_uppercase();
 
-        let (filter_clause, filter_binds) = build_predicate(filter_rules, "atc.TABLE_NAME", 2);
+        let (filter_clause, filter_binds) = build_predicate(filter_rules, "atc.TABLE_NAME", 2, ParamStyle::Colon);
         let sql = format!("{FETCH_SQL_BASE}{filter_clause}{FETCH_SQL_ORDER_BY}");
         let mut binds: Vec<&dyn ToSql> = vec![&schema];
         for b in &filter_binds {
@@ -397,7 +327,7 @@ impl OracleRepository for DbOracleRepository {
         let schema = conn.username.to_ascii_uppercase();
         let _ = db.execute(DDL_TRANSFORM_SQL, &[]);
 
-        let (filter_clause, filter_binds) = build_predicate(filter_rules, "at.TABLE_NAME", 2);
+        let (filter_clause, filter_binds) = build_predicate(filter_rules, "at.TABLE_NAME", 2, ParamStyle::Colon);
         let sql = format!("{TABLE_DDL_SQL_BASE}{filter_clause}{TABLE_DDL_SQL_ORDER_BY}");
         let mut binds: Vec<&dyn ToSql> = vec![&schema];
         for b in &filter_binds {
@@ -464,7 +394,7 @@ impl OracleRepository for DbOracleRepository {
         let db = self.connect(conn)?;
         let schema = conn.username.to_ascii_uppercase();
 
-        let (filter_clause, filter_binds) = build_predicate(filter_rules, "o.OBJECT_NAME", 2);
+        let (filter_clause, filter_binds) = build_predicate(filter_rules, "o.OBJECT_NAME", 2, ParamStyle::Colon);
         let sql = format!(
             "SELECT o.OBJECT_NAME, o.OBJECT_TYPE \
              FROM ALL_OBJECTS o \

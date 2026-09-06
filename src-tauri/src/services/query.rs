@@ -3,14 +3,14 @@ use std::thread;
 use std::time::Instant;
 
 use crate::models::{ConnectionRecord, QueryServerResult};
-use crate::repositories::oracle_repository::{LobCell, OracleRepository};
+use crate::repositories::db_repository::{DbRepository, LobCell};
 
 pub struct QueryService {
-    repo: Arc<dyn OracleRepository>,
+    repo: Arc<dyn DbRepository>,
 }
 
 impl QueryService {
-    pub fn new(repo: Arc<dyn OracleRepository>) -> Self {
+    pub fn new(repo: Arc<dyn DbRepository>) -> Self {
         Self { repo }
     }
 

@@ -219,7 +219,12 @@
               📋 Copy
             </button>
           </div>
-          <SqlEditor value={activeResult.fix_sql} readonly height="100%" />
+          <SqlEditor
+            value={activeResult.fix_sql}
+            dialect={connections.find(c => c.name === $activeServer)?.db_type ?? 'oracle'}
+            readonly
+            height="100%"
+          />
         </div>
 
       </div>

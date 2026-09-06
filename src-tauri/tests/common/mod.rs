@@ -7,10 +7,12 @@
 //! `SCHEMETRY_TEST_ORACLE_USER`, `SCHEMETRY_TEST_ORACLE_PASSWORD`. If Instant Client
 //! isn't already on `PATH`, set `ORACLE_CLIENT_LIB_DIR`.
 
+pub mod postgres;
+
 use std::env;
 
 use oracle::Connection;
-use schemetry_lib::models::ConnectionRecord;
+use schemetry_lib::models::{ConnectionRecord, DbType};
 use schemetry_lib::repositories::oracle_repository::configure_client_lib_dir;
 
 fn env_or(key: &str, default: &str) -> String {
@@ -36,12 +38,14 @@ fn connection(name: &str, default_port: u16, port_env: &str) -> ConnectionRecord
     ConnectionRecord {
         id: 0,
         name: name.to_string(),
+        db_type: DbType::Oracle,
         host,
         port,
         service_name,
         username,
         password,
         group_name: "Integration Tests".to_string(),
+        pg_schema: String::new(),
         password_broken: false,
     }
 }

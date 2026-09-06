@@ -118,6 +118,7 @@ pub fn save_ddl_to_folder(
     object_type: String,
     ddl: String,
     description: String,
+    db_type: String,
 ) -> Result<SaveDdlResult, String> {
     use chrono::Local;
     use std::fs;
@@ -216,11 +217,19 @@ pub fn save_ddl_to_folder(
     if write_migration {
         fs::create_dir_all(&migration_dir).map_err(|e| format!("Failed to create migration dir: {e}"))?;
 
-        let migration_ddl = crate::repositories::oracle_repository::build_deploy_script(
-            &object_type.to_ascii_uppercase(),
-            &object_name,
-            &ddl,
-        );
+        let migration_ddl = if db_type.eq_ignore_ascii_case("postgres") {
+            crate::repositories::postgres_repository::build_deploy_script(
+                &object_type.to_ascii_uppercase(),
+                &object_name,
+                &ddl,
+            )
+        } else {
+            crate::repositories::oracle_repository::build_deploy_script(
+                &object_type.to_ascii_uppercase(),
+                &object_name,
+                &ddl,
+            )
+        };
         let migration_content = encode_content(&migration_ddl, &encoding);
 
         let now = Local::now();

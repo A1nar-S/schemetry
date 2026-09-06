@@ -270,7 +270,7 @@ fn build_comment_block_contains_comment_sql() {
 #[test]
 fn generate_fix_empty_selection_returns_err() {
     let servers = make_servers("REF", "T", "C", col_typed("NUMBER"));
-    let result = generate_fix_script(&[], &HashSet::new(), &servers, &HashMap::new(), "REF");
+    let result = generate_fix_script(&[], &HashSet::new(), &servers, &HashMap::new(), "REF", &HashMap::new());
     assert!(result.is_err());
 }
 
@@ -288,7 +288,7 @@ fn generate_fix_missing_column_produces_add_statement() {
         "MISSING", "COLUMN", "T", "COL1", "TGT",
         "Column found in reference server REF but not in server TGT",
     )];
-    let result = generate_fix_script(&discs, &ids(&[0]), &servers, &HashMap::new(), "REF").unwrap();
+    let result = generate_fix_script(&discs, &ids(&[0]), &servers, &HashMap::new(), "REF", &HashMap::new()).unwrap();
     assert!(result.script.contains("ALTER TABLE"), "script: {}", result.script);
     assert!(result.script.contains("ADD"), "script: {}", result.script);
     assert_eq!(result.generated_count, 1);
@@ -307,7 +307,7 @@ fn generate_fix_data_type_produces_modify_statement() {
     servers.insert("TGT".to_string(), tgt_tables);
 
     let discs = vec![disc("DIFFERENT", "DATA_TYPE", "T", "C", "TGT", "DATA_TYPE: NUMBER != VARCHAR2")];
-    let result = generate_fix_script(&discs, &ids(&[0]), &servers, &HashMap::new(), "REF").unwrap();
+    let result = generate_fix_script(&discs, &ids(&[0]), &servers, &HashMap::new(), "REF", &HashMap::new()).unwrap();
     assert!(result.script.contains("MODIFY"), "script: {}", result.script);
     assert_eq!(result.generated_count, 1);
 }
@@ -318,7 +318,7 @@ fn generate_fix_column_name_discrepancy_is_skipped() {
     servers.insert("REF".to_string(), HashMap::new());
 
     let discs = vec![disc("DIFFERENT", "COLUMN_NAME", "T", "C", "TGT", "COLUMN_NAME: OLD != NEW")];
-    let result = generate_fix_script(&discs, &ids(&[0]), &servers, &HashMap::new(), "REF").unwrap();
+    let result = generate_fix_script(&discs, &ids(&[0]), &servers, &HashMap::new(), "REF", &HashMap::new()).unwrap();
     assert_eq!(result.skipped_count, 1);
     assert!(result.script.contains("-- Skipped"), "script: {}", result.script);
 }
@@ -338,6 +338,6 @@ fn generate_fix_deduplicates_identical_discrepancies() {
         disc("DIFFERENT", "DATA_TYPE", "T", "C", "TGT", "DATA_TYPE: NUMBER != VARCHAR2"),
         disc("DIFFERENT", "DATA_TYPE", "T", "C", "TGT", "DATA_TYPE: NUMBER != VARCHAR2"),
     ];
-    let result = generate_fix_script(&discs, &ids(&[0, 1]), &servers, &HashMap::new(), "REF").unwrap();
+    let result = generate_fix_script(&discs, &ids(&[0, 1]), &servers, &HashMap::new(), "REF", &HashMap::new()).unwrap();
     assert_eq!(result.generated_count, 1, "dedup should collapse identical blocks; script: {}", result.script);
 }

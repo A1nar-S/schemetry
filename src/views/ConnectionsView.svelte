@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ConnectionRecord } from '../types';
+  import type { ConnectionRecord, DbType } from '../types';
   import { deleteAllConnections, deleteConnection, exportConnections, importConnections, openInPlsqlDeveloper, saveConnection, testConnection } from '../api';
   import { save } from '@tauri-apps/plugin-dialog';
   import { busy, setBusy, notify } from '../stores/notification';
@@ -8,19 +8,33 @@
   export let connections: ConnectionRecord[];
   export let onReload: () => Promise<void>;
 
+  const DEFAULT_PORT: Record<DbType, number> = { oracle: 1521, postgres: 5432 };
+
   const emptyForm = (): ConnectionRecord => ({
     id: 0,
     name: '',
+    db_type: 'oracle',
     host: '',
-    port: 1521,
+    port: DEFAULT_PORT.oracle,
     service_name: '',
     username: '',
     password: '',
     group_name: '',
+    pg_schema: '',
   });
 
   let form: ConnectionRecord = emptyForm();
   let editingId: number | undefined;
+
+  // Switch the port to the new engine's default, but only when it still matches the
+  // *other* engine's default — so a manually-typed custom port is never clobbered.
+  function onEngineChange(next: DbType) {
+    const otherDefault = DEFAULT_PORT[form.db_type];
+    if (form.port === otherDefault) {
+      form.port = DEFAULT_PORT[next];
+    }
+    form.db_type = next;
+  }
 
   // JSON import
   let showImport = false;
@@ -212,8 +226,6 @@
       bind:value={searchQuery}
     />
 
-    <div class="engine-heading">Oracle</div>
-
     {#each [...schemaGroups.entries()] as [schema, conns]}
       <div class="conn-group-label">{schema}</div>
       {#each conns as conn}
@@ -229,19 +241,24 @@
         >
           <div class="conn-item-text">
             <div class="conn-item-name">
+              <span class="conn-item-engine-badge" class:conn-item-engine-pg={conn.db_type === 'postgres'}>
+                {conn.db_type === 'postgres' ? 'PG' : 'ORA'}
+              </span>
               {conn.name}
               {#if conn.password_broken}<span class="conn-item-broken-badge">⚠ password missing</span>{/if}
             </div>
             <div class="conn-item-meta">{conn.host}:{conn.port} / {conn.service_name}</div>
           </div>
-          <button
-            class="conn-item-launch"
-            title="Open in PL/SQL Developer"
-            disabled={$busy}
-            on:click|stopPropagation={() => void onOpenPlsql(conn)}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
-          </button>
+          {#if conn.db_type === 'oracle'}
+            <button
+              class="conn-item-launch"
+              title="Open in PL/SQL Developer"
+              disabled={$busy}
+              on:click|stopPropagation={() => void onOpenPlsql(conn)}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+            </button>
+          {/if}
         </div>
       {/each}
     {:else}
@@ -274,6 +291,13 @@
 
     <div class="form-grid">
       <div class="field">
+        <span>Database engine</span>
+        <select value={form.db_type} on:change={(e) => onEngineChange(e.currentTarget.value as DbType)}>
+          <option value="oracle">Oracle</option>
+          <option value="postgres">PostgreSQL</option>
+        </select>
+      </div>
+      <div class="field">
         <span>Name *</span>
         <input bind:value={form.name} placeholder="e.g. PROD_DB" />
       </div>
@@ -290,13 +314,19 @@
         <input type="number" bind:value={form.port} min="1" max="65535" />
       </div>
       <div class="field">
-        <span>Service name</span>
-        <input bind:value={form.service_name} placeholder="e.g. ORCL" />
+        <span>{form.db_type === 'postgres' ? 'Database' : 'Service name'}</span>
+        <input bind:value={form.service_name} placeholder={form.db_type === 'postgres' ? 'e.g. postgres' : 'e.g. ORCL'} />
       </div>
       <div class="field">
         <span>Username</span>
         <input bind:value={form.username} placeholder="e.g. APP_USER" />
       </div>
+      {#if form.db_type === 'postgres'}
+        <div class="field">
+          <span>Schema</span>
+          <input bind:value={form.pg_schema} placeholder="public" />
+        </div>
+      {/if}
       <div class="field" style="grid-column:span 2;">
         <span>Password</span>
         <div style="position:relative;display:flex;">
@@ -346,7 +376,10 @@
         Paste a JSON array of connection objects. Connections with an existing name will be overwritten.
       </p>
       <p style="font-size:12px;color:var(--text-muted);margin:0 0 4px;">Expected format (JSON array):</p>
-      <pre style="font-size:11px;color:#475569;margin:0 0 8px;font-family:'Consolas',monospace;white-space:pre-wrap;word-break:break-all;background:var(--bg-base);border-radius:4px;padding:6px 8px;">[{"{"}"name":"…","host":"…","port":1521,"service_name":"…","username":"…","password":"…","group_name":"…"{"}"}]</pre>
+      <pre style="font-size:11px;color:#475569;margin:0 0 8px;font-family:'Consolas',monospace;white-space:pre-wrap;word-break:break-all;background:var(--bg-base);border-radius:4px;padding:6px 8px;">[{"{"}"name":"…","db_type":"oracle","host":"…","port":1521,"service_name":"…","username":"…","password":"…","group_name":"…","pg_schema":""{"}"}]</pre>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 8px;">
+        <code>db_type</code> defaults to <code>"oracle"</code> if omitted, for older exports.
+      </p>
 
       <textarea
         rows="10"

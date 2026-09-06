@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use tauri::State;
 
-use crate::models::ConnectionRecord;
+use crate::models::{ConnectionRecord, DbType};
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -56,12 +56,14 @@ pub fn import_connections(state: State<AppState>, json: String) -> Result<usize,
 #[derive(serde::Serialize)]
 struct ExportedConnection<'a> {
     name: &'a str,
+    db_type: DbType,
     host: &'a str,
     port: u16,
     service_name: &'a str,
     username: &'a str,
     password: &'a str,
     group_name: &'a str,
+    pg_schema: &'a str,
 }
 
 /// Export all connections as a JSON file at the given path (passwords included, `id` omitted).
@@ -72,12 +74,14 @@ pub fn export_connections(state: State<AppState>, path: String) -> Result<usize,
         .iter()
         .map(|c| ExportedConnection {
             name: &c.name,
+            db_type: c.db_type,
             host: &c.host,
             port: c.port,
             service_name: &c.service_name,
             username: &c.username,
             password: &c.password,
             group_name: &c.group_name,
+            pg_schema: &c.pg_schema,
         })
         .collect();
     let json = serde_json::to_string_pretty(&exported).map_err(|e| e.to_string())?;
@@ -91,6 +95,10 @@ pub fn export_connections(state: State<AppState>, path: String) -> Result<usize,
 #[tauri::command]
 pub fn open_in_plsql_developer(connection: ConnectionRecord) -> Result<(), String> {
     use std::path::Path;
+
+    if connection.db_type != DbType::Oracle {
+        return Err("PL/SQL Developer integration is only available for Oracle connections.".to_string());
+    }
 
     let exe = crate::services::settings::load_plsql_dev_path()
         .filter(|p| Path::new(p).is_file())

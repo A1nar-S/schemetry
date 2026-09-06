@@ -2,17 +2,38 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Which database engine a connection targets. Determines which `DbRepository`
+/// implementation handles it (see `repositories::dispatch_repository`) and how a few
+/// fields on `ConnectionRecord` are interpreted (`service_name`, `pg_schema`).
+/// `#[serde(default)]` makes existing rows/exported JSON without this field load as
+/// `Oracle`, since that was the only engine before Postgres support was added.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DbType {
+    #[default]
+    Oracle,
+    Postgres,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionRecord {
     #[serde(default)]
     pub id: i64,
     pub name: String,
+    #[serde(default)]
+    pub db_type: DbType,
     pub host: String,
     pub port: u16,
+    /// Oracle: the service name (e.g. `ORCL`). Postgres: the database name.
     pub service_name: String,
     pub username: String,
     pub password: String,
     pub group_name: String,
+    /// Postgres only: the schema to introspect/target within `service_name`'s
+    /// database. Empty means `public`. Unused for Oracle connections, where the
+    /// schema is always the connecting `username`.
+    #[serde(default)]
+    pub pg_schema: String,
     /// True when the password could not be loaded from the OS credential manager
     /// (e.g. the keyring entry was deleted or reset outside the app). `password` is
     /// empty in that case; the row is still shown so the user can fix or delete it.

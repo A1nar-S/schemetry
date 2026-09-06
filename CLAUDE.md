@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This App Does
 
-Schemetry is a **Tauri v2 desktop application** for database. It provides schema comparison across multiple Oracle instances, DDL generation, SQL querying with multi-server execution, and idempotent fix script generation.
+Schemetry is a **Tauri v2 desktop application** for database. It provides schema comparison across multiple Oracle and/or PostgreSQL instances, DDL generation, SQL querying with multi-server execution, and idempotent fix script generation. A connection's `db_type` (`oracle` | `postgres`) determines which repository handles it — see `repositories/dispatch_repository.rs`.
 
 ## Commands
 
@@ -38,6 +38,8 @@ Rust unit tests cover the core business logic. Tests live in separate files alon
 - `src-tauri/src/services/tests/fix.rs` — tests for `services/fix.rs` (fix-script generation, SQL builders, `generate_fix_script`)
 - `src-tauri/src/repositories/tests/oracle_repository.rs` — tests for `repositories/oracle_repository.rs` (`clean_opt`, `fmt_type`, `make_idempotent`, `clean_sequence_ddl`)
 
+`repositories/postgres_repository.rs` has no dedicated unit-test file yet — its catalog-introspection/DDL-rendering logic is exercised by the Postgres integration suite below instead.
+
 Private functions are accessible in test files because each `mod tests` is declared as a child module of the source file via `#[cfg(test)] #[path = "tests/..."] mod tests;`.
 
 ### Integration tests (real Oracle, via Docker + Flyway)
@@ -58,9 +60,23 @@ cd ../docker && docker compose down -v
 
 These tests are `#[ignore]`d so plain `cargo test` (and CI) never depends on Docker or a live database. They need the same **Oracle Instant Client** as the app itself (see Setup Requirements) — set `ORACLE_CLIENT_LIB_DIR` if it isn't already on `PATH`. Connection details default to the docker-compose file's ports/credentials and can be overridden with `SCHEMETRY_TEST_ORACLE_HOST`, `SCHEMETRY_TEST_SOURCE_PORT`, `SCHEMETRY_TEST_TARGET_PORT`, `SCHEMETRY_TEST_ORACLE_SERVICE`, `SCHEMETRY_TEST_ORACLE_USER`, `SCHEMETRY_TEST_ORACLE_PASSWORD`.
 
+### Integration tests (real Postgres, via Docker + Flyway)
+
+`src-tauri/tests/postgres_integration.rs` mirrors the Oracle suite above against two real `postgres:16-alpine` containers (`postgres-source`, `postgres-target` — host ports 5432/5433), migrated by Flyway from `docker/migrations/{pg-source,pg-target}/V1__init.sql` (same three intentional discrepancies, translated to Postgres types). No native client library setup is needed here — `tokio-postgres` is a pure-Rust wire-protocol client.
+
+```bash
+# Same docker-compose file as the Oracle suite — this also starts the Postgres containers
+cd docker && docker compose up -d --build
+docker compose ps   # wait for both postgres-* services to report "healthy"
+
+cd ../src-tauri && cargo test --test postgres_integration -- --ignored
+```
+
+Connection details default to the docker-compose file's ports/credentials and can be overridden with `SCHEMETRY_TEST_PG_HOST`, `SCHEMETRY_TEST_PG_SOURCE_PORT`, `SCHEMETRY_TEST_PG_TARGET_PORT`, `SCHEMETRY_TEST_PG_DATABASE`, `SCHEMETRY_TEST_PG_USER`, `SCHEMETRY_TEST_PG_PASSWORD`.
+
 ## Architecture
 
-**Stack:** Svelte 5 + TypeScript (frontend) · Tauri v2 (desktop shell) · Rust (backend) · SQLite (local storage) · Oracle OCI (via `oracle` crate)
+**Stack:** Svelte 5 + TypeScript (frontend) · Tauri v2 (desktop shell) · Rust (backend) · SQLite (local storage) · Oracle OCI (via `oracle` crate) · PostgreSQL (via `tokio-postgres`)
 
 ### Frontend → Backend boundary
 
@@ -69,10 +85,10 @@ All backend calls go through `src/api.ts`, which wraps `invoke()` from `@tauri-a
 ```
 commands/   ← thin Tauri command handlers, delegate immediately to services
 services/   ← business logic (compare, fix, query, DDL, connections, settings)
-repositories/ ← data access: Oracle queries + SQLite CRUD
+repositories/ ← data access: Oracle/Postgres queries (dispatched by `db_type`) + SQLite CRUD
 ```
 
-`AppState` (in `state.rs`) is a shared `Arc<Mutex<FetchSnapshot>>` that caches schema metadata fetched from Oracle servers, so compare and fix operations can reuse it without re-querying.
+`AppState` (in `state.rs`) is a shared `Arc<Mutex<FetchSnapshot>>` that caches schema metadata fetched from Oracle/Postgres servers, so compare and fix operations can reuse it without re-querying.
 
 Passwords are stored in the OS keychain via the `keyring` crate; connection metadata goes to SQLite.
 
@@ -115,6 +131,6 @@ Custom Tailwind colors: `ember` (#b54f2e), `steel` (#255f85). Custom fonts: Chak
 
 ## Setup Requirements
 
-- **Oracle Instant Client** must be installed on the machine; its path is configurable from SettingsView and stored in SQLite.
+- **Oracle Instant Client** must be installed on the machine for Oracle connections; its path is configurable from SettingsView and stored in SQLite. Not needed for Postgres-only use — `tokio-postgres` has no native client dependency.
 - Rust toolchain + Tauri CLI are required to compile the backend.
 - Node 18+ for the frontend.

@@ -2,10 +2,11 @@ use std::sync::{Arc, Mutex};
 
 use crate::models::{ServersData, ServerTableDdls};
 use crate::repositories::connection_repository::SqliteConnectionRepository;
+use crate::repositories::db_repository::DbRepository;
+use crate::repositories::dispatch_repository::DispatchRepository;
 use crate::repositories::filter_rule_repository::SqliteFilterRuleRepository;
 use crate::repositories::folder_schema_override_repository::SqliteSchemaFolderOverrideRepository;
 use crate::repositories::history_naming_rule_repository::SqliteHistoryNamingRuleRepository;
-use crate::repositories::oracle_repository::DbOracleRepository;
 use crate::repositories::query_history_repository::SqliteQueryHistoryRepository;
 use crate::services::connection_catalog::ConnectionCatalogService;
 use crate::services::filter_rules::FilterRuleService;
@@ -34,12 +35,13 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
+        let db_repo: Arc<dyn DbRepository> = Arc::new(DispatchRepository::new());
         Self {
             catalog: Arc::new(ConnectionCatalogService::new(Arc::new(
                 SqliteConnectionRepository::new(),
             ))),
-            diff_svc: Arc::new(SchemaDiffService::new(Arc::new(DbOracleRepository::new()))),
-            query_svc: Arc::new(QueryService::new(Arc::new(DbOracleRepository::new()))),
+            diff_svc: Arc::new(SchemaDiffService::new(Arc::clone(&db_repo))),
+            query_svc: Arc::new(QueryService::new(Arc::clone(&db_repo))),
             query_history_svc: Arc::new(QueryHistoryService::new(Arc::new(
                 SqliteQueryHistoryRepository::new(),
             ))),
