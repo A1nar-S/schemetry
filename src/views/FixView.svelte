@@ -21,6 +21,8 @@
     selectedForFetch,
     loadedServers,
     referenceServer,
+    checkTables,
+    checkColumns,
     checkComments,
     checkIndexes,
     discrepancies,
@@ -94,6 +96,12 @@
   }
 
   $: referenceServerName = $loadedServers.find(s => s.id === $referenceServer)?.name ?? '';
+
+  // The grid's target-server filter excludes whichever server is currently the
+  // reference — if the reference changes to match the filter's selected value,
+  // that <option> disappears and the native <select> renders blank instead of
+  // falling back to "All servers". Reset it explicitly so the dropdown stays valid.
+  $: if ($targetServer !== null && $targetServer === $referenceServer) targetServer.set(null);
 
   $: filteredRows = (() => {
     let rows = $discrepancies;
@@ -172,6 +180,8 @@
     try {
       const result = await compareDiscrepancies({
         reference_server_id: ref,
+        check_tables: get(checkTables),
+        check_columns: get(checkColumns),
         check_comments: get(checkComments),
         check_indexes: get(checkIndexes),
       });
@@ -278,9 +288,13 @@
     <ComparisonOptionsCard
       loadedServers={$loadedServers}
       referenceServer={$referenceServer}
+      checkTables={$checkTables}
+      checkColumns={$checkColumns}
       checkComments={$checkComments}
       checkIndexes={$checkIndexes}
       onReferenceChange={(s) => referenceServer.set(s)}
+      onToggleTables={(v) => checkTables.set(v)}
+      onToggleColumns={(v) => checkColumns.set(v)}
       onToggleComments={(v) => checkComments.set(v)}
       onToggleIndexes={(v) => checkIndexes.set(v)}
       onRunComparison={() => void onCompare()}
