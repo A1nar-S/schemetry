@@ -75,12 +75,22 @@ fn export_per_server(
     header_format: &Format,
     data_format: &Format,
 ) -> Result<()> {
+    // Excel worksheet names must be unique; two selected connections can share a
+    // display name (they're distinguished by id, not name), so disambiguate on collision.
+    let mut used_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     for server_result in results {
         if server_result.columns.is_empty() {
             continue;
         }
 
-        let sheet_name: String = server_result.server_name.chars().take(31).collect();
+        let mut sheet_name: String = server_result.server_name.chars().take(31).collect();
+        if !used_names.insert(sheet_name.clone()) {
+            let suffix = format!(" ({})", server_result.server_id);
+            let base_len = 31usize.saturating_sub(suffix.chars().count());
+            sheet_name = server_result.server_name.chars().take(base_len).collect::<String>() + &suffix;
+            used_names.insert(sheet_name.clone());
+        }
 
         let worksheet = workbook.add_worksheet();
         worksheet

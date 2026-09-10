@@ -173,15 +173,37 @@ impl FilterRuleRepository for SqliteFilterRuleRepository {
     }
 }
 
-/// Build an Oracle SQL `AND` fragment (using `:N` positional binds, matching the `oracle`
-/// crate's placeholder style) plus its ordered bind values for the given rules, applied to
-/// `column`. Only `enabled` rules are considered. Exclude rules are ANDed together as
-/// `NOT LIKE`; if any Include rules are present, they're combined into a single ORed
-/// allow-list clause (a row must match at least one Include pattern to survive).
-/// `start_idx` is the 1-based bind position of the first placeholder this fragment emits
-/// (i.e. one past the last placeholder already used by the caller's base query).
-/// Returns an empty fragment and no binds if there are no enabled rules.
-pub fn build_predicate(rules: &[TableFilterRule], column: &str, start_idx: usize) -> (String, Vec<String>) {
+/// Positional-bind placeholder syntax to emit: Oracle's `oracle` crate uses `:N`,
+/// Postgres's `tokio-postgres` uses `$N`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamStyle {
+    Colon,
+    Dollar,
+}
+
+impl ParamStyle {
+    fn placeholder(self, idx: usize) -> String {
+        match self {
+            ParamStyle::Colon => format!(":{idx}"),
+            ParamStyle::Dollar => format!("${idx}"),
+        }
+    }
+}
+
+/// Build a SQL `AND` fragment (using the given [`ParamStyle`]'s positional binds) plus
+/// its ordered bind values for the given rules, applied to `column`. Only `enabled`
+/// rules are considered. Exclude rules are ANDed together as `NOT LIKE`; if any
+/// Include rules are present, they're combined into a single ORed allow-list clause (a
+/// row must match at least one Include pattern to survive). `start_idx` is the 1-based
+/// bind position of the first placeholder this fragment emits (i.e. one past the last
+/// placeholder already used by the caller's base query). Returns an empty fragment and
+/// no binds if there are no enabled rules.
+pub fn build_predicate(
+    rules: &[TableFilterRule],
+    column: &str,
+    start_idx: usize,
+    style: ParamStyle,
+) -> (String, Vec<String>) {
     let enabled: Vec<&TableFilterRule> = rules.iter().filter(|r| r.enabled).collect();
 
     let mut clauses = Vec::new();
@@ -189,7 +211,7 @@ pub fn build_predicate(rules: &[TableFilterRule], column: &str, start_idx: usize
     let mut next_idx = start_idx;
 
     for rule in enabled.iter().filter(|r| r.action == FilterAction::Exclude) {
-        clauses.push(format!("UPPER({column}) NOT LIKE :{next_idx}"));
+        clauses.push(format!("UPPER({column}) NOT LIKE {}", style.placeholder(next_idx)));
         binds.push(like_pattern(rule.match_type, &rule.pattern));
         next_idx += 1;
     }
@@ -203,7 +225,7 @@ pub fn build_predicate(rules: &[TableFilterRule], column: &str, start_idx: usize
         let ors: Vec<String> = include_patterns
             .iter()
             .map(|_| {
-                let clause = format!("UPPER({column}) LIKE :{next_idx}");
+                let clause = format!("UPPER({column}) LIKE {}", style.placeholder(next_idx));
                 next_idx += 1;
                 clause
             })

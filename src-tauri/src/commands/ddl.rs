@@ -10,9 +10,9 @@ use crate::state::AppState;
 #[tauri::command]
 pub async fn fetch_schema_objects(
     state: State<'_, AppState>,
-    server_name: String,
+    server_id: i64,
 ) -> Result<Vec<SchemaObject>, String> {
-    let mut conns = super::selected_connections(&state.catalog, &[server_name])?;
+    let mut conns = super::selected_connections(&state.catalog, &[server_id])?;
     let conn = conns.remove(0);
     let filter_rules = state.filter_rules_svc.list_active_rules().map_err(|e| e.to_string())?;
     let diff_svc = Arc::clone(&state.diff_svc);
@@ -29,11 +29,11 @@ pub async fn fetch_schema_objects(
 #[tauri::command]
 pub async fn fetch_object_ddl(
     state: State<'_, AppState>,
-    server_name: String,
+    server_id: i64,
     object_name: String,
     object_type: String,
 ) -> Result<String, String> {
-    let mut conns = super::selected_connections(&state.catalog, &[server_name])?;
+    let mut conns = super::selected_connections(&state.catalog, &[server_id])?;
     let conn = conns.remove(0);
     let diff_svc = Arc::clone(&state.diff_svc);
 
@@ -118,6 +118,7 @@ pub fn save_ddl_to_folder(
     object_type: String,
     ddl: String,
     description: String,
+    db_type: String,
 ) -> Result<SaveDdlResult, String> {
     use chrono::Local;
     use std::fs;
@@ -216,11 +217,19 @@ pub fn save_ddl_to_folder(
     if write_migration {
         fs::create_dir_all(&migration_dir).map_err(|e| format!("Failed to create migration dir: {e}"))?;
 
-        let migration_ddl = crate::repositories::oracle_repository::build_deploy_script(
-            &object_type.to_ascii_uppercase(),
-            &object_name,
-            &ddl,
-        );
+        let migration_ddl = if db_type.eq_ignore_ascii_case("postgres") {
+            crate::repositories::postgres_repository::build_deploy_script(
+                &object_type.to_ascii_uppercase(),
+                &object_name,
+                &ddl,
+            )
+        } else {
+            crate::repositories::oracle_repository::build_deploy_script(
+                &object_type.to_ascii_uppercase(),
+                &object_name,
+                &ddl,
+            )
+        };
         let migration_content = encode_content(&migration_ddl, &encoding);
 
         let now = Local::now();

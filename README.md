@@ -1,10 +1,10 @@
 # Schemetry
 
-Desktop database tooling: schema comparison, DDL generation, SQL querying, and fix script generation.
+Desktop database tooling: schema comparison, DDL generation, SQL querying, and fix script generation. Currently supports Oracle and PostgreSQL.
 
 ## Purpose
 
-Built for multitenant setups where each tenant runs on its own database (server) rather than a shared schema. Schemetry lets you query and compare those per-tenant databases against each other to spot drift, and generate idempotent fix scripts to bring them back in sync.
+Built for multitenant setups where each tenant runs on its own database (server) rather than a shared schema. Schemetry lets you query and compare those per-tenant databases against each other to spot drift, and generate idempotent fix scripts to bring them back in sync. Each connection is either Oracle or PostgreSQL; schema comparison and fix generation only run across connections of the same engine.
 
 ## Tech stack
 
@@ -15,6 +15,7 @@ Built for multitenant setups where each tenant runs on its own database (server)
 - **Virtual table:** TanStack Virtual v3
 - **SQL editor:** CodeMirror 6 (SQL language support, One Dark + GitHub themes for dark/light mode)
 - **Oracle DB:** `oracle` crate (rust-oracle, OCI-based)
+- **PostgreSQL DB:** `tokio-postgres` (pure-Rust wire-protocol client, no native client library needed)
 - **Local storage:** SQLite via `rusqlite` (connections, query history, settings)
 - **Credential storage:** OS keychain via `keyring` crate
 - **DataFrame / CSV:** Polars
@@ -28,7 +29,7 @@ Built for multitenant setups where each tenant runs on its own database (server)
 1. Install Rust toolchain (`cargo`, `rustc`) via [rustup](https://rustup.rs/)
 2. Install Node.js (LTS) and npm
 3. Install Tauri CLI: `cargo install tauri-cli`
-4. Oracle Instant Client (Windows): required by the `oracle` crate (OCI)
+4. Oracle Instant Client (Windows): required by the `oracle` crate (OCI) for Oracle connections. Not needed for PostgreSQL-only use.
 
 ## Run
 
@@ -59,6 +60,14 @@ cd ../src-tauri
 $env:ORACLE_CLIENT_LIB_DIR = "<path to instantclient>"  # if not already on PATH
 cargo test --test oracle_integration -- --ignored
 
+# Integration tests (real PostgreSQL via Docker + Flyway)
+# Same docker-compose file also starts the postgres-* containers
+cd ../docker
+docker compose ps   # wait for both postgres-* services to report "healthy"
+
+cd ../src-tauri
+cargo test --test postgres_integration -- --ignored
+
 # Teardown
 cd ../docker
 docker compose down -v
@@ -68,12 +77,12 @@ docker compose down -v
 
 | View | Description |
 |---|---|
-| **Query** | Run SQL against one or more Oracle connections simultaneously. View results per server, export to XLSX. |
+| **Query** | Run SQL against one or more Oracle and/or PostgreSQL connections simultaneously. View results per server, export to XLSX. |
 | **Generate DDL** | Fetch and display DDL for selected schema objects, and save it to disk as source and/or versioned migration files (timestamped or Flyway-style naming, configurable per schema). |
-| **Fix Discrepancies** | Compare schema metadata across servers against a reference. Filter and select discrepancies, then generate idempotent SQL fix scripts. |
+| **Fix Discrepancies** | Compare schema metadata across servers of the same database engine against a reference. Filter and select discrepancies, then generate idempotent SQL fix scripts. |
 | **Fix History Tables** | Generate fix scripts specifically for history tables if they differ from main tables. |
-| **Connections** | Manage named Oracle connection groups. Passwords stored securely in the OS keychain. |
-| **Settings** | Configure Oracle Instant Client path. |
+| **Connections** | Manage named Oracle and PostgreSQL connections, grouped and organized per tenant. Passwords stored securely in the OS keychain. |
+| **Settings** | Configure Oracle Instant Client path (Oracle connections only). |
 
 ## License
 

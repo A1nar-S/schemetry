@@ -4,6 +4,9 @@ import type { SchemaObject } from '../types';
 export type DdlStep = 'pick-server' | 'objects';
 
 export const selectedServer  = writable<string>('');
+// Identity of the connection actually picked from ServerCombobox — `selectedServer`
+// above is only the display name (may not be unique across groups/engines).
+export const selectedServerId = writable<number | null>(null);
 export const step            = writable<DdlStep>('pick-server');
 export const objects         = writable<SchemaObject[]>([]);
 export const filterQuery     = writable<string>('');

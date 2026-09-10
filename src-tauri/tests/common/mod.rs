@@ -7,10 +7,12 @@
 //! `SCHEMETRY_TEST_ORACLE_USER`, `SCHEMETRY_TEST_ORACLE_PASSWORD`. If Instant Client
 //! isn't already on `PATH`, set `ORACLE_CLIENT_LIB_DIR`.
 
+pub mod postgres;
+
 use std::env;
 
 use oracle::Connection;
-use schemetry_lib::models::ConnectionRecord;
+use schemetry_lib::models::{ConnectionRecord, DbType};
 use schemetry_lib::repositories::oracle_repository::configure_client_lib_dir;
 
 fn env_or(key: &str, default: &str) -> String {
@@ -23,7 +25,12 @@ pub fn init_oracle_client() {
     }
 }
 
-fn connection(name: &str, default_port: u16, port_env: &str) -> ConnectionRecord {
+/// Test connection ids — arbitrary but distinct, matching how the app would assign
+/// them (compare/fix dispatch is keyed by id, not name).
+pub const SOURCE_ID: i64 = 1;
+pub const TARGET_ID: i64 = 2;
+
+fn connection(id: i64, name: &str, default_port: u16, port_env: &str) -> ConnectionRecord {
     let host = env_or("SCHEMETRY_TEST_ORACLE_HOST", "localhost");
     let port: u16 = env::var(port_env)
         .ok()
@@ -31,27 +38,29 @@ fn connection(name: &str, default_port: u16, port_env: &str) -> ConnectionRecord
         .unwrap_or(default_port);
     let service_name = env_or("SCHEMETRY_TEST_ORACLE_SERVICE", "FREEPDB1");
     let username = env_or("SCHEMETRY_TEST_ORACLE_USER", "SCHEMETRY");
-    let password = env_or("SCHEMETRY_TEST_ORACLE_PASSWORD", "SchemetryTest_2024");
+    let password = env_or("SCHEMETRY_TEST_ORACLE_PASSWORD", "SchemetryTest");
 
     ConnectionRecord {
-        id: 0,
+        id,
         name: name.to_string(),
+        db_type: DbType::Oracle,
         host,
         port,
         service_name,
         username,
         password,
         group_name: "Integration Tests".to_string(),
+        pg_schema: String::new(),
         password_broken: false,
     }
 }
 
 pub fn source_connection() -> ConnectionRecord {
-    connection("SOURCE", 1521, "SCHEMETRY_TEST_SOURCE_PORT")
+    connection(SOURCE_ID, "SOURCE", 1521, "SCHEMETRY_TEST_SOURCE_PORT")
 }
 
 pub fn target_connection() -> ConnectionRecord {
-    connection("TARGET", 1522, "SCHEMETRY_TEST_TARGET_PORT")
+    connection(TARGET_ID, "TARGET", 1522, "SCHEMETRY_TEST_TARGET_PORT")
 }
 
 /// Opens a raw connection for helpers (executing the generated fix script) that don't

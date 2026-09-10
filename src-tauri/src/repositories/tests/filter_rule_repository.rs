@@ -30,7 +30,7 @@ fn like_pattern_exact_has_no_wildcard() {
 
 #[test]
 fn build_predicate_empty_rules_yields_empty_fragment() {
-    let (sql, binds) = build_predicate(&[], "TABLE_NAME", 2);
+    let (sql, binds) = build_predicate(&[], "TABLE_NAME", 2, ParamStyle::Colon);
     assert_eq!(sql, "");
     assert!(binds.is_empty());
 }
@@ -38,7 +38,7 @@ fn build_predicate_empty_rules_yields_empty_fragment() {
 #[test]
 fn build_predicate_disabled_rule_is_ignored() {
     let rules = vec![rule(1, FilterAction::Exclude, MatchType::Prefix, "ARCH_", false)];
-    let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 2);
+    let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 2, ParamStyle::Colon);
     assert_eq!(sql, "");
     assert!(binds.is_empty());
 }
@@ -46,7 +46,7 @@ fn build_predicate_disabled_rule_is_ignored() {
 #[test]
 fn build_predicate_single_exclude_rule() {
     let rules = vec![rule(1, FilterAction::Exclude, MatchType::Prefix, "ARCH_", true)];
-    let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 2);
+    let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 2, ParamStyle::Colon);
     assert_eq!(sql, " AND UPPER(TABLE_NAME) NOT LIKE :2");
     assert_eq!(binds, vec!["ARCH_%".to_string()]);
 }
@@ -57,7 +57,7 @@ fn build_predicate_multiple_exclude_rules_and_together_with_sequential_binds() {
         rule(1, FilterAction::Exclude, MatchType::Prefix, "ARCH_", true),
         rule(2, FilterAction::Exclude, MatchType::Suffix, "_ARCH", true),
     ];
-    let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 3);
+    let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 3, ParamStyle::Colon);
     assert_eq!(
         sql,
         " AND UPPER(TABLE_NAME) NOT LIKE :3 AND UPPER(TABLE_NAME) NOT LIKE :4"
@@ -71,7 +71,7 @@ fn build_predicate_include_rules_are_ored_together() {
         rule(1, FilterAction::Include, MatchType::Prefix, "APP_", true),
         rule(2, FilterAction::Include, MatchType::Prefix, "CORE_", true),
     ];
-    let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 2);
+    let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 2, ParamStyle::Colon);
     assert_eq!(
         sql,
         " AND (UPPER(TABLE_NAME) LIKE :2 OR UPPER(TABLE_NAME) LIKE :3)"
@@ -85,7 +85,7 @@ fn build_predicate_combines_exclude_and_include() {
         rule(1, FilterAction::Exclude, MatchType::Prefix, "ARCH_", true),
         rule(2, FilterAction::Include, MatchType::Prefix, "APP_", true),
     ];
-    let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 2);
+    let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 2, ParamStyle::Colon);
     assert_eq!(
         sql,
         " AND UPPER(TABLE_NAME) NOT LIKE :2 AND (UPPER(TABLE_NAME) LIKE :3)"

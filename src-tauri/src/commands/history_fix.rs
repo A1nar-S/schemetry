@@ -28,9 +28,9 @@ pub fn delete_history_naming_rule(state: State<AppState>, id: i64) -> Result<(),
 #[tauri::command]
 pub async fn generate_history_fix(
     state: State<'_, AppState>,
-    server_names: Vec<String>,
+    server_ids: Vec<i64>,
 ) -> Result<Vec<ServerHistoryFixResult>, String> {
-    let conns = super::selected_connections(&state.catalog, &server_names)?;
+    let conns = super::selected_connections(&state.catalog, &server_ids)?;
     let naming_rules = state.history_naming_rules_svc.list_active_rules().map_err(|e| e.to_string())?;
     let diff_svc = Arc::clone(&state.diff_svc);
 
@@ -40,15 +40,18 @@ pub async fn generate_history_fix(
             let svc = Arc::clone(&diff_svc);
             let rules = naming_rules.clone();
             handles.push(thread::spawn(move || {
+                let id = conn.id;
                 let name = conn.name.clone();
                 match svc.generate_history_fix(&conn, &rules) {
                     Ok(res) => ServerHistoryFixResult {
+                        server_id: id,
                         server_name: name,
                         issues: res.issues,
                         fix_sql: res.fix_sql,
                         error: None,
                     },
                     Err(e) => ServerHistoryFixResult {
+                        server_id: id,
                         server_name: name,
                         issues: vec![],
                         fix_sql: String::new(),

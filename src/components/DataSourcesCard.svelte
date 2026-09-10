@@ -1,7 +1,8 @@
 <script lang="ts">
   import { busy } from '../stores/notification';
+  import type { LoadedServer } from '../types';
 
-  export let loadedServers: string[] = [];
+  export let loadedServers: LoadedServer[] = [];
   export let onOpenSelector: () => void;
 </script>
 
@@ -12,8 +13,8 @@
     {#if loadedServers.length === 0}
       <span class="empty-state">No servers loaded yet.</span>
     {:else}
-      {#each loadedServers as s}
-        <span class="chip">{s}</span>
+      {#each loadedServers as s (s.id)}
+        <span class="chip">{s.name}</span>
       {/each}
     {/if}
   </div>

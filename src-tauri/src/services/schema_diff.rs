@@ -8,16 +8,15 @@ use crate::models::{
     ConnectionRecord, HistoryFixResult, HistoryNamingRule, SchemaObject, ServersData, TableDdls,
     TableFilterRule,
 };
-use crate::repositories::oracle_repository::{
-    configure_client_lib_dir, OracleRepository,
-};
+use crate::repositories::db_repository::DbRepository;
+use crate::repositories::oracle_repository::configure_client_lib_dir;
 
 pub struct SchemaDiffService {
-    repo: Arc<dyn OracleRepository>,
+    repo: Arc<dyn DbRepository>,
 }
 
 impl SchemaDiffService {
-    pub fn new(repo: Arc<dyn OracleRepository>) -> Self {
+    pub fn new(repo: Arc<dyn DbRepository>) -> Self {
         Self { repo }
     }
 
@@ -29,30 +28,30 @@ impl SchemaDiffService {
         &self,
         connections: &[ConnectionRecord],
         filter_rules: &[TableFilterRule],
-    ) -> (ServersData, HashMap<String, String>) {
+    ) -> (ServersData, HashMap<i64, String>) {
         let mut handles = Vec::new();
         for conn in connections.iter().cloned() {
             let repo = Arc::clone(&self.repo);
             let rules = filter_rules.to_vec();
             handles.push(thread::spawn(move || {
-                let name = conn.name.clone();
+                let id = conn.id;
                 match repo.fetch_single(&conn, &rules) {
-                    Ok(tables) => (name, Some(tables), None),
-                    Err(err) => (name, None, Some(err.to_string())),
+                    Ok(tables) => (id, Some(tables), None),
+                    Err(err) => (id, None, Some(err.to_string())),
                 }
             }));
         }
 
         let mut servers: ServersData = HashMap::new();
-        let mut errors: HashMap<String, String> = HashMap::new();
+        let mut errors: HashMap<i64, String> = HashMap::new();
         for handle in handles {
             let join_result = handle.join();
-            if let Ok((name, tables_opt, err_opt)) = join_result {
+            if let Ok((id, tables_opt, err_opt)) = join_result {
                 if let Some(tables) = tables_opt {
-                    servers.insert(name.clone(), tables);
+                    servers.insert(id, tables);
                 }
                 if let Some(err) = err_opt {
-                    errors.insert(name, err);
+                    errors.insert(id, err);
                 }
             }
         }

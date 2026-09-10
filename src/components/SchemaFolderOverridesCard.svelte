@@ -14,12 +14,20 @@
   let loaded = false;
 
   // Reuses ServerCombobox (the DDL view's server picker) over the distinct schema
-  // names (Oracle usernames) seen across configured connections. Lowercased and
-  // deduplicated case-insensitively to match how schema_name is normalized on save.
+  // names seen across configured connections — the Oracle username for Oracle
+  // connections, `pg_schema` (defaulting to `public`) for Postgres ones. Lowercased
+  // and deduplicated case-insensitively to match how schema_name is normalized on save.
   let schemaOptions: ConnectionRecord[] = [];
-  $: schemaOptions = [...new Set(connections.map(c => c.username.trim().toLowerCase()).filter(Boolean))]
+  $: schemaOptions = [...new Set(
+      connections
+        .map(c => (c.db_type === 'postgres' ? (c.pg_schema?.trim() || 'public') : c.username.trim()).toLowerCase())
+        .filter(Boolean),
+    )]
     .sort()
-    .map(name => ({ id: 0, name, host: '', port: 1521, service_name: '', username: name, password: '', group_name: '' }));
+    .map(name => ({
+      id: 0, name, db_type: 'oracle', host: '', port: 1521, service_name: '',
+      username: name, password: '', group_name: '', pg_schema: '',
+    }));
 
   onMount(async () => {
     await reload();

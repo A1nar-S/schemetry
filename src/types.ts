@@ -3,19 +3,26 @@ export type SchemaObject = {
   object_type: string;
 };
 
+export type DbType = 'oracle' | 'postgres';
+
 export type ConnectionRecord = {
   id: number;
   name: string;
+  db_type: DbType;
   host: string;
   port: number;
+  /** Oracle: the service name (e.g. ORCL). Postgres: the database name. */
   service_name: string;
   username: string;
   password: string;
   group_name: string;
+  /** Postgres only: schema to introspect/target within `service_name`'s database. Empty means `public`. */
+  pg_schema?: string;
   password_broken?: boolean;
 };
 
 export type QueryServerResult = {
+  server_id: number;
   server_name: string;
   columns: string[];
   column_types: string[];
@@ -46,13 +53,19 @@ export type Discrepancy = {
   element: string;
   table_name: string;
   column_name: string;
+  server_id: number;
   server_name: string;
   details: string;
 };
 
+export type LoadedServer = {
+  id: number;
+  name: string;
+};
+
 export type FetchServersResponse = {
-  loaded_servers: string[];
-  errors: { server: string; error: string }[];
+  loaded_servers: LoadedServer[];
+  errors: { server_id: number; server: string; error: string }[];
 };
 
 export type FixScriptResult = {
@@ -116,6 +129,7 @@ export type HistoryFixResult = {
 };
 
 export type ServerHistoryFixResult = {
+  server_id: number;
   server_name: string;
   issues: HistoryTableIssue[];
   fix_sql: string;

@@ -9,6 +9,7 @@
   import { resolvedTheme } from '../hooks/useTheme';
   import {
     selectedServer,
+    selectedServerId,
     step,
     objects,
     filterQuery,
@@ -25,7 +26,10 @@
   let showSaveModal = false;
   let saveDescription = '';
 
-  $: schema = connections.find(c => c.name === $selectedServer)?.username ?? '';
+  $: activeConnection = connections.find(c => c.id === $selectedServerId);
+  $: schema = activeConnection?.db_type === 'postgres'
+    ? (activeConnection.pg_schema?.trim() || 'public')
+    : (activeConnection?.username ?? '');
 
   function openSaveModal() {
     saveDescription = '';
@@ -52,6 +56,7 @@
         object_type: obj.object_type,
         ddl,
         description: saveDescription.trim(),
+        db_type: activeConnection?.db_type ?? 'oracle',
       });
       const paths = [result.code_path, result.migration_path].filter((p): p is string => !!p);
       const folder = (paths[0] ?? '').replace(/[/\\][^/\\]+$/, '');
@@ -87,10 +92,11 @@
 
   // ── Handlers ──────────────────────────────────────────────────────
   async function onLoad() {
-    if (!get(selectedServer)) { notify('Select a server first.', 'error'); return; }
+    const serverId = get(selectedServerId);
+    if (serverId === null) { notify('Select a server first.', 'error'); return; }
     setBusy(true, 'Loading schema objects…');
     try {
-      const loaded = await fetchSchemaObjects(get(selectedServer));
+      const loaded = await fetchSchemaObjects(serverId);
       objects.set(loaded);
       step.set('objects');
       selectedObject.set(null);
@@ -106,6 +112,8 @@
   }
 
   async function onSelectObject(obj: SchemaObject) {
+    const serverId = get(selectedServerId);
+    if (serverId === null) return;
     const cur = get(selectedObject);
     if (cur?.name === obj.name && cur?.object_type === obj.object_type) return;
     expandGroupOf(obj);
@@ -113,7 +121,7 @@
     generatedDdl.set('');
     ddlLoading = true;
     try {
-      const ddl = await fetchObjectDdl(get(selectedServer), obj.name, obj.object_type);
+      const ddl = await fetchObjectDdl(serverId, obj.name, obj.object_type);
       generatedDdl.set(ddl);
     } catch (e) {
       generatedDdl.set(`-- Error generating DDL: ${String(e)}`);
@@ -130,10 +138,11 @@
   }
 
   async function onRefresh() {
-    if (!get(selectedServer)) return;
+    const serverId = get(selectedServerId);
+    if (serverId === null) return;
     setBusy(true, 'Refreshing schema objects…');
     try {
-      const loaded = await fetchSchemaObjects(get(selectedServer));
+      const loaded = await fetchSchemaObjects(serverId);
       objects.set(loaded);
       const cur = get(selectedObject);
       if (cur) {
@@ -145,7 +154,7 @@
           generatedDdl.set('');
           ddlLoading = true;
           try {
-            const ddl = await fetchObjectDdl(get(selectedServer), cur.name, cur.object_type);
+            const ddl = await fetchObjectDdl(serverId, cur.name, cur.object_type);
             generatedDdl.set(ddl);
           } catch (e) {
             generatedDdl.set(`-- Error generating DDL: ${String(e)}`);
@@ -209,13 +218,14 @@
       <ServerCombobox
         connections={connections}
         bind:value={$selectedServer}
+        onSelect={(c) => selectedServerId.set(c.id)}
         placeholder="Search a server…"
       />
 
       <div>
         <button
           class="btn-primary"
-          disabled={!$selectedServer || $busy}
+          disabled={$selectedServerId === null || $busy}
           on:click={() => void onLoad()}
         >→ Load Objects</button>
       </div>
@@ -304,7 +314,7 @@
           {#if ddlLoading}
             <div class="empty-state">Generating DDL…</div>
           {:else if $generatedDdl}
-            <SqlEditor value={$generatedDdl} readonly height="100%" />
+            <SqlEditor value={$generatedDdl} dialect={activeConnection?.db_type ?? 'oracle'} readonly height="100%" />
           {/if}
         {:else}
           <div class="empty-state">Select an object from the list to generate its raw DDL. The idempotent migration script is produced when you save to the folder.</div>

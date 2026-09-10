@@ -4,12 +4,11 @@
   import Modal from './Modal.svelte';
 
   export let connections: ConnectionRecord[];
-  export let selectedForFetch: Set<string>;
+  export let selectedForFetch: Set<number>;
   export let onClose: () => void;
   export let onFetch: () => void;
   export let actionLabel: string = '📥 Fetch Metadata';
-  export let onToggle: (name: string) => void;
-  export let onSelectAll: () => void;
+  export let onToggle: (id: number) => void;
   export let onSelectNone: () => void;
   export let onSelectSchema: (schema: string) => void;
   export let onDeselectSchema: (schema: string) => void;
@@ -34,7 +33,6 @@
   </div>
 
   <div class="row" style="margin-bottom:8px;">
-    <button class="btn-secondary" style="font-size:11px;padding:3px 8px;" on:click={onSelectAll}>Select All</button>
     <button class="btn-secondary" style="font-size:11px;padding:3px 8px;" on:click={onSelectNone}>Select None</button>
   </div>
 
@@ -52,8 +50,8 @@
             <label class="schema-item">
               <input
                 type="checkbox"
-                checked={selectedForFetch.has(conn.name)}
-                on:change={() => onToggle(conn.name)}
+                checked={selectedForFetch.has(conn.id)}
+                on:change={() => onToggle(conn.id)}
               />
               <span style="margin-left:4px;">{conn.name}</span>
               <span style="margin-left:auto;font-size:11px;color:#475569;">{conn.host}</span>

@@ -1,12 +1,12 @@
 import { writable } from 'svelte/store';
 import type { QueryServerResult, QueryHistoryEntry } from '../types';
 
-export const selectedServers = writable<Set<string>>(new Set());
+export const selectedServers = writable<Set<number>>(new Set());
 export const sql = writable('SELECT * FROM DUAL WHERE ROWNUM <= 10');
 export const results = writable<QueryServerResult[]>([]);
 // The SQL that produced the current `results` — used to lazily re-fetch BLOB cells.
 export const lastRunSql = writable('');
-export const activeServer = writable('');
+export const activeServer = writable<number | null>(null);
 export const history = writable<QueryHistoryEntry[]>([]);
 export const historyOpen = writable(false);
 export const lastExportDir = writable('');
