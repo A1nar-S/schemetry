@@ -9,7 +9,6 @@
   export let onFetch: () => void;
   export let actionLabel: string = '📥 Fetch Metadata';
   export let onToggle: (id: number) => void;
-  export let onSelectAll: () => void;
   export let onSelectNone: () => void;
   export let onSelectSchema: (schema: string) => void;
   export let onDeselectSchema: (schema: string) => void;
@@ -34,7 +33,6 @@
   </div>
 
   <div class="row" style="margin-bottom:8px;">
-    <button class="btn-secondary" style="font-size:11px;padding:3px 8px;" on:click={onSelectAll}>Select All</button>
     <button class="btn-secondary" style="font-size:11px;padding:3px 8px;" on:click={onSelectNone}>Select None</button>
   </div>
 

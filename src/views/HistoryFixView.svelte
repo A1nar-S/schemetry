@@ -32,7 +32,6 @@
   function toggleServer(id: number) {
     selectedServers.update(s => { s.has(id) ? s.delete(id) : s.add(id); return new Set(s); });
   }
-  function selectAll()  { selectedServers.set(new Set(connections.map(c => c.id))); }
   function selectNone() { selectedServers.set(new Set()); }
   function selectGroup(schema: string) {
     selectedServers.update(s => {
@@ -95,7 +94,6 @@
     onClose={() => { showSelector = false; }}
     onFetch={onGenerate}
     onToggle={toggleServer}
-    onSelectAll={selectAll}
     onSelectNone={selectNone}
     onSelectSchema={selectGroup}
     onDeselectSchema={deselectGroup}

@@ -312,7 +312,6 @@
       onClose={() => (showSelector = false)}
       onFetch={() => void onFetch()}
       onToggle={toggleForFetch}
-      onSelectAll={() => selectedForFetch.set(new Set(connections.map(c => c.id)))}
       onSelectNone={() => selectedForFetch.set(new Set())}
       onSelectSchema={selectSchema}
       onDeselectSchema={deselectSchema}

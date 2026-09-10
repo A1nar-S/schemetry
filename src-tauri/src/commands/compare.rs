@@ -35,6 +35,15 @@ pub async fn fetch_servers(
     server_ids: Vec<i64>,
 ) -> Result<FetchServersResponse, String> {
     let selected = super::selected_connections(&state.catalog, &server_ids)?;
+
+    if let Some(first) = selected.first() {
+        if selected.iter().any(|c| c.db_type != first.db_type) {
+            return Err(
+                "Cannot compare servers from different database engines.".to_string(),
+            );
+        }
+    }
+
     let id_to_name: HashMap<i64, String> = selected.iter().map(|c| (c.id, c.name.clone())).collect();
     let filter_rules = state.filter_rules_svc.list_active_rules().map_err(|e| e.to_string())?;
     let diff_svc = Arc::clone(&state.diff_svc);
