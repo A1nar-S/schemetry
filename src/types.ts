@@ -22,6 +22,7 @@ export type ConnectionRecord = {
 };
 
 export type QueryServerResult = {
+  server_id: number;
   server_name: string;
   columns: string[];
   column_types: string[];
@@ -52,13 +53,19 @@ export type Discrepancy = {
   element: string;
   table_name: string;
   column_name: string;
+  server_id: number;
   server_name: string;
   details: string;
 };
 
+export type LoadedServer = {
+  id: number;
+  name: string;
+};
+
 export type FetchServersResponse = {
-  loaded_servers: string[];
-  errors: { server: string; error: string }[];
+  loaded_servers: LoadedServer[];
+  errors: { server_id: number; server: string; error: string }[];
 };
 
 export type FixScriptResult = {
@@ -122,6 +129,7 @@ export type HistoryFixResult = {
 };
 
 export type ServerHistoryFixResult = {
+  server_id: number;
   server_name: string;
   issues: HistoryTableIssue[];
   fix_sql: string;

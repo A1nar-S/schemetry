@@ -33,11 +33,20 @@ fn diff_service() -> SchemaDiffService {
     SchemaDiffService::new(Arc::new(DbPostgresRepository::new()))
 }
 
-fn dialects() -> HashMap<String, Dialect> {
+fn dialects() -> HashMap<i64, Dialect> {
     let mut m = HashMap::new();
-    m.insert("SOURCE".to_string(), Dialect::Postgres);
-    m.insert("TARGET".to_string(), Dialect::Postgres);
+    m.insert(common::SOURCE_ID, Dialect::Postgres);
+    m.insert(common::TARGET_ID, Dialect::Postgres);
     m
+}
+
+fn server_names() -> HashMap<i64, String> {
+    [
+        (common::SOURCE_ID, "SOURCE".to_string()),
+        (common::TARGET_ID, "TARGET".to_string()),
+    ]
+    .into_iter()
+    .collect()
 }
 
 #[test]
@@ -130,7 +139,8 @@ fn schema_diff_and_idempotent_fix_execution() {
     assert!(errors.is_empty(), "fetch errors: {errors:?}");
 
     let discrepancies =
-        compare_tables_across_servers(&servers, "SOURCE", true, true).expect("compare failed");
+        compare_tables_across_servers(&servers, &server_names(), common::SOURCE_ID, true, true)
+            .expect("compare failed");
 
     let has = |diff: &str, element: &str, table: &str, column: &str| {
         discrepancies.iter().any(|d| {
@@ -138,7 +148,7 @@ fn schema_diff_and_idempotent_fix_execution() {
                 && d.element == element
                 && d.table_name.eq_ignore_ascii_case(table)
                 && d.column_name.eq_ignore_ascii_case(column)
-                && d.server_name.eq_ignore_ascii_case("TARGET")
+                && d.server_id == common::TARGET_ID
         })
     };
 
@@ -160,10 +170,18 @@ fn schema_diff_and_idempotent_fix_execution() {
         .fetch_table_ddls_for_tables(&source, &["audit_log".to_string()])
         .expect("fetch_table_ddls_for_tables failed");
     let mut server_table_ddls: ServerTableDdls = HashMap::new();
-    server_table_ddls.insert("SOURCE".to_string(), ddls);
+    server_table_ddls.insert(common::SOURCE_ID, ddls);
 
-    let fix = generate_fix_script(&discrepancies, &selected, &servers, &server_table_ddls, "SOURCE", &dialects())
-        .expect("generate_fix_script failed");
+    let fix = generate_fix_script(
+        &discrepancies,
+        &selected,
+        &servers,
+        &server_table_ddls,
+        common::SOURCE_ID,
+        &server_names(),
+        &dialects(),
+    )
+    .expect("generate_fix_script failed");
     assert_eq!(
         fix.generated_count, 3,
         "expected exactly 3 generated statements, script:\n{}",
@@ -187,8 +205,9 @@ fn schema_diff_and_idempotent_fix_execution() {
     let (servers_after, errors_after) =
         diff_svc.fetch_from_connections(&[source.clone(), target.clone()], &[]);
     assert!(errors_after.is_empty(), "fetch errors after fix: {errors_after:?}");
-    let discrepancies_after = compare_tables_across_servers(&servers_after, "SOURCE", true, true)
-        .expect("compare after fix failed");
+    let discrepancies_after =
+        compare_tables_across_servers(&servers_after, &server_names(), common::SOURCE_ID, true, true)
+            .expect("compare after fix failed");
 
     for (diff, element, table, column) in expected_resolved {
         assert!(
@@ -207,8 +226,9 @@ fn schema_diff_and_idempotent_fix_execution() {
 
     let (servers_final, errors_final) = diff_svc.fetch_from_connections(&[source, target], &[]);
     assert!(errors_final.is_empty(), "fetch errors after second run: {errors_final:?}");
-    let discrepancies_final = compare_tables_across_servers(&servers_final, "SOURCE", true, true)
-        .expect("compare after second fix run failed");
+    let discrepancies_final =
+        compare_tables_across_servers(&servers_final, &server_names(), common::SOURCE_ID, true, true)
+            .expect("compare after second fix run failed");
 
     assert_eq!(
         discrepancies_after.len(),

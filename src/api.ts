@@ -49,17 +49,17 @@ export async function exportConnections(path: string): Promise<number> {
   return invoke('export_connections', { path });
 }
 
-export async function fetchServers(server_names: string[]): Promise<FetchServersResponse> {
-  return invoke('fetch_servers', { serverNames: server_names });
+export async function fetchServers(server_ids: number[]): Promise<FetchServersResponse> {
+  return invoke('fetch_servers', { serverIds: server_ids });
 }
 
 export async function compareDiscrepancies(args: {
-  reference_server: string;
+  reference_server_id: number;
   check_comments: boolean;
   check_indexes: boolean;
 }): Promise<Discrepancy[]> {
   return invoke('compare_discrepancies', {
-    referenceServer: args.reference_server,
+    referenceServerId: args.reference_server_id,
     checkComments: args.check_comments,
     checkIndexes: args.check_indexes,
   });
@@ -68,12 +68,12 @@ export async function compareDiscrepancies(args: {
 export async function generateFixScript(args: {
   discrepancies: Discrepancy[];
   selected_ids: number[];
-  reference_server: string;
+  reference_server_id: number;
 }): Promise<FixScriptResult> {
   return invoke('generate_fix_script', {
     discrepancies: args.discrepancies,
     selectedIds: args.selected_ids,
-    referenceServer: args.reference_server,
+    referenceServerId: args.reference_server_id,
   });
 }
 
@@ -86,10 +86,10 @@ export async function exportCompareReport(
 
 export async function runQuery(
   sql: string,
-  server_names: string[],
+  server_ids: number[],
   materialize_lobs = false,
 ): Promise<QueryServerResult[]> {
-  return invoke('run_query', { sql, serverNames: server_names, materializeLobs: materialize_lobs });
+  return invoke('run_query', { sql, serverIds: server_ids, materializeLobs: materialize_lobs });
 }
 
 export async function getQueryHistory(): Promise<QueryHistoryEntry[]> {
@@ -97,13 +97,13 @@ export async function getQueryHistory(): Promise<QueryHistoryEntry[]> {
 }
 
 export async function fetchLobContent(
-  server_name: string,
+  server_id: number,
   sql: string,
   row_index: number,
   col_index: number,
 ): Promise<LobContent> {
   return invoke('fetch_lob_content', {
-    serverName: server_name,
+    serverId: server_id,
     sql,
     rowIndex: row_index,
     colIndex: col_index,
@@ -111,14 +111,14 @@ export async function fetchLobContent(
 }
 
 export async function saveBlobToFile(
-  server_name: string,
+  server_id: number,
   sql: string,
   row_index: number,
   col_index: number,
   path: string,
 ): Promise<number> {
   return invoke('save_blob_to_file', {
-    serverName: server_name,
+    serverId: server_id,
     sql,
     rowIndex: row_index,
     colIndex: col_index,
@@ -154,16 +154,16 @@ export async function exportQueryResults(
   return invoke('export_query_results', { results, outputPath: output_path, singleSheet: single_sheet });
 }
 
-export async function fetchSchemaObjects(serverName: string): Promise<SchemaObject[]> {
-  return invoke('fetch_schema_objects', { serverName });
+export async function fetchSchemaObjects(serverId: number): Promise<SchemaObject[]> {
+  return invoke('fetch_schema_objects', { serverId });
 }
 
-export async function fetchObjectDdl(serverName: string, objectName: string, objectType: string): Promise<string> {
-  return invoke('fetch_object_ddl', { serverName, objectName, objectType });
+export async function fetchObjectDdl(serverId: number, objectName: string, objectType: string): Promise<string> {
+  return invoke('fetch_object_ddl', { serverId, objectName, objectType });
 }
 
-export async function generateHistoryFix(serverNames: string[]): Promise<ServerHistoryFixResult[]> {
-  return invoke('generate_history_fix', { serverNames });
+export async function generateHistoryFix(serverIds: number[]): Promise<ServerHistoryFixResult[]> {
+  return invoke('generate_history_fix', { serverIds });
 }
 
 export async function getSettings(): Promise<AppSettings> {

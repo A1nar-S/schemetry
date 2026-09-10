@@ -52,16 +52,16 @@
   }
 
   function selectSchema(schema: string) {
-    selectedServers.update(s => { (schemaGroups.get(schema) ?? []).forEach(c => s.add(c.name)); return new Set(s); });
+    selectedServers.update(s => { (schemaGroups.get(schema) ?? []).forEach(c => s.add(c.id)); return new Set(s); });
   }
   function deselectSchema(schema: string) {
-    selectedServers.update(s => { (schemaGroups.get(schema) ?? []).forEach(c => s.delete(c.name)); return new Set(s); });
+    selectedServers.update(s => { (schemaGroups.get(schema) ?? []).forEach(c => s.delete(c.id)); return new Set(s); });
   }
-  function toggleServer(name: string) {
-    selectedServers.update(s => { s.has(name) ? s.delete(name) : s.add(name); return new Set(s); });
+  function toggleServer(id: number) {
+    selectedServers.update(s => { s.has(id) ? s.delete(id) : s.add(id); return new Set(s); });
   }
   function selectAll() {
-    selectedServers.set(new Set(connections.map(c => c.name)));
+    selectedServers.set(new Set(connections.map(c => c.id)));
   }
   function selectNone() {
     selectedServers.set(new Set());
@@ -70,12 +70,12 @@
   // Dialect for the editor: the active/first-selected server's engine. Mixed-engine
   // selections just highlight for whichever one happens to be picked first.
   $: queryDialect = (
-    connections.find(c => c.name === $activeServer)
-    ?? connections.find(c => $selectedServers.has(c.name))
+    connections.find(c => c.id === $activeServer)
+    ?? connections.find(c => $selectedServers.has(c.id))
   )?.db_type ?? 'oracle';
 
   // ── VirtualTable data ─────────────────────────────────────────────
-  $: activeResult = $results.find(r => r.server_name === $activeServer);
+  $: activeResult = $results.find(r => r.server_id === $activeServer);
   $: singleView = $exportMode === 'single';
 
   // The result whose columns/types define the grid: active server, or the first
@@ -112,7 +112,11 @@
   // that server's result (`__rowIndex`) so the LOB viewer can re-fetch the right cell.
   function mapRows(r: QueryServerResult): Record<string, string | number | null>[] {
     return r.rows.map((row, idx) => {
-      const out: Record<string, string | number | null> = { __rowIndex: idx, __server: r.server_name };
+      const out: Record<string, string | number | null> = {
+        __rowIndex: idx,
+        __server: r.server_name,
+        __serverId: r.server_id,
+      };
       r.columns.forEach((col, i) => { out[col] = row[i] ?? null; });
       return out;
     });
@@ -149,7 +153,7 @@
       const queryResults = await runQuery(sqlText, [...servers], get(showLobContent));
       results.set(queryResults);
       lastRunSql.set(sqlText);
-      activeServer.set(queryResults[0]?.server_name ?? '');
+      activeServer.set(queryResults[0]?.server_id ?? null);
       history.set(await getQueryHistory());
       notify(`Query executed on ${queryResults.length} server(s).`, 'ok');
     } catch (e) {
@@ -222,7 +226,7 @@
   let cellViewerText = '';        // plain cell value or loaded CLOB text
   let cellViewerRowIndex = -1;
   let cellViewerColIndex = -1;
-  let cellViewerServer = '';
+  let cellViewerServerId: number | null = null;
   let cellViewerLoading = false;
   let cellViewerLoaded = false;   // LOB content fetched?
   let lobMime = '';
@@ -252,7 +256,7 @@
     cellViewerText = '';
     cellViewerRowIndex = typeof row.__rowIndex === 'number' ? row.__rowIndex : -1;
     cellViewerColIndex = baseResult ? baseResult.columns.indexOf(colKey) : -1;
-    cellViewerServer = typeof row.__server === 'string' ? row.__server : get(activeServer);
+    cellViewerServerId = typeof row.__serverId === 'number' ? row.__serverId : get(activeServer);
 
     const kind = lobKind(colKey);
     if (kind === null) {
@@ -269,11 +273,11 @@
   }
 
   async function loadLobContent() {
-    if (cellViewerRowIndex < 0 || cellViewerColIndex < 0) return;
+    if (cellViewerRowIndex < 0 || cellViewerColIndex < 0 || cellViewerServerId === null) return;
     cellViewerLoading = true;
     try {
       const content = await fetchLobContent(
-        cellViewerServer,
+        cellViewerServerId,
         get(lastRunSql),
         cellViewerRowIndex,
         cellViewerColIndex,
@@ -303,7 +307,7 @@
   }
 
   async function saveLobToFile() {
-    if (cellViewerRowIndex < 0 || cellViewerColIndex < 0) return;
+    if (cellViewerRowIndex < 0 || cellViewerColIndex < 0 || cellViewerServerId === null) return;
     const filePath = await save({
       title: 'Save BLOB to file',
       defaultPath: `${cellViewerTitle || 'blob'}${extForMime(lobMime)}`,
@@ -312,7 +316,7 @@
     setBusy(true, 'Saving file…');
     try {
       const size = await saveBlobToFile(
-        cellViewerServer,
+        cellViewerServerId,
         get(lastRunSql),
         cellViewerRowIndex,
         cellViewerColIndex,
@@ -448,8 +452,8 @@
             <label class="schema-item">
               <input
                 type="checkbox"
-                checked={$selectedServers.has(conn.name)}
-                on:change={() => toggleServer(conn.name)}
+                checked={$selectedServers.has(conn.id)}
+                on:change={() => toggleServer(conn.id)}
               />
               <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{conn.name}</span>
             </label>
@@ -511,8 +515,8 @@
         {#each $results as result}
           <button
             class="tab-btn"
-            class:active={result.server_name === $activeServer}
-            on:click={() => activeServer.set(result.server_name)}
+            class:active={result.server_id === $activeServer}
+            on:click={() => activeServer.set(result.server_id)}
           >{result.server_name}{result.error ? ' ⚠' : ''}</button>
         {/each}
       </div>

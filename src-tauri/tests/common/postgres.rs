@@ -15,7 +15,9 @@ fn env_or(key: &str, default: &str) -> String {
     env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
-fn connection(name: &str, default_port: u16, port_env: &str) -> ConnectionRecord {
+use super::{SOURCE_ID, TARGET_ID};
+
+fn connection(id: i64, name: &str, default_port: u16, port_env: &str) -> ConnectionRecord {
     let host = env_or("SCHEMETRY_TEST_PG_HOST", "localhost");
     let port: u16 = env::var(port_env)
         .ok()
@@ -23,10 +25,10 @@ fn connection(name: &str, default_port: u16, port_env: &str) -> ConnectionRecord
         .unwrap_or(default_port);
     let service_name = env_or("SCHEMETRY_TEST_PG_DATABASE", "schemetry");
     let username = env_or("SCHEMETRY_TEST_PG_USER", "schemetry");
-    let password = env_or("SCHEMETRY_TEST_PG_PASSWORD", "SchemetryTest_2024");
+    let password = env_or("SCHEMETRY_TEST_PG_PASSWORD", "SchemetryTest");
 
     ConnectionRecord {
-        id: 0,
+        id,
         name: name.to_string(),
         db_type: DbType::Postgres,
         host,
@@ -41,11 +43,11 @@ fn connection(name: &str, default_port: u16, port_env: &str) -> ConnectionRecord
 }
 
 pub fn source_connection() -> ConnectionRecord {
-    connection("SOURCE", 5432, "SCHEMETRY_TEST_PG_SOURCE_PORT")
+    connection(SOURCE_ID, "SOURCE", 5432, "SCHEMETRY_TEST_PG_SOURCE_PORT")
 }
 
 pub fn target_connection() -> ConnectionRecord {
-    connection("TARGET", 5433, "SCHEMETRY_TEST_PG_TARGET_PORT")
+    connection(TARGET_ID, "TARGET", 5433, "SCHEMETRY_TEST_PG_TARGET_PORT")
 }
 
 /// Splits a fix script into top-level, blank-line-separated chunks and drops any

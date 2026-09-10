@@ -19,12 +19,8 @@ pub enum Dialect {
     Postgres,
 }
 
-fn resolve_dialect(server_dialects: &HashMap<String, Dialect>, server: &str) -> Dialect {
-    server_dialects
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(server))
-        .map(|(_, d)| *d)
-        .unwrap_or_default()
+fn resolve_dialect(server_dialects: &HashMap<i64, Dialect>, server_id: i64) -> Dialect {
+    server_dialects.get(&server_id).copied().unwrap_or_default()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -101,31 +97,36 @@ fn detect_fix_kind(row: &Discrepancy) -> FixKind {
     }
 }
 
-fn resolve_target_server(row: &Discrepancy, reference_server: &str) -> Option<String> {
-    if !row.server_name.eq_ignore_ascii_case(reference_server) {
-        return Some(row.server_name.clone());
+fn resolve_target_server(
+    row: &Discrepancy,
+    reference_server_id: i64,
+    server_names: &HashMap<i64, String>,
+) -> Option<i64> {
+    if row.server_id != reference_server_id {
+        return Some(row.server_id);
     }
 
     if row.difference.eq_ignore_ascii_case("MISSING") {
-        return parse_target_server_from_details(&row.details);
+        let name = parse_target_server_from_details(&row.details)?;
+        return server_names
+            .iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(&name))
+            .map(|(id, _)| *id);
     }
 
     None
 }
 
-pub fn discrepancy_target_server(row: &Discrepancy, reference_server: &str) -> Option<String> {
-    resolve_target_server(row, reference_server)
+pub fn discrepancy_target_server(
+    row: &Discrepancy,
+    reference_server_id: i64,
+    server_names: &HashMap<i64, String>,
+) -> Option<i64> {
+    resolve_target_server(row, reference_server_id, server_names)
 }
 
-fn resolve_loaded_server_name(servers: &ServersData, target_server: &str) -> Option<String> {
-    if servers.contains_key(target_server) {
-        return Some(target_server.to_string());
-    }
-
-    servers
-        .keys()
-        .find(|name| name.eq_ignore_ascii_case(target_server))
-        .cloned()
+fn resolve_loaded_server_id(servers: &ServersData, target_server_id: i64) -> Option<i64> {
+    servers.contains_key(&target_server_id).then_some(target_server_id)
 }
 
 fn desired_type_sql(reference_col: &ColumnInfo) -> Option<String> {
@@ -165,22 +166,22 @@ fn desired_default_expr(reference_col: &ColumnInfo) -> Option<String> {
 
 fn find_reference_column<'a>(
     servers: &'a ServersData,
-    reference_server: &str,
+    reference_server_id: i64,
     table: &str,
     column: &str,
 ) -> Option<&'a ColumnInfo> {
     servers
-        .get(reference_server)?
+        .get(&reference_server_id)?
         .get(table)?
         .get(column)
 }
 
 fn find_reference_table_columns<'a>(
     servers: &'a ServersData,
-    reference_server: &str,
+    reference_server_id: i64,
     table: &str,
 ) -> Option<&'a TableColumns> {
-    let tables = servers.get(reference_server)?;
+    let tables = servers.get(&reference_server_id)?;
     tables
         .get(table)
         .or_else(|| tables.iter().find_map(|(name, cols)| {
@@ -194,10 +195,10 @@ fn find_reference_table_columns<'a>(
 
 fn find_reference_table_ddl<'a>(
     server_table_ddls: &'a ServerTableDdls,
-    reference_server: &str,
+    reference_server_id: i64,
     table: &str,
 ) -> Option<&'a str> {
-    let table_ddls = server_table_ddls.get(reference_server)?;
+    let table_ddls = server_table_ddls.get(&reference_server_id)?;
     table_ddls
         .get(table)
         .or_else(|| table_ddls.get(&table.to_ascii_uppercase()))
@@ -650,17 +651,18 @@ pub fn generate_fix_script(
     selected_ids: &HashSet<usize>,
     servers: &ServersData,
     server_table_ddls: &ServerTableDdls,
-    reference_server: &str,
-    server_dialects: &HashMap<String, Dialect>,
+    reference_server_id: i64,
+    server_names: &HashMap<i64, String>,
+    server_dialects: &HashMap<i64, Dialect>,
 ) -> Result<FixScriptResult> {
     if selected_ids.is_empty() {
         return Err(anyhow!("Select at least one discrepancy first."));
     }
 
-    if !servers.contains_key(reference_server) {
+    if !servers.contains_key(&reference_server_id) {
         return Err(anyhow!(
             "Reference server '{}' is not loaded in current fetch data.",
-            reference_server
+            server_names.get(&reference_server_id).cloned().unwrap_or_else(|| reference_server_id.to_string())
         ));
     }
 
@@ -669,8 +671,8 @@ pub fn generate_fix_script(
 
     let mut generated_count = 0usize;
     let mut skipped_count = 0usize;
-    let mut generated_targets = Vec::new();
-    let mut generated_blocks: Vec<(String, String)> = Vec::new();
+    let mut generated_targets: Vec<i64> = Vec::new();
+    let mut generated_blocks: Vec<(i64, String)> = Vec::new();
     let mut skipped_messages = Vec::new();
     let mut dedup = HashSet::new();
 
@@ -691,7 +693,7 @@ pub fn generate_fix_script(
             continue;
         }
 
-        let Some(target_server) = resolve_target_server(row, reference_server) else {
+        let Some(target_server_id) = resolve_target_server(row, reference_server_id, server_names) else {
             skipped_count += 1;
             skipped_messages.push(format!(
                 "#{}: could not resolve target server for this discrepancy.",
@@ -700,12 +702,12 @@ pub fn generate_fix_script(
             continue;
         };
 
-        let Some(target_server) = resolve_loaded_server_name(servers, &target_server) else {
+        let Some(target_server_id) = resolve_loaded_server_id(servers, target_server_id) else {
             skipped_count += 1;
             skipped_messages.push(format!(
                 "#{}: target server '{}' is not loaded in fetched data.",
                 id + 1,
-                target_server
+                server_names.get(&target_server_id).cloned().unwrap_or_else(|| target_server_id.to_string())
             ));
             continue;
         };
@@ -719,11 +721,11 @@ pub fn generate_fix_script(
             continue;
         }
 
-        let dialect = resolve_dialect(server_dialects, &target_server);
+        let dialect = resolve_dialect(server_dialects, target_server_id);
 
         let block = match kind {
             FixKind::MissingTable => {
-                if row.server_name.eq_ignore_ascii_case(reference_server) {
+                if row.server_id == reference_server_id {
                     skipped_count += 1;
                     skipped_messages.push(format!(
                         "#{}: table exists on non-reference server but missing in reference; create-table fix is not applicable.",
@@ -734,7 +736,7 @@ pub fn generate_fix_script(
 
                 if let Some(table_ddl) = find_reference_table_ddl(
                     server_table_ddls,
-                    reference_server,
+                    reference_server_id,
                     row.table_name.trim(),
                 ) {
                     let built = match dialect {
@@ -742,7 +744,7 @@ pub fn generate_fix_script(
                         Dialect::Postgres => build_create_table_block_pg(row.table_name.trim(), table_ddl),
                     };
                     if let Some(block) = built {
-                        let suffix = find_reference_table_columns(servers, reference_server, row.table_name.trim())
+                        let suffix = find_reference_table_columns(servers, reference_server_id, row.table_name.trim())
                             .map(|cols| match dialect {
                                 Dialect::Oracle => build_comments_and_indexes_suffix(row.table_name.trim(), cols),
                                 Dialect::Postgres => String::new(),
@@ -752,7 +754,7 @@ pub fn generate_fix_script(
                     } else {
                         let Some(reference_columns) = find_reference_table_columns(
                             servers,
-                            reference_server,
+                            reference_server_id,
                             row.table_name.trim(),
                         ) else {
                             skipped_count += 1;
@@ -786,7 +788,7 @@ pub fn generate_fix_script(
                 } else {
                     let Some(reference_columns) = find_reference_table_columns(
                         servers,
-                        reference_server,
+                        reference_server_id,
                         row.table_name.trim(),
                     ) else {
                         skipped_count += 1;
@@ -821,7 +823,7 @@ pub fn generate_fix_script(
             FixKind::MissingColumn => {
                 let Some(reference_col) = find_reference_column(
                     servers,
-                    reference_server,
+                    reference_server_id,
                     row.table_name.trim(),
                     row.column_name.trim(),
                 ) else {
@@ -842,7 +844,7 @@ pub fn generate_fix_script(
             FixKind::DataType | FixKind::DataLength => {
                 let Some(reference_col) = find_reference_column(
                     servers,
-                    reference_server,
+                    reference_server_id,
                     row.table_name.trim(),
                     row.column_name.trim(),
                 ) else {
@@ -863,7 +865,7 @@ pub fn generate_fix_script(
             FixKind::DataDefault => {
                 let Some(reference_col) = find_reference_column(
                     servers,
-                    reference_server,
+                    reference_server_id,
                     row.table_name.trim(),
                     row.column_name.trim(),
                 ) else {
@@ -884,7 +886,7 @@ pub fn generate_fix_script(
             FixKind::Comments => {
                 let Some(reference_col) = find_reference_column(
                     servers,
-                    reference_server,
+                    reference_server_id,
                     row.table_name.trim(),
                     row.column_name.trim(),
                 ) else {
@@ -916,7 +918,7 @@ pub fn generate_fix_script(
 
         let dedup_key = format!(
             "{}|{}|{}|{:?}|{}",
-            target_server,
+            target_server_id,
             row.table_name.trim(),
             row.column_name.trim(),
             kind,
@@ -927,15 +929,12 @@ pub fn generate_fix_script(
         }
 
         generated_count += 1;
-        if !generated_targets
-            .iter()
-            .any(|name: &String| name.eq_ignore_ascii_case(&target_server))
-        {
-            generated_targets.push(target_server.clone());
+        if !generated_targets.contains(&target_server_id) {
+            generated_targets.push(target_server_id);
         }
 
         generated_blocks.push((
-            target_server.clone(),
+            target_server_id,
             format!(
             "-- discrepancy #{}\n-- table: {}\n-- column: {}\n{}",
             id + 1,
@@ -949,23 +948,25 @@ pub fn generate_fix_script(
         )));
     }
 
+    let name_of = |id: i64| server_names.get(&id).cloned().unwrap_or_else(|| id.to_string());
+
     let mut script = String::new();
-    script.push_str(&format!("-- Reference server: {}\n", reference_server));
+    script.push_str(&format!("-- Reference server: {}\n", name_of(reference_server_id)));
     script.push_str("-- Review carefully before execution.\n\n");
 
     if generated_blocks.is_empty() {
         script.push_str("-- No executable fix statements were generated for the current selection.\n");
     } else {
-        for (index, target_server) in generated_targets.iter().enumerate() {
+        for (index, target_server_id) in generated_targets.iter().enumerate() {
             if index > 0 {
                 script.push('\n');
             }
 
-            script.push_str(&format!("-- Target data source: {}\n\n", target_server));
+            script.push_str(&format!("-- Target data source: {}\n\n", name_of(*target_server_id)));
 
             let blocks: Vec<&str> = generated_blocks
                 .iter()
-                .filter(|(block_target, _)| block_target.eq_ignore_ascii_case(target_server))
+                .filter(|(block_target, _)| block_target == target_server_id)
                 .map(|(_, block)| block.as_str())
                 .collect();
 

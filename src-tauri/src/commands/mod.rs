@@ -12,23 +12,22 @@ use std::collections::HashSet;
 use crate::models::ConnectionRecord;
 use crate::services::connection_catalog::ConnectionCatalogService;
 
+/// Resolves connections by their unique `id`, not `name` — names may repeat across
+/// groups/engines, so id is the only identifier that unambiguously picks one connection.
 pub(crate) fn selected_connections(
     catalog: &ConnectionCatalogService,
-    server_names: &[String],
+    server_ids: &[i64],
 ) -> Result<Vec<ConnectionRecord>, String> {
     let all = catalog.get_all_connections().map_err(|e| e.to_string())?;
-    if server_names.is_empty() {
+    if server_ids.is_empty() {
         return Ok(all);
     }
 
-    let selected: HashSet<String> = server_names
-        .iter()
-        .map(|s| s.trim().to_ascii_uppercase())
-        .collect();
+    let selected: HashSet<i64> = server_ids.iter().copied().collect();
 
     let picked: Vec<ConnectionRecord> = all
         .into_iter()
-        .filter(|conn| selected.contains(&conn.name.to_ascii_uppercase()))
+        .filter(|conn| selected.contains(&conn.id))
         .collect();
 
     if picked.is_empty() {

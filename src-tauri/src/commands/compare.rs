@@ -12,22 +12,30 @@ use crate::state::AppState;
 
 #[derive(Serialize)]
 pub struct ServerError {
+    pub server_id: i64,
     pub server: String,
     pub error: String,
 }
 
 #[derive(Serialize)]
+pub struct LoadedServer {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Serialize)]
 pub struct FetchServersResponse {
-    pub loaded_servers: Vec<String>,
+    pub loaded_servers: Vec<LoadedServer>,
     pub errors: Vec<ServerError>,
 }
 
 #[tauri::command]
 pub async fn fetch_servers(
     state: State<'_, AppState>,
-    server_names: Vec<String>,
+    server_ids: Vec<i64>,
 ) -> Result<FetchServersResponse, String> {
-    let selected = super::selected_connections(&state.catalog, &server_names)?;
+    let selected = super::selected_connections(&state.catalog, &server_ids)?;
+    let id_to_name: HashMap<i64, String> = selected.iter().map(|c| (c.id, c.name.clone())).collect();
     let filter_rules = state.filter_rules_svc.list_active_rules().map_err(|e| e.to_string())?;
     let diff_svc = Arc::clone(&state.diff_svc);
     let snapshot_lock = Arc::clone(&state.snapshot);
@@ -36,14 +44,21 @@ pub async fn fetch_servers(
         let (servers, errors_map) = diff_svc.fetch_from_connections(&selected, &filter_rules);
 
         let loaded_servers = {
-            let mut names: Vec<String> = servers.keys().cloned().collect();
-            names.sort_unstable();
-            names
+            let mut list: Vec<LoadedServer> = servers
+                .keys()
+                .filter_map(|id| id_to_name.get(id).map(|name| LoadedServer { id: *id, name: name.clone() }))
+                .collect();
+            list.sort_by(|a, b| a.name.cmp(&b.name));
+            list
         };
 
         let mut errors: Vec<ServerError> = errors_map
             .into_iter()
-            .map(|(server, error)| ServerError { server, error })
+            .map(|(id, error)| ServerError {
+                server_id: id,
+                server: id_to_name.get(&id).cloned().unwrap_or_default(),
+                error,
+            })
             .collect();
         errors.sort_by(|a, b| a.server.cmp(&b.server));
 
@@ -60,14 +75,22 @@ pub async fn fetch_servers(
 #[tauri::command]
 pub fn compare_discrepancies(
     state: State<AppState>,
-    reference_server: String,
+    reference_server_id: i64,
     check_comments: bool,
     check_indexes: bool,
 ) -> Result<Vec<Discrepancy>, String> {
+    let server_names: HashMap<i64, String> = state
+        .catalog
+        .get_all_connections()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|c| (c.id, c.name))
+        .collect();
     let snapshot = state.snapshot.lock().map_err(|_| "Failed to lock server snapshot.")?;
     services::compare::compare_tables_across_servers(
         &snapshot.servers,
-        &reference_server,
+        &server_names,
+        reference_server_id,
         check_comments,
         check_indexes,
     )
@@ -79,7 +102,7 @@ pub async fn generate_fix_script(
     state: State<'_, AppState>,
     discrepancies: Vec<Discrepancy>,
     selected_ids: Vec<usize>,
-    reference_server: String,
+    reference_server_id: i64,
 ) -> Result<services::fix::FixScriptResult, String> {
     let selected_set: HashSet<usize> = selected_ids.into_iter().collect();
 
@@ -91,7 +114,7 @@ pub async fn generate_fix_script(
             if let Some(row) = discrepancies.get(*id) {
                 if row.difference.eq_ignore_ascii_case("MISSING")
                     && row.column_name.trim().is_empty()
-                    && !row.server_name.eq_ignore_ascii_case(&reference_server)
+                    && row.server_id != reference_server_id
                 {
                     set.insert(row.table_name.trim().to_ascii_uppercase());
                 }
@@ -103,7 +126,7 @@ pub async fn generate_fix_script(
     // Resolve the reference server connection on the calling thread before moving
     // into spawn_blocking.
     let ref_conn = if !missing_table_names.is_empty() {
-        let mut conns = super::selected_connections(&state.catalog, &[reference_server.clone()])?;
+        let mut conns = super::selected_connections(&state.catalog, &[reference_server_id])?;
         Some(conns.remove(0))
     } else {
         None
@@ -111,17 +134,19 @@ pub async fn generate_fix_script(
 
     let diff_svc = Arc::clone(&state.diff_svc);
     let snapshot_lock = Arc::clone(&state.snapshot);
-    let server_dialects: HashMap<String, services::fix::Dialect> = state
-        .catalog
-        .get_all_connections()
-        .map_err(|e| e.to_string())?
+    let all_connections = state.catalog.get_all_connections().map_err(|e| e.to_string())?;
+    let server_names: HashMap<i64, String> = all_connections
+        .iter()
+        .map(|c| (c.id, c.name.clone()))
+        .collect();
+    let server_dialects: HashMap<i64, services::fix::Dialect> = all_connections
         .into_iter()
         .map(|c| {
             let dialect = match c.db_type {
                 crate::models::DbType::Oracle => services::fix::Dialect::Oracle,
                 crate::models::DbType::Postgres => services::fix::Dialect::Postgres,
             };
-            (c.name, dialect)
+            (c.id, dialect)
         })
         .collect();
 
@@ -133,7 +158,7 @@ pub async fn generate_fix_script(
                     .fetch_table_ddls_for_tables(&conn, &missing_table_names)
                     .unwrap_or_default();
                 let mut map = HashMap::new();
-                map.insert(reference_server.clone(), ddls);
+                map.insert(reference_server_id, ddls);
                 map
             }
             None => HashMap::new(),
@@ -146,7 +171,8 @@ pub async fn generate_fix_script(
             &selected_set,
             &snapshot.servers,
             &server_table_ddls,
-            &reference_server,
+            reference_server_id,
+            &server_names,
             &server_dialects,
         )
         .map_err(|e| e.to_string())

@@ -9,6 +9,7 @@
   import { resolvedTheme } from '../hooks/useTheme';
   import {
     selectedServer,
+    selectedServerId,
     step,
     objects,
     filterQuery,
@@ -25,7 +26,7 @@
   let showSaveModal = false;
   let saveDescription = '';
 
-  $: activeConnection = connections.find(c => c.name === $selectedServer);
+  $: activeConnection = connections.find(c => c.id === $selectedServerId);
   $: schema = activeConnection?.db_type === 'postgres'
     ? (activeConnection.pg_schema?.trim() || 'public')
     : (activeConnection?.username ?? '');
@@ -91,10 +92,11 @@
 
   // ── Handlers ──────────────────────────────────────────────────────
   async function onLoad() {
-    if (!get(selectedServer)) { notify('Select a server first.', 'error'); return; }
+    const serverId = get(selectedServerId);
+    if (serverId === null) { notify('Select a server first.', 'error'); return; }
     setBusy(true, 'Loading schema objects…');
     try {
-      const loaded = await fetchSchemaObjects(get(selectedServer));
+      const loaded = await fetchSchemaObjects(serverId);
       objects.set(loaded);
       step.set('objects');
       selectedObject.set(null);
@@ -110,6 +112,8 @@
   }
 
   async function onSelectObject(obj: SchemaObject) {
+    const serverId = get(selectedServerId);
+    if (serverId === null) return;
     const cur = get(selectedObject);
     if (cur?.name === obj.name && cur?.object_type === obj.object_type) return;
     expandGroupOf(obj);
@@ -117,7 +121,7 @@
     generatedDdl.set('');
     ddlLoading = true;
     try {
-      const ddl = await fetchObjectDdl(get(selectedServer), obj.name, obj.object_type);
+      const ddl = await fetchObjectDdl(serverId, obj.name, obj.object_type);
       generatedDdl.set(ddl);
     } catch (e) {
       generatedDdl.set(`-- Error generating DDL: ${String(e)}`);
@@ -134,10 +138,11 @@
   }
 
   async function onRefresh() {
-    if (!get(selectedServer)) return;
+    const serverId = get(selectedServerId);
+    if (serverId === null) return;
     setBusy(true, 'Refreshing schema objects…');
     try {
-      const loaded = await fetchSchemaObjects(get(selectedServer));
+      const loaded = await fetchSchemaObjects(serverId);
       objects.set(loaded);
       const cur = get(selectedObject);
       if (cur) {
@@ -149,7 +154,7 @@
           generatedDdl.set('');
           ddlLoading = true;
           try {
-            const ddl = await fetchObjectDdl(get(selectedServer), cur.name, cur.object_type);
+            const ddl = await fetchObjectDdl(serverId, cur.name, cur.object_type);
             generatedDdl.set(ddl);
           } catch (e) {
             generatedDdl.set(`-- Error generating DDL: ${String(e)}`);
@@ -213,13 +218,14 @@
       <ServerCombobox
         connections={connections}
         bind:value={$selectedServer}
+        onSelect={(c) => selectedServerId.set(c.id)}
         placeholder="Search a server…"
       />
 
       <div>
         <button
           class="btn-primary"
-          disabled={!$selectedServer || $busy}
+          disabled={$selectedServerId === null || $busy}
           on:click={() => void onLoad()}
         >→ Load Objects</button>
       </div>

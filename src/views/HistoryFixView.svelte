@@ -14,7 +14,7 @@
   let showNaming = false;
 
   // ── Active result ──────────────────────────────────────────────────
-  $: activeResult = $results.find(r => r.server_name === $activeServer);
+  $: activeResult = $results.find(r => r.server_id === $activeServer);
 
   // ── Group issues by history table for the active server ────────────
   $: issuesByTable = (() => {
@@ -29,20 +29,20 @@
   $: sortedTables = [...issuesByTable.keys()].sort();
 
   // ── Server selector helpers ────────────────────────────────────────
-  function toggleServer(name: string) {
-    selectedServers.update(s => { s.has(name) ? s.delete(name) : s.add(name); return new Set(s); });
+  function toggleServer(id: number) {
+    selectedServers.update(s => { s.has(id) ? s.delete(id) : s.add(id); return new Set(s); });
   }
-  function selectAll()  { selectedServers.set(new Set(connections.map(c => c.name))); }
+  function selectAll()  { selectedServers.set(new Set(connections.map(c => c.id))); }
   function selectNone() { selectedServers.set(new Set()); }
   function selectGroup(schema: string) {
     selectedServers.update(s => {
-      connections.filter(c => (c.group_name?.trim() || 'Default') === schema).forEach(c => s.add(c.name));
+      connections.filter(c => (c.group_name?.trim() || 'Default') === schema).forEach(c => s.add(c.id));
       return new Set(s);
     });
   }
   function deselectGroup(schema: string) {
     selectedServers.update(s => {
-      connections.filter(c => (c.group_name?.trim() || 'Default') === schema).forEach(c => s.delete(c.name));
+      connections.filter(c => (c.group_name?.trim() || 'Default') === schema).forEach(c => s.delete(c.id));
       return new Set(s);
     });
   }
@@ -56,7 +56,7 @@
     try {
       const res = await generateHistoryFix([...servers]);
       results.set(res);
-      activeServer.set(res[0]?.server_name ?? '');
+      activeServer.set(res[0]?.server_id ?? null);
       const totalIssues = res.reduce((n, r) => n + r.issues.length, 0);
       const errCount = res.filter(r => r.error).length;
       if (errCount > 0) {
@@ -82,7 +82,7 @@
 
   function reset() {
     results.set([]);
-    activeServer.set('');
+    activeServer.set(null);
   }
 </script>
 
@@ -141,8 +141,8 @@
       {#each $results as r}
         <button
           class="tab-btn"
-          class:active={r.server_name === $activeServer}
-          on:click={() => activeServer.set(r.server_name)}
+          class:active={r.server_id === $activeServer}
+          on:click={() => activeServer.set(r.server_id)}
         >
           {r.server_name}
           {#if r.error}
@@ -221,7 +221,7 @@
           </div>
           <SqlEditor
             value={activeResult.fix_sql}
-            dialect={connections.find(c => c.name === $activeServer)?.db_type ?? 'oracle'}
+            dialect={connections.find(c => c.id === $activeServer)?.db_type ?? 'oracle'}
             readonly
             height="100%"
           />

@@ -7,6 +7,10 @@
   export let placeholder = 'Search a server…';
   export let disabled = false;
   export let onChange: ((value: string) => void) | undefined = undefined;
+  // Fired with the actual chosen connection (not just its name) when the user picks
+  // one from the list — use this, not `value`, when the caller needs to unambiguously
+  // identify which connection was picked (names may repeat across groups/engines).
+  export let onSelect: ((conn: ConnectionRecord) => void) | undefined = undefined;
 
   let query = '';
   let open = false;
@@ -58,6 +62,7 @@
     editing = false;
     open = false;
     onChange?.(value);
+    onSelect?.(c);
   }
 
   function close() {

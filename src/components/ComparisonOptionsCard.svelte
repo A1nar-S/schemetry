@@ -1,14 +1,21 @@
 <script lang="ts">
   import { busy } from '../stores/notification';
+  import type { LoadedServer } from '../types';
 
-  export let loadedServers: string[] = [];
-  export let referenceServer = '';
+  export let loadedServers: LoadedServer[] = [];
+  export let referenceServer: number | null = null;
   export let checkComments = false;
   export let checkIndexes = false;
-  export let onReferenceChange: (s: string) => void;
+  export let onReferenceChange: (id: number | null) => void;
   export let onToggleComments: (v: boolean) => void;
   export let onToggleIndexes: (v: boolean) => void;
   export let onRunComparison: () => void;
+
+  // <select> values are always strings; translate to/from the numeric id.
+  $: selectValue = referenceServer === null ? '' : String(referenceServer);
+  function onSelectChange(raw: string) {
+    onReferenceChange(raw === '' ? null : Number(raw));
+  }
 </script>
 
 <div class="card stack">
@@ -17,13 +24,13 @@
   <div class="field">
     <span>Reference server</span>
     <select
-      bind:value={referenceServer}
-      on:change={() => onReferenceChange(referenceServer)}
+      value={selectValue}
+      on:change={(e) => onSelectChange(e.currentTarget.value)}
       disabled={!loadedServers.length}
     >
       <option value="">— select —</option>
-      {#each loadedServers as s}
-        <option value={s}>{s}</option>
+      {#each loadedServers as s (s.id)}
+        <option value={s.id}>{s.name}</option>
       {/each}
     </select>
   </div>

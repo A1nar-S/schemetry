@@ -12,10 +12,10 @@ use crate::state::AppState;
 pub async fn run_query(
     state: State<'_, AppState>,
     sql: String,
-    server_names: Vec<String>,
+    server_ids: Vec<i64>,
     materialize_lobs: bool,
 ) -> Result<Vec<QueryServerResult>, String> {
-    let selected = super::selected_connections(&state.catalog, &server_names)?;
+    let selected = super::selected_connections(&state.catalog, &server_ids)?;
     let trimmed = sql.trim().to_string();
     if trimmed.is_empty() {
         return Err("SQL cannot be empty.".to_string());
@@ -54,7 +54,7 @@ pub struct LobContent {
 #[tauri::command]
 pub async fn fetch_lob_content(
     state: State<'_, AppState>,
-    server_name: String,
+    server_id: i64,
     sql: String,
     row_index: usize,
     col_index: usize,
@@ -64,7 +64,7 @@ pub async fn fetch_lob_content(
     const MAX_BINARY: usize = 16 * 1024 * 1024;
     const MAX_TEXT_CHARS: usize = 1024 * 1024;
 
-    let selected = super::selected_connections(&state.catalog, &[server_name])?;
+    let selected = super::selected_connections(&state.catalog, &[server_id])?;
     let conn = selected
         .into_iter()
         .next()
@@ -120,13 +120,13 @@ pub async fn fetch_lob_content(
 #[tauri::command]
 pub async fn save_blob_to_file(
     state: State<'_, AppState>,
-    server_name: String,
+    server_id: i64,
     sql: String,
     row_index: usize,
     col_index: usize,
     path: String,
 ) -> Result<u64, String> {
-    let selected = super::selected_connections(&state.catalog, &[server_name])?;
+    let selected = super::selected_connections(&state.catalog, &[server_id])?;
     let conn = selected
         .into_iter()
         .next()

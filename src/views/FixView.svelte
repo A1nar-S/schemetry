@@ -93,9 +93,11 @@
     return `<span style="${yellowStyle}">${details}</span>`;
   }
 
+  $: referenceServerName = $loadedServers.find(s => s.id === $referenceServer)?.name ?? '';
+
   $: filteredRows = (() => {
     let rows = $discrepancies;
-    if ($targetServer) rows = rows.filter(d => d.server_name === $targetServer);
+    if ($targetServer !== null) rows = rows.filter(d => d.server_id === $targetServer);
     if ($filterQuery.trim()) {
       const q = $filterQuery.toLowerCase();
       rows = rows.filter(d =>
@@ -115,26 +117,26 @@
     _displayId: $discrepancies.indexOf(row) + 1,
     _element: row.element,
     _change: buildChangeHtml(row.details),
-    _changeTitle: buildChangeTitle(row.details, $referenceServer, row.server_name),
+    _changeTitle: buildChangeTitle(row.details, referenceServerName, row.server_name),
   }));
 
   const getRowId = (row: Record<string, unknown>) => row._discIdx as number;
 
-  $: fixTargetOptions = $loadedServers.filter(s => s !== $referenceServer);
+  $: fixTargetOptions = $loadedServers.filter(s => s.id !== $referenceServer);
 
   // ── Server selector helpers ────────────────────────────────────────
-  function toggleForFetch(name: string) {
-    selectedForFetch.update(s => { s.has(name) ? s.delete(name) : s.add(name); return new Set(s); });
+  function toggleForFetch(id: number) {
+    selectedForFetch.update(s => { s.has(id) ? s.delete(id) : s.add(id); return new Set(s); });
   }
   function selectSchema(schema: string) {
     selectedForFetch.update(s => {
-      connections.filter(c => (c.group_name?.trim() || 'Default') === schema).forEach(c => s.add(c.name));
+      connections.filter(c => (c.group_name?.trim() || 'Default') === schema).forEach(c => s.add(c.id));
       return new Set(s);
     });
   }
   function deselectSchema(schema: string) {
     selectedForFetch.update(s => {
-      connections.filter(c => (c.group_name?.trim() || 'Default') === schema).forEach(c => s.delete(c.name));
+      connections.filter(c => (c.group_name?.trim() || 'Default') === schema).forEach(c => s.delete(c.id));
       return new Set(s);
     });
   }
@@ -148,8 +150,8 @@
       const res = await fetchServers([...selected]);
       loadedServers.set(res.loaded_servers);
       const loaded = res.loaded_servers;
-      if (!loaded.includes(get(referenceServer))) referenceServer.set(loaded[0] ?? '');
-      targetServer.set('');
+      if (!loaded.some(s => s.id === get(referenceServer))) referenceServer.set(loaded[0]?.id ?? null);
+      targetServer.set(null);
       const errMsg = res.errors.map(e => `${e.server}: ${e.error}`).join(' | ');
       notify(
         res.errors.length ? `Fetched ${loaded.length} server(s). Errors: ${errMsg}` : `Fetched ${loaded.length} server(s).`,
@@ -165,18 +167,18 @@
 
   async function onCompare() {
     const ref = get(referenceServer);
-    if (!ref) { notify('Select a reference server.', 'error'); return; }
+    if (ref === null) { notify('Select a reference server.', 'error'); return; }
     setBusy(true, 'Comparing schemas…');
     try {
       const result = await compareDiscrepancies({
-        reference_server: ref,
+        reference_server_id: ref,
         check_comments: get(checkComments),
         check_indexes: get(checkIndexes),
       });
       discrepancies.set(result);
       selectedIds.set(new Set());
       generatedScripts.set(new Map());
-      activeSqlServer.set('');
+      activeSqlServer.set(null);
       notify(`Comparison complete. ${result.length} discrepancy(s) found.`, 'ok');
     } catch (e) {
       notify(`Comparison failed: ${String(e)}`, 'error');
@@ -189,27 +191,27 @@
     const ids = get(selectedIds);
     const ref = get(referenceServer);
     if (!ids.size) { notify('Select at least one discrepancy to fix.', 'error'); return; }
-    if (!ref) { notify('Select a reference server.', 'error'); return; }
+    if (ref === null) { notify('Select a reference server.', 'error'); return; }
     setBusy(true, 'Generating fix script…');
     try {
       const allDiscs = get(discrepancies);
-      const byServer = new Map<string, number[]>();
+      const byServer = new Map<number, number[]>();
       for (const idx of ids) {
-        const srv = allDiscs[idx].server_name;
+        const srv = allDiscs[idx].server_id;
         if (!byServer.has(srv)) byServer.set(srv, []);
         byServer.get(srv)!.push(idx);
       }
-      const scripts = new Map<string, FixScriptResult>();
+      const scripts = new Map<number, FixScriptResult>();
       for (const [server, serverIds] of byServer) {
         const result = await generateFixScript({
           discrepancies: allDiscs,
           selected_ids: serverIds,
-          reference_server: ref,
+          reference_server_id: ref,
         });
         scripts.set(server, result);
       }
       generatedScripts.set(scripts);
-      activeSqlServer.set([...scripts.keys()][0] ?? '');
+      activeSqlServer.set([...scripts.keys()][0] ?? null);
       const total   = [...scripts.values()].reduce((n, r) => n + r.generated_count, 0);
       const skipped = [...scripts.values()].reduce((n, r) => n + r.skipped_count, 0);
       notify(`Fix script generated: ${total} statement(s), ${skipped} skipped.`, 'ok');
@@ -246,7 +248,8 @@
   }
 
   function copyToClipboard() {
-    const script = get(generatedScripts).get(get(activeSqlServer))?.script ?? '';
+    const activeId = get(activeSqlServer);
+    const script = (activeId === null ? undefined : get(generatedScripts).get(activeId))?.script ?? '';
     navigator.clipboard.writeText(script).then(() => notify('Fix script copied to clipboard.', 'ok'));
   }
 
@@ -309,7 +312,7 @@
       onClose={() => (showSelector = false)}
       onFetch={() => void onFetch()}
       onToggle={toggleForFetch}
-      onSelectAll={() => selectedForFetch.set(new Set(connections.map(c => c.name)))}
+      onSelectAll={() => selectedForFetch.set(new Set(connections.map(c => c.id)))}
       onSelectNone={() => selectedForFetch.set(new Set())}
       onSelectSchema={selectSchema}
       onDeselectSchema={deselectSchema}
@@ -327,9 +330,9 @@
         style="max-width:180px;font-size:12px;padding:4px 8px;"
         disabled={!fixTargetOptions.length}
       >
-        <option value="">All servers</option>
-        {#each fixTargetOptions as s}
-          <option value={s}>{s}</option>
+        <option value={null}>All servers</option>
+        {#each fixTargetOptions as s (s.id)}
+          <option value={s.id}>{s.name}</option>
         {/each}
       </select>
       <input
@@ -375,7 +378,7 @@
       >🔧 Generate Fix ({$selectedIds.size} selected)</button>
       {#if $generatedScripts.size}
         <button class="btn-secondary" on:click={copyToClipboard}>📋 Copy</button>
-        <button class="btn-secondary" style="color:#f87171;" on:click={() => { generatedScripts.set(new Map()); activeSqlServer.set(''); }}>Clear</button>
+        <button class="btn-secondary" style="color:#f87171;" on:click={() => { generatedScripts.set(new Map()); activeSqlServer.set(null); }}>Clear</button>
       {/if}
     </div>
 
@@ -388,15 +391,15 @@
               class:active={server === $activeSqlServer}
               on:click={() => activeSqlServer.set(server)}
             >
-              {server}
+              {$loadedServers.find(s => s.id === server)?.name ?? server}
               <span style="font-size:11px;opacity:0.75;"> ({res.generated_count})</span>
             </button>
           {/each}
         </div>
       {/if}
       <SqlEditor
-        value={$generatedScripts.get($activeSqlServer)?.script ?? ''}
-        dialect={connections.find(c => c.name === $activeSqlServer)?.db_type ?? 'oracle'}
+        value={($activeSqlServer === null ? undefined : $generatedScripts.get($activeSqlServer))?.script ?? ''}
+        dialect={connections.find(c => c.id === $activeSqlServer)?.db_type ?? 'oracle'}
         readonly
         height="260px"
       />

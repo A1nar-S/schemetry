@@ -91,12 +91,17 @@ pub struct ColumnInfo {
 
 pub type TableColumns = HashMap<String, ColumnInfo>;
 pub type ServerTables = HashMap<String, TableColumns>;
-pub type ServersData = HashMap<String, ServerTables>;
+/// Keyed by connection `id`, not name — names aren't guaranteed unique across
+/// groups/engines, but a connection's numeric id always is.
+pub type ServersData = HashMap<i64, ServerTables>;
 pub type TableDdls = HashMap<String, String>;
-pub type ServerTableDdls = HashMap<String, TableDdls>;
+pub type ServerTableDdls = HashMap<i64, TableDdls>;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct QueryServerResult {
+    /// Identity of the connection this result came from — use this, not `server_name`,
+    /// to correlate a result back to its connection (names may repeat).
+    pub server_id: i64,
     pub server_name: String,
     pub columns: Vec<String>,
     pub column_types: Vec<String>,
@@ -120,6 +125,9 @@ pub struct Discrepancy {
     pub element: String,
     pub table_name: String,
     pub column_name: String,
+    /// Identity of the connection this discrepancy was found on — use this, not
+    /// `server_name`, for any comparison/dispatch logic (names may repeat).
+    pub server_id: i64,
     pub server_name: String,
     pub details: String,
 }
@@ -147,6 +155,7 @@ pub struct HistoryFixResult {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ServerHistoryFixResult {
+    pub server_id: i64,
     pub server_name: String,
     pub issues: Vec<HistoryTableIssue>,
     pub fix_sql: String,

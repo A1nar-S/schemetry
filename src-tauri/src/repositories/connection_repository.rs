@@ -96,13 +96,29 @@ impl ConnectionRepository for SqliteConnectionRepository {
                 service_name TEXT    NOT NULL,
                 username     TEXT    NOT NULL,
                 keyring_ref  TEXT    NOT NULL,
-                group_name   TEXT    NOT NULL DEFAULT '',
-                UNIQUE(group_name, name)
+                group_name   TEXT    NOT NULL DEFAULT ''
             )",
             [],
         )?;
         add_column_if_missing(&conn, "ALTER TABLE connections ADD COLUMN db_type TEXT NOT NULL DEFAULT 'oracle'");
         add_column_if_missing(&conn, "ALTER TABLE connections ADD COLUMN pg_schema TEXT NOT NULL DEFAULT ''");
+
+        // Superseded by the per-group index below now that query/fix/ddl/compare dispatch
+        // selects connections by id, not name — drop it if an earlier version of the app
+        // created it, so names can be reused across groups/engines again.
+        let _ = conn.execute("DROP INDEX IF EXISTS idx_connections_name_unique", []);
+
+        // Name only needs to be unique within a group (still case-insensitive, to avoid
+        // e.g. "Source" and "SOURCE" coexisting confusingly side by side). Dispatch uses
+        // the connection's id, so a name repeated across groups or engines is safe.
+        if let Err(e) = conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_connections_group_name_unique ON connections(group_name, name COLLATE NOCASE)",
+            [],
+        ) {
+            eprintln!(
+                "Could not enforce unique connection names within a group (likely pre-existing duplicates): {e}"
+            );
+        }
         Ok(())
     }
 
@@ -151,7 +167,7 @@ impl ConnectionRepository for SqliteConnectionRepository {
         let conn = Connection::open(Self::db_path())?;
 
         let exists: i64 = conn.query_row(
-            "SELECT COUNT(1) FROM connections WHERE group_name = ?1 AND name = ?2",
+            "SELECT COUNT(1) FROM connections WHERE group_name = ?1 AND name = ?2 COLLATE NOCASE",
             params![data.group_name, data.name],
             |row| row.get(0),
         )?;
@@ -198,9 +214,9 @@ impl ConnectionRepository for SqliteConnectionRepository {
             existing.ok_or_else(|| anyhow::anyhow!("Connection id={id} not found."))?;
 
         // Conflict check if name/group changed
-        if data.name != old_name || data.group_name != old_group {
+        if !data.name.eq_ignore_ascii_case(&old_name) || data.group_name != old_group {
             let conflict: i64 = conn.query_row(
-                "SELECT COUNT(1) FROM connections WHERE group_name = ?1 AND name = ?2 AND id != ?3",
+                "SELECT COUNT(1) FROM connections WHERE group_name = ?1 AND name = ?2 COLLATE NOCASE AND id != ?3",
                 params![data.group_name, data.name, id],
                 |row| row.get(0),
             )?;
@@ -279,7 +295,7 @@ impl ConnectionRepository for SqliteConnectionRepository {
 
         let existing_id: Option<i64> = conn
             .query_row(
-                "SELECT id FROM connections WHERE group_name = ?1 AND name = ?2",
+                "SELECT id FROM connections WHERE group_name = ?1 AND name = ?2 COLLATE NOCASE",
                 params![data.group_name, data.name],
                 |row| row.get(0),
             )

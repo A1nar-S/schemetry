@@ -27,10 +27,12 @@ impl QueryService {
             let repo = Arc::clone(&self.repo);
             let sql_clone = sql_owned.clone();
             handles.push(thread::spawn(move || {
+                let id = conn.id;
                 let name = conn.name.clone();
                 let started = Instant::now();
                 match repo.run_query(&conn, &sql_clone, materialize_lobs) {
                     Ok((columns, column_types, rows)) => QueryServerResult {
+                        server_id: id,
                         server_name: name,
                         columns,
                         column_types,
@@ -39,6 +41,7 @@ impl QueryService {
                         duration_ms: started.elapsed().as_millis() as u64,
                     },
                     Err(err) => QueryServerResult {
+                        server_id: id,
                         server_name: name,
                         columns: vec![],
                         column_types: vec![],

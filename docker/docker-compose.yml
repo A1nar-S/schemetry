@@ -17,9 +17,9 @@ services:
     image: gvenzl/oracle-free:23-slim-faststart
     container_name: schemetry-oracle-source
     environment:
-      ORACLE_PASSWORD: OracleTest_2024
+      ORACLE_PASSWORD: OracleTest
       APP_USER: SCHEMETRY
-      APP_USER_PASSWORD: SchemetryTest_2024
+      APP_USER_PASSWORD: SchemetryTest
     ports:
       - "1521:1521"
     volumes:
@@ -35,9 +35,9 @@ services:
     image: gvenzl/oracle-free:23-slim-faststart
     container_name: schemetry-oracle-target
     environment:
-      ORACLE_PASSWORD: OracleTest_2024
+      ORACLE_PASSWORD: OracleTest
       APP_USER: SCHEMETRY
-      APP_USER_PASSWORD: SchemetryTest_2024
+      APP_USER_PASSWORD: SchemetryTest
     ports:
       - "1522:1521"
     volumes:
@@ -60,7 +60,7 @@ services:
     command: >
       -url=jdbc:oracle:thin:@oracle-source:1521/FREEPDB1
       -user=SCHEMETRY
-      -password=SchemetryTest_2024
+      -password=SchemetryTest
       -connectRetries=20
       -locations=filesystem:/flyway/sql
       migrate
@@ -76,7 +76,7 @@ services:
     command: >
       -url=jdbc:oracle:thin:@oracle-target:1521/FREEPDB1
       -user=SCHEMETRY
-      -password=SchemetryTest_2024
+      -password=SchemetryTest
       -connectRetries=20
       -locations=filesystem:/flyway/sql
       migrate
@@ -86,7 +86,7 @@ services:
     container_name: schemetry-postgres-source
     environment:
       POSTGRES_USER: schemetry
-      POSTGRES_PASSWORD: SchemetryTest_2024
+      POSTGRES_PASSWORD: SchemetryTest
       POSTGRES_DB: schemetry
     ports:
       - "5432:5432"
@@ -104,7 +104,7 @@ services:
     container_name: schemetry-postgres-target
     environment:
       POSTGRES_USER: schemetry
-      POSTGRES_PASSWORD: SchemetryTest_2024
+      POSTGRES_PASSWORD: SchemetryTest
       POSTGRES_DB: schemetry
     ports:
       - "5433:5432"
@@ -130,7 +130,7 @@ services:
     command: >
       -url=jdbc:postgresql://postgres-source:5432/schemetry
       -user=schemetry
-      -password=SchemetryTest_2024
+      -password=SchemetryTest
       -connectRetries=20
       -locations=filesystem:/flyway/sql
       migrate
@@ -146,7 +146,7 @@ services:
     command: >
       -url=jdbc:postgresql://postgres-target:5432/schemetry
       -user=schemetry
-      -password=SchemetryTest_2024
+      -password=SchemetryTest
       -connectRetries=20
       -locations=filesystem:/flyway/sql
       migrate
