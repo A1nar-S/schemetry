@@ -126,7 +126,7 @@ fn schema_diff_and_idempotent_fix_execution() {
     assert!(errors.is_empty(), "fetch errors: {errors:?}");
 
     let discrepancies =
-        compare_tables_across_servers(&servers, &server_names, common::SOURCE_ID, true, true)
+        compare_tables_across_servers(&servers, &server_names, common::SOURCE_ID, true, true, true, true)
             .expect("compare failed");
 
     let has = |diff: &str, element: &str, table: &str, column: &str| {
@@ -196,7 +196,7 @@ fn schema_diff_and_idempotent_fix_execution() {
         diff_svc.fetch_from_connections(&[source.clone(), target.clone()], &[]);
     assert!(errors_after.is_empty(), "fetch errors after fix: {errors_after:?}");
     let discrepancies_after =
-        compare_tables_across_servers(&servers_after, &server_names, common::SOURCE_ID, true, true)
+        compare_tables_across_servers(&servers_after, &server_names, common::SOURCE_ID, true, true, true, true)
             .expect("compare after fix failed");
 
     for (diff, element, table, column) in expected_resolved {
@@ -218,7 +218,7 @@ fn schema_diff_and_idempotent_fix_execution() {
     let (servers_final, errors_final) = diff_svc.fetch_from_connections(&[source, target], &[]);
     assert!(errors_final.is_empty(), "fetch errors after second run: {errors_final:?}");
     let discrepancies_final =
-        compare_tables_across_servers(&servers_final, &server_names, common::SOURCE_ID, true, true)
+        compare_tables_across_servers(&servers_final, &server_names, common::SOURCE_ID, true, true, true, true)
             .expect("compare after second fix run failed");
 
     assert_eq!(

@@ -85,6 +85,8 @@ pub async fn fetch_servers(
 pub fn compare_discrepancies(
     state: State<AppState>,
     reference_server_id: i64,
+    check_tables: bool,
+    check_columns: bool,
     check_comments: bool,
     check_indexes: bool,
 ) -> Result<Vec<Discrepancy>, String> {
@@ -100,6 +102,8 @@ pub fn compare_discrepancies(
         &snapshot.servers,
         &server_names,
         reference_server_id,
+        check_tables,
+        check_columns,
         check_comments,
         check_indexes,
     )

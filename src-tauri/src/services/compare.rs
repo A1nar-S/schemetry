@@ -34,6 +34,8 @@ pub fn compare_tables_across_servers(
     servers: &ServersData,
     server_names: &HashMap<i64, String>,
     reference_server_id: i64,
+    check_tables: bool,
+    check_columns: bool,
     check_comments: bool,
     check_indexes: bool,
 ) -> Result<Vec<Discrepancy>> {
@@ -63,31 +65,33 @@ pub fn compare_tables_across_servers(
             .and_then(|tables| tables.get(&table));
 
         if reference_columns.is_none() {
-            for server in &all_servers {
-                if *server == reference_server_id {
-                    continue;
-                }
-                let has_table = servers
-                    .get(server)
-                    .and_then(|tables| tables.get(&table))
-                    .is_some();
+            if check_tables {
+                for server in &all_servers {
+                    if *server == reference_server_id {
+                        continue;
+                    }
+                    let has_table = servers
+                        .get(server)
+                        .and_then(|tables| tables.get(&table))
+                        .is_some();
 
-                if has_table {
-                    let server_label = name_of(server_names, *server);
-                    discrepancies.push(Discrepancy {
-                        difference: "MISSING".to_string(),
-                        element: "TABLE".to_string(),
-                        table_name: table.clone(),
-                        column_name: String::new(),
-                        server_id: *server,
-                        server_name: server_label.clone(),
-                        details: format!(
-                            "Table {} found in server {} but not in reference server {}",
-                            table,
-                            server_label.to_uppercase(),
-                            reference_name.to_uppercase()
-                        ),
-                    });
+                    if has_table {
+                        let server_label = name_of(server_names, *server);
+                        discrepancies.push(Discrepancy {
+                            difference: "MISSING".to_string(),
+                            element: "TABLE".to_string(),
+                            table_name: table.clone(),
+                            column_name: String::new(),
+                            server_id: *server,
+                            server_name: server_label.clone(),
+                            details: format!(
+                                "Table {} found in server {} but not in reference server {}",
+                                table,
+                                server_label.to_uppercase(),
+                                reference_name.to_uppercase()
+                            ),
+                        });
+                    }
                 }
             }
             continue;
@@ -104,19 +108,21 @@ pub fn compare_tables_across_servers(
             let current_columns = servers.get(server).and_then(|tables| tables.get(&table));
 
             if current_columns.is_none() {
-                discrepancies.push(Discrepancy {
-                    difference: "MISSING".to_string(),
-                    element: "TABLE".to_string(),
-                    table_name: table.clone(),
-                    column_name: String::new(),
-                    server_id: *server,
-                    server_name: server_label.clone(),
-                    details: format!(
-                        "Table found in reference server {} but not in server {}",
-                        reference_name.to_uppercase(),
-                        server_label.to_uppercase()
-                    ),
-                });
+                if check_tables {
+                    discrepancies.push(Discrepancy {
+                        difference: "MISSING".to_string(),
+                        element: "TABLE".to_string(),
+                        table_name: table.clone(),
+                        column_name: String::new(),
+                        server_id: *server,
+                        server_name: server_label.clone(),
+                        details: format!(
+                            "Table found in reference server {} but not in server {}",
+                            reference_name.to_uppercase(),
+                            server_label.to_uppercase()
+                        ),
+                    });
+                }
                 continue;
             }
 
@@ -124,19 +130,21 @@ pub fn compare_tables_across_servers(
 
             for (column_name, ref_col_info) in reference_columns {
                 if !current_columns.contains_key(column_name) {
-                    discrepancies.push(Discrepancy {
-                        difference: "MISSING".to_string(),
-                        element: "COLUMN".to_string(),
-                        table_name: table.clone(),
-                        column_name: column_name.clone(),
-                        server_id: *server,
-                        server_name: server_label.clone(),
-                        details: format!(
-                            "Column found in reference server {} but not in server {}",
-                            reference_name.to_uppercase(),
-                            server_label.to_uppercase()
-                        ),
-                    });
+                    if check_columns {
+                        discrepancies.push(Discrepancy {
+                            difference: "MISSING".to_string(),
+                            element: "COLUMN".to_string(),
+                            table_name: table.clone(),
+                            column_name: column_name.clone(),
+                            server_id: *server,
+                            server_name: server_label.clone(),
+                            details: format!(
+                                "Column found in reference server {} but not in server {}",
+                                reference_name.to_uppercase(),
+                                server_label.to_uppercase()
+                            ),
+                        });
+                    }
                     continue;
                 }
 
@@ -158,6 +166,9 @@ pub fn compare_tables_across_servers(
                         continue;
                     }
                     if key == "INDEX_NAME" && !check_indexes {
+                        continue;
+                    }
+                    if matches!(key, "COLUMN_NAME" | "DATA_TYPE" | "DATA_LENGTH" | "DATA_DEFAULT") && !check_columns {
                         continue;
                     }
                     if key == "INDEX_NAME" && skip_index_diff(ref_value, curr_value) {
@@ -201,22 +212,24 @@ pub fn compare_tables_across_servers(
                 }
             }
 
-            for column_name in current_columns.keys() {
-                if !reference_columns.contains_key(column_name) {
-                    discrepancies.push(Discrepancy {
-                        difference: "MISSING".to_string(),
-                        element: "COLUMN".to_string(),
-                        table_name: table.clone(),
-                        column_name: column_name.clone(),
-                        server_id: *server,
-                        server_name: server_label.clone(),
-                        details: format!(
-                            "Column {} found in server {} but not in reference server {}",
-                            column_name,
-                            server_label.to_uppercase(),
-                            reference_name.to_uppercase()
-                        ),
-                    });
+            if check_columns {
+                for column_name in current_columns.keys() {
+                    if !reference_columns.contains_key(column_name) {
+                        discrepancies.push(Discrepancy {
+                            difference: "MISSING".to_string(),
+                            element: "COLUMN".to_string(),
+                            table_name: table.clone(),
+                            column_name: column_name.clone(),
+                            server_id: *server,
+                            server_name: server_label.clone(),
+                            details: format!(
+                                "Column {} found in server {} but not in reference server {}",
+                                column_name,
+                                server_label.to_uppercase(),
+                                reference_name.to_uppercase()
+                            ),
+                        });
+                    }
                 }
             }
         }

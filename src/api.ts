@@ -55,11 +55,15 @@ export async function fetchServers(server_ids: number[]): Promise<FetchServersRe
 
 export async function compareDiscrepancies(args: {
   reference_server_id: number;
+  check_tables: boolean;
+  check_columns: boolean;
   check_comments: boolean;
   check_indexes: boolean;
 }): Promise<Discrepancy[]> {
   return invoke('compare_discrepancies', {
     referenceServerId: args.reference_server_id,
+    checkTables: args.check_tables,
+    checkColumns: args.check_columns,
     checkComments: args.check_comments,
     checkIndexes: args.check_indexes,
   });
