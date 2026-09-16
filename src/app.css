@@ -781,6 +781,52 @@
     opacity: 0.5;
   }
 
+  .vt-filter-row {
+    display: grid;
+    position: sticky;
+    top: 34px;
+    z-index: 2;
+    background: var(--vt-header-bg);
+    border-bottom: 1px solid var(--vt-header-border);
+  }
+
+  .vt-fcell {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 4px 6px;
+    border-right: 1px solid var(--vt-cell-border);
+  }
+  .vt-fcell:last-child { border-right: none; }
+  .vt-fcell input {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 12px;
+    padding: 3px 22px 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+  }
+  .vt-fcell input:focus {
+    outline: none;
+    border-color: var(--text-link);
+  }
+  .vt-fclear {
+    position: absolute;
+    right: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: none;
+    background: none;
+    padding: 0 3px;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .vt-fclear:hover { color: var(--text-primary); }
+
   .vt-check-cell {
     display: flex;
     align-items: center;

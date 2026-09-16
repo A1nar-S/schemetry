@@ -24,6 +24,8 @@
   export let getCellClass: ((row: Record<string, unknown>, colKey: string) => string) | undefined = undefined;
   // Called when a data cell is double-clicked (e.g. to open a full-value viewer).
   export let onCellActivate: ((row: Record<string, unknown>, colKey: string) => void) | undefined = undefined;
+  // Shows a per-column filter row below the header; filters are case-insensitive substring matches, applied in memory.
+  export let filterable = false;
 
   const ROW_H = 32;
   const MIN_COL_W = 40;
@@ -42,6 +44,7 @@
       colWidths = columns.map((c) =>
         c.width ? c.width : Math.max(c.minWidth ?? MIN_COL_W, c.flex ? 200 : 160),
       );
+      filters = {};
     }
   }
 
@@ -53,18 +56,30 @@
     ...columns.map((col, i) => col.flex ? `minmax(${colWidths[i]}px, 1fr)` : `${colWidths[i]}px`),
   ].join(' ');
 
+  // ─── Filter ───────────────────────────────────────────────────────
+  let filters: Record<string, string> = {};
+
+  $: activeFilters = Object.entries(filters).filter(([, v]) => v.trim() !== '');
+  $: filteredRows = activeFilters.length
+    ? rows.filter((row) =>
+        activeFilters.every(([key, v]) =>
+          String(row[key] ?? '').toLowerCase().includes(v.trim().toLowerCase()),
+        ),
+      )
+    : rows;
+
   // ─── Sort ─────────────────────────────────────────────────────────
   let sortKey = '';
   let sortDir: 'asc' | 'desc' = 'asc';
 
   $: sortedRows = sortKey
-    ? [...rows].sort((a, b) => {
+    ? [...filteredRows].sort((a, b) => {
         const av = String(a[sortKey] ?? '');
         const bv = String(b[sortKey] ?? '');
         const cmp = av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' });
         return sortDir === 'asc' ? cmp : -cmp;
       })
-    : rows;
+    : filteredRows;
 
   function toggleSort(key: string) {
     if (sortKey === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
@@ -105,8 +120,8 @@
     if (scrollEl) scrollEl.scrollTop = 0;
   }
 
-  // Scroll to top only when the source dataset prop changes, not on sort.
-  $: { rows; if (scrollEl) scrollEl.scrollTop = 0; }
+  // Scroll to top only when the source dataset prop or filters change, not on sort.
+  $: { rows; filters; if (scrollEl) scrollEl.scrollTop = 0; }
 
   // ─── Column resize drag ───────────────────────────────────────────
   let resizingCol = -1;
@@ -181,6 +196,35 @@
           </div>
         {/each}
       </div>
+
+      <!-- Filter row -->
+      {#if filterable}
+        <div class="vt-filter-row" style="grid-template-columns:{gridTemplate};">
+          {#if selectable}
+            <div class="vt-fcell vt-check-cell"></div>
+          {/if}
+          {#each columns as col}
+            <div class="vt-fcell">
+              <input
+                type="text"
+                placeholder="Filter…"
+                bind:value={filters[col.key]}
+                on:click|stopPropagation
+                on:mousedown|stopPropagation
+              />
+              {#if filters[col.key]}
+                <button
+                  type="button"
+                  class="vt-fclear"
+                  title="Clear filter"
+                  on:click|stopPropagation={() => (filters[col.key] = '')}
+                  on:mousedown|stopPropagation
+                >✕</button>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
 
       <!-- Virtual body sizer -->
       <div style="height:{$virt.getTotalSize()}px; position:relative;">
