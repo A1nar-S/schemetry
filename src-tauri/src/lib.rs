@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod logging;
 pub mod models;
 pub mod repositories;
 pub mod services;
@@ -63,6 +64,7 @@ fn bootstrap() {
 }
 
 pub fn run() {
+    logging::install_panic_hook();
     bootstrap();
 
     tauri::Builder::default()
