@@ -34,6 +34,7 @@
     exportMode,
     lastRunSql,
     showLobContent,
+    collapsedGroups,
   } from '../stores/queryViewState';
 
   export let connections: ConnectionRecord[];
@@ -60,13 +61,9 @@
   function toggleServer(id: number) {
     selectedServers.update(s => { s.has(id) ? s.delete(id) : s.add(id); return new Set(s); });
   }
-  function selectAll() {
-    selectedServers.set(new Set(connections.map(c => c.id)));
+  function toggleGroupCollapsed(schema: string) {
+    collapsedGroups.update(s => { s.has(schema) ? s.delete(schema) : s.add(schema); return new Set(s); });
   }
-  function selectNone() {
-    selectedServers.set(new Set());
-  }
-
   // Dialect for the editor: the active/first-selected server's engine. Mixed-engine
   // selections just highlight for whichever one happens to be picked first.
   $: queryDialect = (
@@ -434,31 +431,33 @@
 <div class="query-layout">
   <!-- Schema sidebar -->
   <aside class="schema-sidebar">
-    <div style="display:flex;gap:4px;padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:4px;flex-shrink:0;">
-      <button class="btn-secondary" style="flex:1;font-size:11px;padding:3px 6px;" on:click={selectAll}>All</button>
-      <button class="btn-secondary" style="flex:1;font-size:11px;padding:3px 6px;" on:click={selectNone}>None</button>
-    </div>
-
     {#each [...schemaGroups.entries()] as [schema, conns]}
+      {@const collapsed = $collapsedGroups.has(schema)}
       <div class="schema-group">
-        <div class="schema-group-header">
-          <span class="schema-group-name">{schema}</span>
+        <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+        <div class="schema-group-header" on:click={() => toggleGroupCollapsed(schema)}>
+          <span class="schema-group-chevron" class:collapsed>▾</span>
+          <span class="schema-group-name" title={schema}>{schema}</span>
           <span class="schema-group-count">({conns.length})</span>
-          <button class="btn-xs" on:click={() => selectSchema(schema)}>All</button>
-          <button class="btn-xs" on:click={() => deselectSchema(schema)}>None</button>
         </div>
-        <div class="schema-group-items">
-          {#each conns as conn}
-            <label class="schema-item">
-              <input
-                type="checkbox"
-                checked={$selectedServers.has(conn.id)}
-                on:change={() => toggleServer(conn.id)}
-              />
-              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{conn.name}</span>
-            </label>
-          {/each}
-        </div>
+        {#if !collapsed}
+          <div class="schema-group-actions">
+            <button class="btn-xs" on:click={() => selectSchema(schema)}>All</button>
+            <button class="btn-xs" on:click={() => deselectSchema(schema)}>None</button>
+          </div>
+          <div class="schema-group-items">
+            {#each conns as conn}
+              <label class="schema-item">
+                <input
+                  type="checkbox"
+                  checked={$selectedServers.has(conn.id)}
+                  on:change={() => toggleServer(conn.id)}
+                />
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{conn.name}</span>
+              </label>
+            {/each}
+          </div>
+        {/if}
       </div>
     {:else}
       <div class="empty-state">No connections</div>

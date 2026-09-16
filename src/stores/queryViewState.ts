@@ -9,6 +9,8 @@ export const lastRunSql = writable('');
 export const activeServer = writable<number | null>(null);
 export const history = writable<QueryHistoryEntry[]>([]);
 export const historyOpen = writable(false);
+// Names of schema groups collapsed in the sidebar.
+export const collapsedGroups = writable<Set<string>>(new Set());
 export const lastExportDir = writable('');
 // Excel export layout: 'per-server' = one worksheet tab per server,
 // 'single' = all servers combined on one tab with a Server column.
