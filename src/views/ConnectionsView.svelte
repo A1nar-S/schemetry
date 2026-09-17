@@ -26,6 +26,35 @@
   let form: ConnectionRecord = emptyForm();
   let editingId: number | undefined;
 
+  // Survives browsing other connections (to copy values) while it's being filled in —
+  // `form` swaps to show whatever's selected, and draft edits are stashed back on the way out.
+  let draft: ConnectionRecord | null = null;
+  let viewingDraft = false;
+  $: ghostDraft = viewingDraft ? form : draft;
+
+  function startNewDraft() {
+    if (draft) {
+      selectDraft();
+      return;
+    }
+    draft = emptyForm();
+    form = draft;
+    editingId = undefined;
+    viewingDraft = true;
+  }
+
+  function selectDraft() {
+    if (!draft) return;
+    form = draft;
+    editingId = undefined;
+    viewingDraft = true;
+  }
+
+  function discardDraft() {
+    draft = null;
+    if (viewingDraft) resetForm();
+  }
+
   // Switch the port to the new engine's default, but only when it still matches the
   // *other* engine's default — so a manually-typed custom port is never clobbered.
   function onEngineChange(next: DbType) {
@@ -86,13 +115,17 @@
   }
 
   function selectConn(conn: ConnectionRecord) {
+    if (viewingDraft) draft = form;
     form = { ...conn };
     editingId = conn.id;
+    viewingDraft = false;
   }
 
   function resetForm() {
+    if (viewingDraft) draft = null;
     form = emptyForm();
     editingId = undefined;
+    viewingDraft = false;
   }
 
   // ── Handlers ───────────────────────────────────────────────────────
@@ -214,7 +247,7 @@
   <!-- ── Left: connection list ── -->
   <div class="conn-list">
     <div class="row" style="margin-bottom:8px;flex-shrink:0;">
-      <button class="btn-primary" style="flex:1;font-size:12px;" on:click={resetForm}>+ New</button>
+      <button class="btn-primary" style="flex:1;font-size:12px;" on:click={startNewDraft}>+ New</button>
       <button class="btn-secondary" style="font-size:12px;" on:click={openImport}>↓ Import</button>
       <button class="btn-secondary" style="font-size:12px;" on:click={onExport}>↑ Export</button>
     </div>
@@ -225,6 +258,34 @@
       placeholder="Search connections…"
       bind:value={searchQuery}
     />
+
+    {#if ghostDraft}
+      <div
+        class="conn-item conn-item-draft"
+        class:selected={viewingDraft}
+        role="button"
+        tabindex="0"
+        title="Unsaved draft — click to continue editing"
+        on:click={selectDraft}
+        on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && selectDraft()}
+      >
+        <div class="conn-item-text">
+          <div class="conn-item-name">
+            <span class="conn-item-engine-badge" class:conn-item-engine-pg={ghostDraft.db_type === 'postgres'}>
+              {ghostDraft.db_type === 'postgres' ? 'PG' : 'ORA'}
+            </span>
+            {ghostDraft.name.trim() || 'New connection'}
+            <span class="conn-item-draft-badge">draft</span>
+          </div>
+          <div class="conn-item-meta">{ghostDraft.host || 'unsaved'}{ghostDraft.host ? `:${ghostDraft.port}` : ''}</div>
+        </div>
+        <button
+          class="conn-item-launch"
+          title="Discard draft"
+          on:click|stopPropagation={discardDraft}
+        >✕</button>
+      </div>
+    {/if}
 
     {#each [...schemaGroups.entries()] as [schema, conns]}
       <div class="conn-group-label">{schema}</div>
@@ -279,12 +340,17 @@
   <div style="flex:1;padding:16px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;">
     <div class="row" style="flex-shrink:0;">
       <span class="view-title">
-      {editingId !== undefined ? `Edit: ${form.name}` : 'New Connection'}
+      {editingId !== undefined ? `Edit: ${form.name}` : viewingDraft ? 'New Connection (draft)' : 'New Connection'}
       </span>
       {#if editingId !== undefined}
         <div class="spacer"></div>
         <button class="btn-danger" style="font-size:12px;" on:click={() => void onDelete()} disabled={$busy}>
           🗑 Delete
+        </button>
+      {:else if viewingDraft}
+        <div class="spacer"></div>
+        <button class="btn-danger" style="font-size:12px;" on:click={discardDraft} disabled={$busy}>
+          ✕ Discard draft
         </button>
       {/if}
     </div>

@@ -629,6 +629,18 @@
   .conn-item.selected { background: var(--nav-btn-active-bg); }
   .conn-item-broken { opacity: 0.5; }
   .conn-item-broken .conn-item-name { color: var(--text-muted); }
+  .conn-item-draft {
+    border: 1px dashed var(--border);
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .conn-item-draft .conn-item-name { color: var(--text-muted); }
+  .conn-item-draft.selected { background: var(--nav-btn-active-bg); border-color: var(--text-link); }
+  .conn-item-draft .conn-item-launch:hover { background: var(--nav-btn-hover-bg); color: var(--btn-danger-bg); }
+  .conn-item-draft-badge {
+    margin-left: 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--text-muted); white-space: nowrap;
+  }
   .conn-item-broken-badge {
     margin-left: 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
     color: var(--btn-danger-bg); white-space: nowrap;

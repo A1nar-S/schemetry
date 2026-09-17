@@ -24,7 +24,7 @@
   export let getCellClass: ((row: Record<string, unknown>, colKey: string) => string) | undefined = undefined;
   // Called when a data cell is double-clicked (e.g. to open a full-value viewer).
   export let onCellActivate: ((row: Record<string, unknown>, colKey: string) => void) | undefined = undefined;
-  // Shows a per-column filter row below the header; filters are case-insensitive substring matches, applied in memory.
+  // Case-insensitive substring match, applied in memory.
   export let filterable = false;
 
   const ROW_H = 32;
