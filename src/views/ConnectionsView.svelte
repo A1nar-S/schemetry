@@ -439,11 +439,11 @@
         <button class="btn-secondary" style="padding:2px 8px;" on:click={() => (showImport = false)} title="Close"><Icon name="x" /></button>
       </div>
 
-      <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;">
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;">
         Paste a JSON array of connection objects. Connections with an existing name will be overwritten.
       </p>
       <p style="font-size:12px;color:var(--text-muted);margin:0 0 4px;">Expected format (JSON array):</p>
-      <pre style="font-size:11px;color:#475569;margin:0 0 8px;font-family:'Consolas',monospace;white-space:pre-wrap;word-break:break-all;background:var(--bg-base);border-radius:4px;padding:6px 8px;">[{"{"}"name":"…","db_type":"oracle","host":"…","port":1521,"service_name":"…","username":"…","password":"…","group_name":"…","pg_schema":""{"}"}]</pre>
+      <pre style="font-size:11px;color:var(--text-muted);margin:0 0 8px;font-family:'Consolas',monospace;white-space:pre-wrap;word-break:break-all;background:var(--bg-base);border-radius:4px;padding:6px 8px;">[{"{"}"name":"…","db_type":"oracle","host":"…","port":1521,"service_name":"…","username":"…","password":"…","group_name":"…","pg_schema":""{"}"}]</pre>
       <p style="font-size:11px;color:var(--text-muted);margin:0 0 8px;">
         <code>db_type</code> defaults to <code>"oracle"</code> if omitted, for older exports.
       </p>

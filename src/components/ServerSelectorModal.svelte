@@ -56,7 +56,7 @@
                 on:change={() => onToggle(conn.id)}
               />
               <span style="margin-left:4px;">{conn.name}</span>
-              <span style="margin-left:auto;font-size:11px;color:#475569;">{conn.host}</span>
+              <span style="margin-left:auto;font-size:11px;color:var(--text-muted);">{conn.host}</span>
             </label>
           {/each}
         </div>

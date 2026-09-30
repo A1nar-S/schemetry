@@ -188,7 +188,7 @@
             {#each sortedTables as table}
               {@const tableIssues = issuesByTable.get(table) ?? []}
               <div style="margin-bottom:10px;">
-                <div style="font-size:11px;font-weight:700;color:var(--text-accent);padding:3px 0;border-bottom:1px solid var(--border-color);margin-bottom:4px;">
+                <div style="font-size:11px;font-weight:700;color:var(--text-accent);padding:3px 0;border-bottom:1px solid var(--border);margin-bottom:4px;">
                   {table}
                   <span style="font-weight:400;opacity:0.7;">({tableIssues.length})</span>
                 </div>
