@@ -496,6 +496,9 @@
     display: flex; justify-content: space-between; align-items: center;
     margin-bottom: 14px;
   }
+  .modal-footer {
+    display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
+  }
   .modal-title {
     font-family: 'Inter', system-ui, 'Segoe UI', Roboto, Arial, sans-serif;
     font-size: 15px; font-weight: 600; color: var(--text-primary);

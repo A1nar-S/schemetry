@@ -248,10 +248,19 @@
     history.set(await getQueryHistory().catch(() => []));
   }
 
+  // Clearing keeps pinned and favorite queries.
+  let showClearHistoryModal = false;
+  $: clearableCount = $history.filter(h => !h.pinned && !h.favorite).length;
+
   async function onClearHistory() {
-    await clearQueryHistory().catch(() => {});
+    showClearHistoryModal = false;
+    try {
+      await clearQueryHistory();
+      notify('Query history cleared.', 'ok');
+    } catch (e) {
+      notify(`Couldn't clear history: ${String(e)}`, 'error');
+    }
     history.set(await getQueryHistory().catch(() => []));
-    notify('Query history cleared.', 'ok');
   }
 
   function recallQuery(sqlText: string) {
@@ -599,7 +608,9 @@
             <button
               class="btn-danger"
               style="font-size:11px;padding:2px 6px;"
-              on:click={() => void onClearHistory()}
+              disabled={!clearableCount}
+              title={clearableCount ? 'Clear history (pinned and favorite queries are kept)' : 'Nothing to clear'}
+              on:click={() => (showClearHistoryModal = true)}
             >Clear</button>
           </div>
           {#each $history as entry}
@@ -661,6 +672,23 @@
     </div>
   </div>
 </div>
+
+{#if showClearHistoryModal}
+  <Modal onClose={() => (showClearHistoryModal = false)}>
+    <div class="modal-header">
+      <span class="modal-title">Clear query history?</span>
+      <button class="btn-secondary" on:click={() => (showClearHistoryModal = false)}>✕</button>
+    </div>
+    <p style="margin:12px 0 0;font-size:13px;color:var(--text-primary);">
+      This permanently deletes {clearableCount} {clearableCount === 1 ? 'query' : 'queries'} from history.
+      Pinned and favorite queries are kept.
+    </p>
+    <div class="modal-footer">
+      <button class="btn-secondary" on:click={() => (showClearHistoryModal = false)}>Cancel</button>
+      <button class="btn-danger" on:click={() => void onClearHistory()}>Clear history</button>
+    </div>
+  </Modal>
+{/if}
 
 {#if showFavoriteModal}
   <Modal onClose={() => (showFavoriteModal = false)}>
