@@ -1,15 +1,15 @@
 <script lang="ts">
-  import { notification } from '../stores/notification';
+  import { notification, notify } from '../stores/notification';
   import { fly } from 'svelte/transition';
   import { openFolder, openFile } from '../api';
 
   $: visible = $notification.kind === 'ok' || $notification.kind === 'error';
 
   function onOpenFolder() {
-    if ($notification.openFolder) openFolder($notification.openFolder);
+    if ($notification.openFolder) openFolder($notification.openFolder).catch(e => notify(String(e), 'error'));
   }
   function onOpenFile() {
-    if ($notification.openFile) openFile($notification.openFile);
+    if ($notification.openFile) openFile($notification.openFile).catch(e => notify(String(e), 'error'));
   }
 </script>
 
@@ -74,6 +74,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     flex: 1;
+  }
+  /* Errors often carry a path or a fix — show all of it. */
+  .toast-error .toast-msg {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .toast-icon {

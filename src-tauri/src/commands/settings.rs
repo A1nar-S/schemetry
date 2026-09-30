@@ -101,26 +101,78 @@ pub fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// A `cmd /C …` command that runs without flashing a console window.
+#[cfg(target_os = "windows")]
+fn hidden_cmd() -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.creation_flags(CREATE_NO_WINDOW).arg("/C");
+    cmd
+}
+
 #[tauri::command]
 pub fn open_file(path: String) -> Result<(), String> {
-    std::process::Command::new("cmd")
-        .args(["/c", "start", "", &path])
+    #[cfg(target_os = "windows")]
+    hidden_cmd()
+        .args(["start", "", &path])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "windows"))]
+    std::process::Command::new("xdg-open")
+        .arg(&path)
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-#[tauri::command]
-pub fn open_in_vscode(path: String) -> Result<(), String> {
+/// Opens `path` in VS Code. On Windows `code` is a `.cmd` shim, so it has to go
+/// through `cmd`. Blocks briefly to catch a missing `code` command, so call it off
+/// the main thread.
+pub(crate) fn launch_vscode(path: &std::path::Path) -> Result<(), String> {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    if !path.exists() {
+        return Err(format!("Folder doesn't exist: {}", path.display()));
+    }
+
     #[cfg(target_os = "windows")]
-    std::process::Command::new("cmd")
-        .args(["/C", "code", &path])
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    let mut cmd = {
+        let mut cmd = hidden_cmd();
+        cmd.arg("code");
+        cmd
+    };
     #[cfg(not(target_os = "windows"))]
-    std::process::Command::new("code")
-        .arg(&path)
+    let mut cmd = std::process::Command::new("code");
+
+    const NOT_FOUND: &str = "Couldn't start VS Code — make sure it's installed and the `code` command is on PATH.";
+    // No pipes: VS Code inherits the handles and would keep them open.
+    let mut child = cmd
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| NOT_FOUND.to_string())?;
+
+    // `code` hands off to the VS Code process and exits within a moment; a non-zero
+    // exit means it couldn't be run. If it's still going, assume it's starting fine.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(_)) => return Err(NOT_FOUND.to_string()),
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn open_in_vscode(path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || launch_vscode(std::path::Path::new(&path)))
+        .await
+        .map_err(|e| e.to_string())?
 }

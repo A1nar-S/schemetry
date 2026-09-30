@@ -241,7 +241,7 @@
         🔄 Refresh
       </button>
       {#if schema}
-        <button class="btn-secondary" style="font-size:11px;padding:3px 8px;" title="Open schema folder in VS Code" on:click={() => void openSchemaInVscode(schema)}>
+        <button class="btn-secondary" style="font-size:11px;padding:3px 8px;" title="Open schema folder in VS Code" on:click={() => openSchemaInVscode(schema).catch(e => notify(String(e), 'error'))}>
           &#x1F5C1; VS Code
         </button>
       {/if}

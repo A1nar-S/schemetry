@@ -268,28 +268,27 @@ pub fn save_ddl_to_folder(
 }
 
 #[tauri::command]
-pub fn open_schema_in_vscode(
-    state: tauri::State<crate::state::AppState>,
+pub async fn open_schema_in_vscode(
+    state: tauri::State<'_, crate::state::AppState>,
     schema: String,
 ) -> Result<(), String> {
     let schema_root = crate::services::settings::load_schema_root_folder()
-        .ok_or("Schema folder not configured. Please set it in Settings.")?;
+        .filter(|root| !root.trim().is_empty())
+        .ok_or("Schema folder isn't set. Choose one in Settings first.")?;
 
     let schema_lower = schema.to_lowercase();
     let schema_dir = state
         .folder_schema_overrides_svc
         .resolve_schema_dir(&schema_lower, &schema_root)
         .map_err(|e| e.to_string())?;
+    if !schema_dir.exists() {
+        return Err(format!(
+            "No folder for {schema} yet ({}). Save some of its DDL first.",
+            schema_dir.display()
+        ));
+    }
 
-    #[cfg(target_os = "windows")]
-    std::process::Command::new("cmd")
-        .args(["/C", "code", schema_dir.to_str().unwrap_or_default()])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    #[cfg(not(target_os = "windows"))]
-    std::process::Command::new("code")
-        .arg(&schema_dir)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    tokio::task::spawn_blocking(move || super::settings::launch_vscode(&schema_dir))
+        .await
+        .map_err(|e| e.to_string())?
 }
