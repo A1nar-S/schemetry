@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import { notification } from '../stores/notification';
   import { fly } from 'svelte/transition';
 
@@ -15,9 +16,9 @@
     {#if $notification.kind === 'busy'}
       <span class="toast-spinner" aria-hidden="true"></span>
     {:else if $notification.kind === 'ok'}
-      <span class="toast-icon" aria-hidden="true">✓</span>
+      <span class="toast-icon" aria-hidden="true"><Icon name="check" strokeWidth={2.5} /></span>
     {:else if $notification.kind === 'error'}
-      <span class="toast-icon" aria-hidden="true">✕</span>
+      <span class="toast-icon" aria-hidden="true"><Icon name="x" strokeWidth={2.5} /></span>
     {/if}
     <span class="toast-msg">{$notification.msg}</span>
   </div>
@@ -76,6 +77,7 @@
 
   .toast-icon {
     flex-shrink: 0;
+    display: inline-flex;
     font-size: 12px;
     font-weight: 700;
   }

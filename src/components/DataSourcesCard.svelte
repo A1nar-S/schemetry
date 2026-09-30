@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import { busy } from '../stores/notification';
   import type { LoadedServer } from '../types';
 
@@ -21,7 +22,7 @@
 
   <div class="row">
     <button class="btn-primary" on:click={onOpenSelector} disabled={$busy}>
-      🔌Select and Fetch Servers
+      <Icon name="server" /> Select and Fetch Servers
     </button>
   </div>
 </div>

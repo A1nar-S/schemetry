@@ -11,6 +11,7 @@
 </script>
 
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import { onDestroy } from 'svelte';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
   import { indeterminate } from '../actions';
@@ -181,9 +182,9 @@
           <div class="vt-hcell" on:click={() => toggleSort(col.key)}>
             <span class="vt-hcell-text">{col.header}</span>
             {#if sortKey === col.key}
-              <span class="vt-sort-icon">{sortDir === 'asc' ? '↑' : '↓'}</span>
+              <span class="vt-sort-icon"><Icon name={sortDir === 'asc' ? 'arrow-up' : 'arrow-down'} size={12} /></span>
             {:else}
-              <span class="vt-sort-hint">⇅</span>
+              <span class="vt-sort-hint"><Icon name="arrow-up-down" size={12} /></span>
             {/if}
             <!-- Resize handle — stops propagation so sort doesn't fire during drag -->
             <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -219,7 +220,7 @@
                   title="Clear filter"
                   on:click|stopPropagation={() => (filters[col.key] = '')}
                   on:mousedown|stopPropagation
-                >✕</button>
+                ><Icon name="x" size={11} /></button>
               {/if}
             </div>
           {/each}

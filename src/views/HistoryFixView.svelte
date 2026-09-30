@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '../components/Icon.svelte';
   import { get } from 'svelte/store';
   import type { ConnectionRecord, HistoryTableIssue } from '../types';
   import SqlEditor from '../components/SqlEditor.svelte';
@@ -90,7 +91,8 @@
   <ServerSelectorModal
     {connections}
     selectedForFetch={$selectedServers}
-    actionLabel="🔧 Generate Fix"
+    actionLabel="Generate Fix"
+    actionIcon="wrench"
     onClose={() => { showSelector = false; }}
     onFetch={onGenerate}
     onToggle={toggleServer}
@@ -109,10 +111,10 @@
       disabled={$busy}
       on:click={() => { showSelector = true; }}
     >
-      🔌 Select Servers{$selectedServers.size ? ` (${$selectedServers.size})` : ''}
+      <Icon name="server" /> Select Servers{$selectedServers.size ? ` (${$selectedServers.size})` : ''}
     </button>
     {#if $results.length}
-      <button class="btn-secondary" style="font-size:12px;" on:click={reset}>↺ Reset</button>
+      <button class="btn-secondary" style="font-size:12px;" on:click={reset}><Icon name="rotate-ccw" /> Reset</button>
     {/if}
   </div>
 
@@ -122,7 +124,7 @@
       style="display:flex;align-items:center;gap:8px;background:none;border:none;padding:0;width:100%;text-align:left;cursor:pointer;"
       on:click={() => (showNaming = !showNaming)}
     >
-      <span style="font-size:11px;color:var(--text-muted);width:12px;">{showNaming ? '▼' : '▶'}</span>
+      <span style="font-size:11px;color:var(--text-muted);width:12px;"><Icon name={showNaming ? 'chevron-down' : 'chevron-right'} size={12} /></span>
       <span class="section-title" style="margin-bottom:0;">History Table Naming</span>
       <span class="hint" style="margin:0;">— rules pairing main tables with history tables</span>
     </button>
@@ -144,9 +146,9 @@
         >
           {r.server_name}
           {#if r.error}
-            <span style="color:var(--text-danger,#f87171);"> ⚠</span>
+            <span style="color:var(--text-danger,#f87171);"><Icon name="alert-triangle" size={12} /></span>
           {:else if r.issues.length === 0}
-            <span style="color:var(--text-ok,#34d399);font-size:11px;"> ✔</span>
+            <span style="color:var(--text-ok,#34d399);"><Icon name="check" size={12} /></span>
           {:else}
             <span style="color:var(--text-danger,#f87171);font-size:11px;"> {r.issues.length}</span>
           {/if}
@@ -170,7 +172,7 @@
 
     {:else if activeResult && activeResult.issues.length === 0}
       <div class="card" style="display:flex;align-items:center;gap:8px;color:var(--text-ok,#34d399);">
-        <span style="font-size:18px;">✔</span>
+        <Icon name="circle-check" size={18} />
         <span style="font-size:13px;font-weight:600;">All history tables match their base tables on {activeResult.server_name}.</span>
       </div>
 
@@ -214,7 +216,7 @@
             <span style="font-size:13px;font-weight:600;">Fix SQL</span>
             <div class="spacer"></div>
             <button class="btn-secondary" style="font-size:11px;padding:3px 8px;" on:click={copyFixSql}>
-              📋 Copy
+              <Icon name="copy" /> Copy
             </button>
           </div>
           <SqlEditor

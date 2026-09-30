@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '../components/Icon.svelte';
   import type { ConnectionRecord, DbType } from '../types';
   import { deleteAllConnections, deleteConnection, exportConnections, importConnections, openInPlsqlDeveloper, saveConnection, testConnection } from '../api';
   import { save } from '@tauri-apps/plugin-dialog';
@@ -248,8 +249,8 @@
   <div class="conn-list">
     <div class="row" style="margin-bottom:8px;flex-shrink:0;">
       <button class="btn-primary" style="flex:1;font-size:12px;" on:click={startNewDraft}>+ New</button>
-      <button class="btn-secondary" style="font-size:12px;" on:click={openImport}>↓ Import</button>
-      <button class="btn-secondary" style="font-size:12px;" on:click={onExport}>↑ Export</button>
+      <button class="btn-secondary" style="font-size:12px;" on:click={openImport}><Icon name="download" /> Import</button>
+      <button class="btn-secondary" style="font-size:12px;" on:click={onExport}><Icon name="upload" /> Export</button>
     </div>
 
     <input
@@ -283,7 +284,7 @@
           class="conn-item-launch"
           title="Discard draft"
           on:click|stopPropagation={discardDraft}
-        >✕</button>
+        ><Icon name="x" size={12} /></button>
       </div>
     {/if}
 
@@ -306,7 +307,7 @@
                 {conn.db_type === 'postgres' ? 'PG' : 'ORA'}
               </span>
               {conn.name}
-              {#if conn.password_broken}<span class="conn-item-broken-badge">⚠ password missing</span>{/if}
+              {#if conn.password_broken}<span class="conn-item-broken-badge"><Icon name="alert-triangle" size={11} /> password missing</span>{/if}
             </div>
             <div class="conn-item-meta">{conn.host}:{conn.port} / {conn.service_name}</div>
           </div>
@@ -345,12 +346,12 @@
       {#if editingId !== undefined}
         <div class="spacer"></div>
         <button class="btn-danger" style="font-size:12px;" on:click={() => void onDelete()} disabled={$busy}>
-          🗑 Delete
+          <Icon name="trash" /> Delete
         </button>
       {:else if viewingDraft}
         <div class="spacer"></div>
         <button class="btn-danger" style="font-size:12px;" on:click={discardDraft} disabled={$busy}>
-          ✕ Discard draft
+          <Icon name="x" /> Discard draft
         </button>
       {/if}
     </div>
@@ -419,7 +420,7 @@
 
     <div class="row">
       <button class="btn-primary" on:click={() => void onSave()} disabled={$busy}>
-      {editingId !== undefined ? '✓ Update' : '+ Save'}
+      <Icon name={editingId !== undefined ? 'check' : 'plus'} /> {editingId !== undefined ? 'Update' : 'Save'}
       </button>
       <button class="btn-secondary" on:click={() => void onTest()} disabled={$busy}>
         Test Connection
@@ -435,7 +436,7 @@
     <div class="modal-card" style="width:580px;">
       <div class="modal-header">
         <span class="modal-title">Import Connections (JSON)</span>
-        <button class="btn-secondary" style="padding:2px 8px;" on:click={() => (showImport = false)}>✕</button>
+        <button class="btn-secondary" style="padding:2px 8px;" on:click={() => (showImport = false)} title="Close"><Icon name="x" /></button>
       </div>
 
       <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;">
@@ -483,7 +484,7 @@
       <div class="row" style="justify-content:flex-end;gap:8px;">
         <button class="btn-secondary" on:click={() => (showDeleteAllModal = false)} disabled={$busy}>Cancel</button>
         <button class="btn-danger" on:click={() => void onConfirmDeleteAll()} disabled={$busy}>
-          🗑 Delete All
+          <Icon name="trash" /> Delete All
         </button>
       </div>
     </div>

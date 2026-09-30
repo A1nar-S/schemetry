@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '../components/Icon.svelte';
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import type { ConnectionRecord } from '../types';
@@ -493,12 +494,12 @@
           class="btn-primary"
           on:click={() => void onRunQuery()}
           disabled={$busy || !$selectedServers.size}
-        >▶ Run Query</button>
+        ><Icon name="play" /> Run Query</button>
         <button
           class="btn-secondary"
           on:click={() => void onExport()}
           disabled={$busy || !$results.length}
-        >↓ Export</button>
+        ><Icon name="download" /> Export</button>
         <select
           bind:value={$exportMode}
           title="Result layout (grid & Excel export)"
@@ -550,14 +551,14 @@
               title="Reload table and column names"
               disabled={completionLoadingId === editorServer.id}
               on:click={() => editorServer && void loadCompletion(editorServer.id, true)}
-            >⟳</button>
+            ><Icon name="refresh" size={12} /></button>
           </span>
         {/if}
         <button
           class="btn-secondary"
           style="font-size:12px;"
           on:click={() => historyOpen.update(v => !v)}
-        >{$historyOpen ? '✕ History' : '🕐 History'}</button>
+        ><Icon name={$historyOpen ? 'x' : 'clock'} /> History</button>
       </div>
     </div>
 
@@ -569,7 +570,7 @@
             class="tab-btn"
             class:active={result.server_id === $activeServer}
             on:click={() => activeServer.set(result.server_id)}
-          >{result.server_name}{result.error ? ' ⚠' : ''}</button>
+          >{result.server_name}{#if result.error} <Icon name="alert-triangle" size={12} />{/if}</button>
         {/each}
       </div>
     {/if}
@@ -649,19 +650,19 @@
                   title={entry.favorite ? 'Remove from favorites' : 'Add to favorites'}
                   style="font-size:11px;padding:1px 5px;{entry.favorite ? '' : 'opacity:0.45;'}"
                   on:click|stopPropagation={() => onFavoriteClick(entry)}
-                >{entry.favorite ? '⭐' : '☆'}</button>
+                ><Icon name="star" size={12} filled={entry.favorite} /></button>
                 <button
                   class="btn-secondary"
                   title={entry.favorite ? 'Pin unavailable for favorites' : entry.pinned ? 'Unpin' : 'Pin'}
                   disabled={entry.favorite}
                   style="font-size:11px;padding:1px 5px;{entry.pinned && !entry.favorite ? '' : 'opacity:0.45;'}"
                   on:click|stopPropagation={() => void onPinHistory(entry.id, !entry.pinned)}
-                >{#if entry.pinned}<span style="text-decoration:line-through;">📌</span>{:else}📌{/if}</button>
+                ><Icon name={entry.pinned ? 'pin-off' : 'pin'} size={12} /></button>
                 <button
                   class="btn-danger"
                   style="font-size:10px;padding:1px 5px;{entry.pinned || entry.favorite ? 'visibility:hidden;' : ''}"
                   on:click|stopPropagation={() => void onDeleteHistory(entry.id)}
-                >✕</button>
+                ><Icon name="x" size={11} /></button>
               </div>
             </div>
           {:else}
@@ -677,7 +678,7 @@
   <Modal onClose={() => (showClearHistoryModal = false)}>
     <div class="modal-header">
       <span class="modal-title">Clear query history?</span>
-      <button class="btn-secondary" on:click={() => (showClearHistoryModal = false)}>✕</button>
+      <button class="btn-secondary" on:click={() => (showClearHistoryModal = false)} title="Close"><Icon name="x" /></button>
     </div>
     <p style="margin:12px 0 0;font-size:13px;color:var(--text-primary);">
       This permanently deletes {clearableCount} {clearableCount === 1 ? 'query' : 'queries'} from history.
@@ -694,7 +695,7 @@
   <Modal onClose={() => (showFavoriteModal = false)}>
     <div class="modal-header">
       <span class="modal-title">Add to favorites</span>
-      <button class="btn-secondary" on:click={() => (showFavoriteModal = false)}>✕</button>
+      <button class="btn-secondary" on:click={() => (showFavoriteModal = false)} title="Close"><Icon name="x" /></button>
     </div>
     <div class="field" style="margin-top:12px;">
       <label for="fav-desc">Description</label>

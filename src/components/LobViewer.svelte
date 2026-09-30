@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import { onDestroy } from 'svelte';
   import Modal from './Modal.svelte';
   import CodeView from './CodeView.svelte';
@@ -96,7 +97,7 @@
         {[typeLabel, format?.label, format ? fmtSize(size) : ''].filter(Boolean).join(' · ')}
       </span>
     </span>
-    <button class="btn-secondary" on:click={onClose}>✕</button>
+    <button class="btn-secondary" on:click={onClose} title="Close"><Icon name="x" /></button>
   </div>
 
   {#if loading}
@@ -113,11 +114,11 @@
       <div class="lob-actions">
         {#if tab === 'text' || tab === 'formatted'}
           <label class="lob-wrap"><input type="checkbox" bind:checked={wrap} /> Wrap</label>
-          <button class="btn-secondary" on:click={copyText}>📋 Copy</button>
+          <button class="btn-secondary" on:click={copyText}><Icon name="copy" /> Copy</button>
         {/if}
         {#if onSave}
           <button class="btn-primary" disabled={saving} on:click={() => onSave?.(extForMime(format?.mime ?? ''))}>
-            💾 Save to file…
+            <Icon name="save" /> Save to file…
           </button>
         {/if}
       </div>

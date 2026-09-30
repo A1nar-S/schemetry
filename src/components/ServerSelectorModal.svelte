@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon, { type IconName } from './Icon.svelte';
   import type { ConnectionRecord } from '../types';
   import { busy } from '../stores/notification';
   import Modal from './Modal.svelte';
@@ -7,7 +8,8 @@
   export let selectedForFetch: Set<number>;
   export let onClose: () => void;
   export let onFetch: () => void;
-  export let actionLabel: string = '📥 Fetch Metadata';
+  export let actionLabel: string = 'Fetch Metadata';
+  export let actionIcon: IconName = 'download';
   export let onToggle: (id: number) => void;
   export let onSelectNone: () => void;
   export let onSelectSchema: (schema: string) => void;
@@ -29,7 +31,7 @@
 <Modal width="520px" {onClose}>
   <div class="modal-header">
     <span class="modal-title">Select Servers to Fetch</span>
-    <button class="btn-secondary" style="padding:2px 8px;" on:click={onClose}>✕</button>
+    <button class="btn-secondary" style="padding:2px 8px;" on:click={onClose} title="Close"><Icon name="x" /></button>
   </div>
 
   <div class="row" style="margin-bottom:8px;">
@@ -69,7 +71,7 @@
       class="btn-primary"
       on:click={onFetch}
       disabled={$busy || !selectedForFetch.size}
-    >{actionLabel} ({selectedForFetch.size} selected)</button>
+    ><Icon name={actionIcon} /> {actionLabel} ({selectedForFetch.size} selected)</button>
   </div>
 </Modal>
 

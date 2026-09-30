@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import { onMount } from 'svelte';
   import type { TableFilterRule } from '../types';
   import { listTableFilterRules, saveTableFilterRule, deleteTableFilterRule } from '../api';
@@ -97,7 +98,7 @@
         On
       </label>
       <button class="btn-danger" style="padding:4px 8px;font-size:12px;" on:click={() => void onDelete(rule)} disabled={$busy}>
-        🗑
+        <Icon name="trash" />
       </button>
     </div>
   {/each}

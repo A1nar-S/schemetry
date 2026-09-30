@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '../components/Icon.svelte';
   import { get } from 'svelte/store';
   import type { VCol } from '../components/VirtualTable.svelte';
   import VirtualTable from '../components/VirtualTable.svelte';
@@ -307,7 +308,7 @@
       style="display:flex;align-items:center;gap:8px;background:none;border:none;padding:0;width:100%;text-align:left;cursor:pointer;"
       on:click={() => (showAdvancedFilters = !showAdvancedFilters)}
     >
-      <span style="font-size:11px;color:var(--text-muted);width:12px;">{showAdvancedFilters ? '▼' : '▶'}</span>
+      <span style="font-size:11px;color:var(--text-muted);width:12px;"><Icon name={showAdvancedFilters ? 'chevron-down' : 'chevron-right'} size={12} /></span>
       <span class="section-title" style="margin-bottom:0;">Advanced Filters</span>
       <span class="hint" style="margin:0;">— which tables get fetched from Oracle</span>
     </button>
@@ -361,7 +362,7 @@
         style="font-size:11px;padding:3px 8px;"
         on:click={() => void onExportReport()}
         disabled={$busy || !$discrepancies.length}
-      >↓ Export</button>
+      ><Icon name="download" /> Export</button>
     </div>
     <VirtualTable
       bind:this={vtable}
@@ -388,9 +389,9 @@
         class="btn-primary"
         on:click={() => void onGenerateFix()}
         disabled={$busy || !$selectedIds.size || !$referenceServer}
-      >🔧 Generate Fix ({$selectedIds.size} selected)</button>
+      ><Icon name="wrench" /> Generate Fix ({$selectedIds.size} selected)</button>
       {#if $generatedScripts.size}
-        <button class="btn-secondary" on:click={copyToClipboard}>📋 Copy</button>
+        <button class="btn-secondary" on:click={copyToClipboard}><Icon name="copy" /> Copy</button>
         <button class="btn-secondary" style="color:#f87171;" on:click={() => { generatedScripts.set(new Map()); activeSqlServer.set(null); }}>Clear</button>
       {/if}
     </div>

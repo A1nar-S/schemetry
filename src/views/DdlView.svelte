@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '../components/Icon.svelte';
   import { get } from 'svelte/store';
   import type { ConnectionRecord, SchemaObject } from '../types';
   import SqlEditor from '../components/SqlEditor.svelte';
@@ -227,22 +228,22 @@
           class="btn-primary"
           disabled={$selectedServerId === null || $busy}
           on:click={() => void onLoad()}
-        >→ Load Objects</button>
+        >Load Objects <Icon name="arrow-right" /></button>
       </div>
     </div>
 
   {:else}
     <!-- ── Step 2: object list + DDL ────────────────────────────── -->
     <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-      <button class="btn-secondary" style="font-size:12px;" on:click={onBack}>← Back</button>
+      <button class="btn-secondary" style="font-size:12px;" on:click={onBack}><Icon name="arrow-left" /> Back</button>
       <span style="font-size:13px;color:var(--text-muted);">{$selectedServer}</span>
       <span style="font-size:12px;color:var(--text-muted);">({$objects.length} objects)</span>
       <button class="btn-secondary" style="font-size:11px;padding:3px 8px;" title="Refresh schema objects" disabled={$busy} on:click={() => void onRefresh()}>
-        🔄 Refresh
+        <Icon name="refresh" /> Refresh
       </button>
       {#if schema}
         <button class="btn-secondary" style="font-size:11px;padding:3px 8px;" title="Open schema folder in VS Code" on:click={() => openSchemaInVscode(schema).catch(e => notify(String(e), 'error'))}>
-          &#x1F5C1; VS Code
+          <Icon name="code" /> VS Code
         </button>
       {/if}
     </div>
@@ -266,7 +267,7 @@
                 style="color:{TYPE_COLORS[type] ?? 'var(--text-muted)'};"
                 on:click={() => toggleGroup(type)}
               >
-                <span class="ddl-group-chevron">{collapsed ? '▶' : '▼'}</span>
+                <span class="ddl-group-chevron"><Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
                 {type}
                 <span style="font-size:10px;opacity:0.7;margin-left:2px;">({group.length})</span>
               </button>
@@ -301,11 +302,11 @@
             <div class="spacer"></div>
             {#if $generatedDdl && !ddlLoading}
               <button class="btn-secondary" style="font-size:11px;padding:3px 8px;" on:click={copyToClipboard}>
-                📋 Copy
+                <Icon name="copy" /> Copy
               </button>
               {#if schema}
                 <button class="btn-secondary" style="font-size:11px;padding:3px 8px;" on:click={openSaveModal}>
-                  💾 Save to Folder
+                  <Icon name="save" /> Save to Folder
                 </button>
               {/if}
             {/if}

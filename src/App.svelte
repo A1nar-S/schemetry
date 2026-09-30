@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './components/Icon.svelte';
   import { onMount } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
   import { getConnections } from './api';
@@ -72,7 +73,7 @@
     <div class="brand">
       {#if !sidebarCollapsed}Schemetry{/if}
       <button class="collapse-btn" on:click={toggleSidebar} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-        {sidebarCollapsed ? '›' : '‹'}
+        <Icon name={sidebarCollapsed ? 'chevron-right' : 'chevron-left'} size={16} />
       </button>
     </div>
     <nav class="nav-links">
@@ -82,7 +83,7 @@
         title="Query"
         on:click={() => (activeView = 'query')}
       >
-        <span>🔍</span><span class="nav-label"> Query</span>
+        <Icon name="search" size={16} /><span class="nav-label">Query</span>
       </button>
       <button
         class="nav-btn"
@@ -90,7 +91,7 @@
         title="Generate DDL"
         on:click={() => (activeView = 'ddl')}
       >
-        <span>📄</span><span class="nav-label"> Generate DDL</span>
+        <Icon name="file-code" size={16} /><span class="nav-label">Generate DDL</span>
       </button>
       <button
         class="nav-btn"
@@ -98,7 +99,7 @@
         title="Fix Discrepancies"
         on:click={() => (activeView = 'compare')}
       >
-        <span>🛠️</span><span class="nav-label"> Fix Discrepancies</span>
+        <Icon name="git-compare" size={16} /><span class="nav-label">Fix Discrepancies</span>
       </button>
       <button
         class="nav-btn"
@@ -106,7 +107,7 @@
         title="Fix History Tables"
         on:click={() => (activeView = 'historyfix')}
       >
-        <span>🗃️</span><span class="nav-label"> Fix History Tables</span>
+        <Icon name="history" size={16} /><span class="nav-label">Fix History Tables</span>
       </button>
 
       <div class="nav-divider"></div>
@@ -118,7 +119,7 @@
         title="Connections"
         on:click={() => (activeView = 'connections')}
       >
-        <span>🔗</span><span class="nav-label"> Connections</span>
+        <Icon name="database" size={16} /><span class="nav-label">Connections</span>
       </button>
       <button
         class="nav-btn"
@@ -126,7 +127,7 @@
         title="Settings"
         on:click={() => (activeView = 'settings')}
       >
-        <span>⚙️</span><span class="nav-label"> Settings</span>
+        <Icon name="settings" size={16} /><span class="nav-label">Settings</span>
       </button>
     </nav>
     <button
@@ -134,10 +135,9 @@
       on:click={theme.toggle}
       title={$theme === 'dark' ? 'Dark theme (click for light)' : $theme === 'light' ? 'Light theme (click for auto)' : 'Auto theme (click for dark)'}
     >
-      {#if sidebarCollapsed}
-        {$theme === 'dark' ? '🌙' : $theme === 'light' ? '☀' : '🌓'}
-      {:else}
-        {$theme === 'dark' ? '🌙 Dark mode' : $theme === 'light' ? '☀ Light mode' : '🌓 Auto'}
+      <Icon name={$theme === 'dark' ? 'moon' : $theme === 'light' ? 'sun' : 'contrast'} size={15} />
+      {#if !sidebarCollapsed}
+        <span>{$theme === 'dark' ? 'Dark mode' : $theme === 'light' ? 'Light mode' : 'Auto'}</span>
       {/if}
     </button>
   </aside>

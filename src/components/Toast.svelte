@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import { notification, notify } from '../stores/notification';
   import { fly } from 'svelte/transition';
   import { openFolder, openFile } from '../api';
@@ -20,13 +21,13 @@
     aria-live="polite"
     transition:fly={{ y: 16, duration: 200 }}
   >
-    <span class="toast-icon" aria-hidden="true">{$notification.kind === 'ok' ? '✓' : '✕'}</span>
+    <span class="toast-icon" aria-hidden="true"><Icon name={$notification.kind === 'ok' ? 'check' : 'x'} strokeWidth={2.5} /></span>
     <span class="toast-msg">{$notification.msg}</span>
     {#if $notification.openFolder}
-      <button class="toast-action-btn" on:click={onOpenFolder} title="Open folder">📂</button>
+      <button class="toast-action-btn" on:click={onOpenFolder} title="Open folder"><Icon name="folder-open" /></button>
     {/if}
     {#if $notification.openFile}
-      <button class="toast-action-btn" on:click={onOpenFile} title="Open file">📄</button>
+      <button class="toast-action-btn" on:click={onOpenFile} title="Open file"><Icon name="file" /></button>
     {/if}
   </div>
 {/if}
@@ -83,12 +84,15 @@
 
   .toast-icon {
     flex-shrink: 0;
+    display: inline-flex;
     font-size: 12px;
     font-weight: 700;
   }
 
   .toast-action-btn {
     flex-shrink: 0;
+    display: inline-flex;
+    color: inherit;
     background: none;
     border: none;
     cursor: pointer;

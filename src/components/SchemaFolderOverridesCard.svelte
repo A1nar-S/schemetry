@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import { onMount } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import type { ConnectionRecord, SchemaFolderOverride } from '../types';
@@ -265,16 +266,16 @@
         {/each}
       </select>
       <button class="btn-secondary ext-override-btn" on:click={() => openExtModal(item)} title="Per-object-type DDL file extension overrides for this schema">
-        📄 Extensions{#if extensionOverrideCount(item)} <span class="ext-override-badge">{extensionOverrideCount(item)}</span>{/if}
+        <Icon name="file-text" /> Extensions{#if extensionOverrideCount(item)} <span class="ext-override-badge">{extensionOverrideCount(item)}</span>{/if}
       </button>
       <button class="btn-secondary ext-override-btn" on:click={() => openStorageModal(item)} title="Per-object-type DDL storage mode overrides for this schema">
-        🗄 Storage{#if storageOverrideCount(item)} <span class="ext-override-badge">{storageOverrideCount(item)}</span>{/if}
+        <Icon name="hard-drive" /> Storage{#if storageOverrideCount(item)} <span class="ext-override-badge">{storageOverrideCount(item)}</span>{/if}
       </button>
       <button class="btn-secondary ext-override-btn" on:click={() => openMigrationModal(item)} title="Code/migration folder names, file naming, and migration folder overrides for this schema">
-        🚀 Migration{#if migrationOverrideCount(item)} <span class="ext-override-badge">{migrationOverrideCount(item)}</span>{/if}
+        <Icon name="layers" /> Migration{#if migrationOverrideCount(item)} <span class="ext-override-badge">{migrationOverrideCount(item)}</span>{/if}
       </button>
       <button class="btn-danger" style="padding:4px 8px;font-size:12px;" on:click={() => void onDelete(item)} disabled={$busy}>
-        🗑
+        <Icon name="trash" />
       </button>
     </div>
   {/each}

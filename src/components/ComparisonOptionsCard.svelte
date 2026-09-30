@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import { busy } from '../stores/notification';
   import type { LoadedServer } from '../types';
 
@@ -72,7 +73,7 @@
     class="btn-primary"
     on:click={onRunComparison}
     disabled={$busy || !referenceServer || nothingSelected}
-  >🔍 Run Comparison</button>
+  ><Icon name="git-compare" /> Run Comparison</button>
 </div>
 
 <style>
