@@ -87,11 +87,13 @@
   // 'binary' = BLOB-family (rich viewer), 'text' = CLOB-family (text viewer), null = plain.
   // Covers both engines: Oracle's LOB types and Postgres's `bytea` (its only real
   // binary-LOB-like type — Postgres text/varchar are already fully materialized).
-  function lobKind(colKey: string): 'binary' | 'text' | null {
-    const t = colType[colKey];
+  function lobKindOf(t: string | undefined): 'binary' | 'text' | null {
     if (t === 'BLOB' || t === 'BFILE' || t === 'LONG RAW' || t === 'BYTEA') return 'binary';
     if (t === 'CLOB' || t === 'NCLOB' || t === 'LONG') return 'text';
     return null;
+  }
+  function lobKind(colKey: string): 'binary' | 'text' | null {
+    return lobKindOf(colType[colKey]);
   }
 
   function cellClass(_row: Record<string, unknown>, colKey: string): string {
@@ -233,6 +235,7 @@
   let lobSize = 0;
 
   function resetLobState() {
+    lobRequestSeq++;
     if (lobBlobUrl) { URL.revokeObjectURL(lobBlobUrl); lobBlobUrl = ''; }
     cellViewerLoading = false;
     cellViewerLoaded = false;
@@ -252,10 +255,12 @@
     cellViewerTitle = colKey;
     cellViewerText = '';
     cellViewerRowIndex = typeof row.__rowIndex === 'number' ? row.__rowIndex : -1;
-    cellViewerColIndex = baseResult ? baseResult.columns.indexOf(colKey) : -1;
     cellViewerServerId = typeof row.__serverId === 'number' ? row.__serverId : get(activeServer);
+    // Use the row's own server result — column order can differ between servers.
+    const rowResult = get(results).find(r => r.server_id === cellViewerServerId) ?? baseResult;
+    cellViewerColIndex = rowResult ? rowResult.columns.indexOf(colKey) : -1;
 
-    const kind = lobKind(colKey);
+    const kind = rowResult ? lobKindOf(rowResult.column_types?.[cellViewerColIndex]) : lobKind(colKey);
     if (kind === null) {
       const value = row[colKey];
       cellViewerKind = 'plain';
@@ -269,8 +274,12 @@
     void loadLobContent();
   }
 
+  // Discards stale responses for a previously opened cell.
+  let lobRequestSeq = 0;
+
   async function loadLobContent() {
     if (cellViewerRowIndex < 0 || cellViewerColIndex < 0 || cellViewerServerId === null) return;
+    const seq = lobRequestSeq;
     cellViewerLoading = true;
     try {
       const content = await fetchLobContent(
@@ -279,6 +288,7 @@
         cellViewerRowIndex,
         cellViewerColIndex,
       );
+      if (seq !== lobRequestSeq) return;
       lobTruncated = content.truncated;
       lobSize = content.size;
       if (content.kind === 'text') {
@@ -297,9 +307,9 @@
       }
       cellViewerLoaded = true;
     } catch (e) {
-      notify(`Failed to load content: ${String(e)}`, 'error');
+      if (seq === lobRequestSeq) notify(`Failed to load content: ${String(e)}`, 'error');
     } finally {
-      cellViewerLoading = false;
+      if (seq === lobRequestSeq) cellViewerLoading = false;
     }
   }
 
