@@ -648,7 +648,7 @@
   .conn-item-engine-badge {
     display: inline-block; margin-right: 6px; padding: 1px 5px; border-radius: 3px;
     font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
-    background: var(--nav-btn-hover-bg); color: var(--text-muted); vertical-align: middle;
+    background: #c74634; color: #fff; vertical-align: middle; /* Oracle red */
   }
   .conn-item-engine-badge.conn-item-engine-pg {
     background: var(--color-steel); color: #fff;
