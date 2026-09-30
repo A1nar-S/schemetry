@@ -527,19 +527,12 @@
     background: var(--bg-panel); border-right: 1px solid var(--border);
     overflow-y: auto; padding: 8px; gap: 2px; flex-shrink: 0;
   }
-  .schema-group {
-    display: flex; flex-direction: column; flex-shrink: 0;
-    margin-bottom: 6px; border: 1px solid var(--border-subtle); border-radius: 8px;
-    background: var(--bg-surface); overflow: hidden;
-  }
-  .schema-group.has-selection { border-color: var(--btn-primary-bg); }
+  .schema-group { display: flex; flex-direction: column; }
   .schema-group-header {
-    display: flex; flex-direction: column; gap: 4px;
-    padding: 6px 6px 6px 8px; cursor: pointer;
+    display: flex; align-items: center; gap: 4px;
+    padding: 4px 8px; border-radius: 5px; cursor: pointer;
     font-size: 13px; font-weight: 600; color: var(--text-accent);
   }
-  .schema-group-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .schema-group-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding-left: 16px; }
   .schema-group-header:hover { background: var(--nav-btn-hover-bg); }
   .schema-group-chevron {
     flex-shrink: 0; font-size: 10px; color: var(--text-muted);
@@ -548,11 +541,33 @@
   .schema-group-chevron.collapsed { transform: rotate(-90deg); }
   .schema-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .schema-group-count { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+  .btn-xs {
+    font-size: 11px; padding: 1px 6px; border-radius: 4px; flex-shrink: 0;
+    background: var(--btn-secondary-bg); border: 1px solid var(--btn-secondary-border);
+    color: var(--btn-secondary-color);
+  }
+  .btn-xs:hover { background: var(--btn-secondary-hover-bg); color: var(--btn-secondary-hover-clr); }
+  .btn-xs:disabled { opacity: 0.45; cursor: default; }
+  .schema-group-items { display: flex; flex-direction: column; padding-left: 10px; }
+
+  /* Query sidebar: each group is a card with its name on top and a meta row below. */
+  .schema-sidebar .schema-group {
+    flex-shrink: 0; margin-bottom: 6px; overflow: hidden;
+    border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg-surface);
+  }
+  .schema-sidebar .schema-group.has-selection { border-color: var(--btn-primary-bg); }
+  .schema-sidebar .schema-group-header {
+    flex-direction: column; align-items: stretch; gap: 4px;
+    padding: 6px 6px 6px 8px; border-radius: 0;
+  }
+  .schema-sidebar .schema-group-items { padding: 4px; border-top: 1px solid var(--border-subtle); }
+  .schema-group-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .schema-group-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding-left: 16px; }
   .schema-group-count-selected {
     padding: 0 6px; border-radius: 8px; font-weight: 700;
     background: var(--btn-primary-bg); color: #fff;
   }
-  /* Compact All | None segmented control on the group header. */
+  /* Compact All | None segmented control. */
   .schema-group-actions {
     display: inline-flex; flex-shrink: 0;
     border: 1px solid var(--btn-secondary-border); border-radius: 5px; overflow: hidden;
@@ -566,17 +581,6 @@
   .schema-selection-bar {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     padding: 2px 4px 8px; font-size: 12px; color: var(--text-muted);
-  }
-  .btn-xs {
-    font-size: 11px; padding: 1px 6px; border-radius: 4px; flex-shrink: 0;
-    background: var(--btn-secondary-bg); border: 1px solid var(--btn-secondary-border);
-    color: var(--btn-secondary-color);
-  }
-  .btn-xs:hover { background: var(--btn-secondary-hover-bg); color: var(--btn-secondary-hover-clr); }
-  .btn-xs:disabled { opacity: 0.45; cursor: default; }
-  .schema-group-items {
-    display: flex; flex-direction: column;
-    padding: 4px; border-top: 1px solid var(--border-subtle);
   }
   .schema-item {
     display: flex; align-items: center; gap: 6px;
