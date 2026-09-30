@@ -92,6 +92,7 @@ pub fn run() {
             commands::history_fix::save_history_naming_rule,
             commands::history_fix::delete_history_naming_rule,
             commands::query::run_query,
+            commands::query::fetch_completion_metadata,
             commands::query::fetch_lob_content,
             commands::query::save_blob_to_file,
             commands::query::get_query_history,

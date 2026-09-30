@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::State;
 use tokio;
 
-use crate::models::{QueryHistoryEntry, QueryServerResult};
+use crate::models::{CompletionMetadata, QueryHistoryEntry, QueryServerResult};
 use crate::repositories::db_repository::LobCell;
 use crate::services;
 use crate::state::AppState;
@@ -32,6 +32,22 @@ pub async fn run_query(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Schema metadata (tables, columns, other objects) for editor autocompletion.
+#[tauri::command]
+pub async fn fetch_completion_metadata(
+    state: State<'_, AppState>,
+    server_id: i64,
+) -> Result<CompletionMetadata, String> {
+    let conn = super::selected_connections(&state.catalog, &[server_id])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "Server connection not found.".to_string())?;
+    let query_svc = std::sync::Arc::clone(&state.query_svc);
+    tokio::task::spawn_blocking(move || query_svc.completion_metadata(&conn).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// On-demand content of a single LOB cell, returned to the viewer.

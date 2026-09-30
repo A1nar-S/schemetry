@@ -6,7 +6,8 @@ use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, NoTls};
 
 use crate::models::{
-    ColumnInfo, ConnectionRecord, HistoryFixResult, HistoryNamingRule, HistoryTableIssue,
+    ColumnInfo, CompletionColumn, CompletionMetadata, CompletionRelation, ConnectionRecord,
+    HistoryFixResult, HistoryNamingRule, HistoryTableIssue,
     MatchType, SchemaObject, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::{DbRepository, LobCell, LobSource, QueryOutput};
@@ -855,6 +856,59 @@ impl DbRepository for DbPostgresRepository {
             }
 
             Ok(HistoryFixResult { issues, fix_sql })
+        })
+    }
+
+    fn fetch_completion_metadata(&self, conn: &ConnectionRecord) -> Result<CompletionMetadata> {
+        self.runtime.block_on(async {
+            let client = self.connect(conn).await?;
+            let schema = Self::schema_of(conn);
+            let err = |e: tokio_postgres::Error| anyhow!(e.to_string());
+
+            // pg_catalog rather than information_schema, which leaves out materialized views.
+            let column_rows = client
+                .query(
+                    "SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod), \
+                            CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW' ELSE 'TABLE' END \
+                     FROM pg_class c \
+                     JOIN pg_namespace n ON n.oid = c.relnamespace \
+                     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped \
+                     WHERE n.nspname = $1 AND c.relkind IN ('r','p','v','m','f') \
+                     ORDER BY c.relname, a.attnum",
+                    &[&schema],
+                )
+                .await
+                .map_err(err)?;
+            let mut relations: Vec<CompletionRelation> = Vec::new();
+            for row in column_rows {
+                let table: String = row.get(0);
+                if relations.last().map_or(true, |r| r.name != table) {
+                    relations.push(CompletionRelation { name: table, kind: row.get(3), columns: Vec::new() });
+                }
+                if let Some(relation) = relations.last_mut() {
+                    relation.columns.push(CompletionColumn { name: row.get(1), data_type: row.get(2) });
+                }
+            }
+
+            let object_rows = client
+                .query(
+                    "SELECT c.relname, 'SEQUENCE' FROM pg_class c \
+                     JOIN pg_namespace n ON n.oid = c.relnamespace \
+                     WHERE n.nspname = $1 AND c.relkind = 'S' \
+                     UNION \
+                     SELECT p.proname, CASE WHEN p.prokind = 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END \
+                     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+                     WHERE n.nspname = $1",
+                    &[&schema],
+                )
+                .await
+                .map_err(err)?;
+            let objects = object_rows
+                .iter()
+                .map(|row| SchemaObject { name: row.get(0), object_type: row.get(1) })
+                .collect();
+
+            Ok(CompletionMetadata { schema, relations, objects })
         })
     }
 

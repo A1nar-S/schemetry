@@ -334,3 +334,20 @@ fn lob_result_is_a_snapshot_released_by_the_next_run() {
 
     pg::execute_script(&target, "DELETE FROM lob_documents WHERE doc_id = 900;");
 }
+
+#[test]
+#[ignore = "requires the two Postgres containers from docker/docker-compose.yml"]
+fn completion_metadata_lists_relations_and_columns() {
+    let svc = QueryService::new(Arc::new(DbPostgresRepository::new()));
+
+    let meta = svc.completion_metadata(&pg::source_connection()).expect("completion_metadata failed");
+    assert_eq!(meta.schema, "public");
+    let departments = meta.relations.iter().find(|r| r.name == "departments").expect("departments missing");
+    assert_eq!(departments.kind, "TABLE");
+    let columns: Vec<(&str, &str)> =
+        departments.columns.iter().map(|c| (c.name.as_str(), c.data_type.as_str())).collect();
+    assert_eq!(columns, [("dept_id", "integer"), ("dept_name", "character varying(50)")]);
+    assert!(meta.relations.iter().any(|r| r.name == "lob_samples"));
+    // Flyway's own history table lives in the schema too.
+    assert!(meta.relations.iter().any(|r| r.name == "flyway_schema_history"));
+}

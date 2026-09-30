@@ -7,6 +7,7 @@ import type {
   FetchServersResponse,
   FixScriptResult,
   HistoryNamingRule,
+  CompletionMetadata,
   LobContent,
   QueryHistoryEntry,
   QueryServerResult,
@@ -86,6 +87,10 @@ export async function exportCompareReport(
   output_folder: string,
 ): Promise<[string, string]> {
   return invoke('export_compare_report', { discrepancies, outputFolder: output_folder });
+}
+
+export async function fetchCompletionMetadata(server_id: number): Promise<CompletionMetadata> {
+  return invoke('fetch_completion_metadata', { serverId: server_id });
 }
 
 export async function runQuery(

@@ -589,6 +589,13 @@
   }
   .schema-item:hover { background: var(--nav-btn-hover-bg); color: var(--text-primary); }
 
+  .completion-status {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--text-muted); white-space: nowrap;
+  }
+  .completion-status-error { color: var(--text-warn); }
+  .completion-server { font-size: 11px; padding: 2px 4px; max-width: 180px; }
+
   /* Tabs */
   .tab-strip {
     display: flex; border-bottom: 1px solid var(--border);

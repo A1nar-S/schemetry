@@ -354,3 +354,19 @@ fn lob_result_is_a_snapshot_released_by_the_next_run() {
     db.execute("DELETE FROM LOB_DOCUMENTS WHERE DOC_ID = 900", &[]).unwrap();
     db.commit().unwrap();
 }
+
+#[test]
+#[ignore = "requires the two Oracle containers from docker/docker-compose.yml"]
+fn completion_metadata_lists_relations_and_columns() {
+    common::init_oracle_client();
+    let svc = QueryService::new(Arc::new(DbOracleRepository::new()));
+
+    let meta = svc.completion_metadata(&common::source_connection()).expect("completion_metadata failed");
+    assert_eq!(meta.schema, "SCHEMETRY");
+    let departments = meta.relations.iter().find(|r| r.name == "DEPARTMENTS").expect("DEPARTMENTS missing");
+    assert_eq!(departments.kind, "TABLE");
+    let columns: Vec<(&str, &str)> =
+        departments.columns.iter().map(|c| (c.name.as_str(), c.data_type.as_str())).collect();
+    assert_eq!(columns, [("DEPT_ID", "NUMBER"), ("DEPT_NAME", "VARCHAR2")]);
+    assert!(meta.relations.iter().any(|r| r.name == "LOB_SAMPLES"));
+}

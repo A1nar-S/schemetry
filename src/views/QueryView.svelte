@@ -11,6 +11,7 @@
     clearQueryHistory,
     deleteQueryHistoryItem,
     exportQueryResults,
+    fetchCompletionMetadata,
     fetchLobContent,
     saveBlobToFile,
     getQueryHistory,
@@ -23,6 +24,7 @@
   } from '../api';
   import Modal from '../components/Modal.svelte';
   import LobViewer from '../components/LobViewer.svelte';
+  import { toCompletionSchema } from '../sqlCompletion';
   import type { QueryHistoryEntry, QueryServerResult } from '../types';
   import {
     selectedServers,
@@ -36,6 +38,8 @@
     lastRunSql,
     showLobContent,
     expandedGroups,
+    completionCache,
+    completionServerPick,
   } from '../stores/queryViewState';
 
   export let connections: ConnectionRecord[];
@@ -70,10 +74,46 @@
   }
   // Dialect for the editor: the active/first-selected server's engine. Mixed-engine
   // selections just highlight for whichever one happens to be picked first.
-  $: queryDialect = (
+  // The server the editor works against (dialect + autocomplete): the one picked in
+  // the toolbar, else the active results tab, else the first selected connection.
+  $: selectedConns = connections.filter(c => $selectedServers.has(c.id));
+  $: if ($completionServerPick !== null && !$selectedServers.has($completionServerPick)) {
+    completionServerPick.set(null);
+  }
+  $: autoEditorServer =
     connections.find(c => c.id === $activeServer)
-    ?? connections.find(c => $selectedServers.has(c.id))
-  )?.db_type ?? 'oracle';
+    ?? selectedConns[0];
+  $: editorServer = connections.find(c => c.id === $completionServerPick) ?? autoEditorServer;
+  $: queryDialect = editorServer?.db_type ?? 'oracle';
+
+  // ── Autocomplete ───────────────────────────────────────────────────
+  // Table/column names are fetched only when the editor is focused — not on selection
+  // or tab changes — and cached per server for the session.
+  let completionLoadingId: number | null = null;
+  let completionError = '';
+
+  function onEditorFocus() {
+    if (editorServer) void loadCompletion(editorServer.id);
+  }
+  $: completionMeta = editorServer ? $completionCache[editorServer.id] : undefined;
+  // A different server's error shouldn't stick around.
+  $: editorServerId = editorServer?.id;
+  $: editorServerId, (completionError = '');
+  $: completionSchema = completionMeta ? toCompletionSchema(completionMeta) : undefined;
+
+  async function loadCompletion(serverId: number, force = false) {
+    if (!force && (get(completionCache)[serverId] || completionLoadingId === serverId)) return;
+    completionLoadingId = serverId;
+    completionError = '';
+    try {
+      const meta = await fetchCompletionMetadata(serverId);
+      completionCache.update(c => ({ ...c, [serverId]: meta }));
+    } catch (e) {
+      if (editorServer?.id === serverId) completionError = String(e);
+    } finally {
+      if (completionLoadingId === serverId) completionLoadingId = null;
+    }
+  }
 
   // ── VirtualTable data ─────────────────────────────────────────────
   $: activeResult = $results.find(r => r.server_id === $activeServer);
@@ -431,7 +471,14 @@
   <div style="display:flex;flex-direction:column;overflow:hidden;flex:1;">
     <!-- SQL editor + toolbar -->
     <div style="padding:10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;flex-shrink:0;">
-      <SqlEditor bind:value={$sql} dialect={queryDialect} height="140px" />
+      <SqlEditor
+        bind:value={$sql}
+        dialect={queryDialect}
+        schema={completionSchema}
+        onFocus={onEditorFocus}
+        defaultSchema={completionMeta?.schema}
+        height="140px"
+      />
       <div class="row">
         <button
           class="btn-primary"
@@ -463,6 +510,40 @@
           Show LOB content
         </label>
         <div class="spacer"></div>
+        {#if editorServer}
+          <span
+            class="completion-status"
+            class:completion-status-error={completionError && !completionMeta}
+            title={completionError || 'Server used for autocomplete and SQL highlighting'}
+          >
+            Autocomplete:
+            {#if selectedConns.length > 1}
+              <select bind:value={$completionServerPick} class="completion-server">
+                <option value={null}>Auto{autoEditorServer ? ` (${autoEditorServer.name})` : ''}</option>
+                {#each selectedConns as conn}
+                  <option value={conn.id}>{conn.name}{conn.group_name ? ` · ${conn.group_name}` : ''}</option>
+                {/each}
+              </select>
+            {:else}
+              {editorServer.name} ·
+            {/if}
+            {#if completionLoadingId === editorServer.id}
+              loading…
+            {:else if completionMeta}
+              {completionMeta.relations.length} tables
+            {:else if completionError}
+              unavailable
+            {:else}
+              loads when you edit
+            {/if}
+            <button
+              class="btn-xs"
+              title="Reload table and column names"
+              disabled={completionLoadingId === editorServer.id}
+              on:click={() => editorServer && void loadCompletion(editorServer.id, true)}
+            >⟳</button>
+          </span>
+        {/if}
         <button
           class="btn-secondary"
           style="font-size:12px;"

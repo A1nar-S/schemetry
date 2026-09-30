@@ -3,7 +3,7 @@ use std::io::Write;
 use anyhow::Result;
 
 use crate::models::{
-    ConnectionRecord, HistoryFixResult, HistoryNamingRule, SchemaObject, TableDdls,
+    CompletionMetadata, ConnectionRecord, HistoryFixResult, HistoryNamingRule, SchemaObject, TableDdls,
     TableFilterRule,
 };
 
@@ -45,6 +45,9 @@ pub trait DbRepository: Send + Sync {
     ) -> Result<HistoryFixResult>;
     /// LOB cells show as `<BLOB>`/`<CLOB>`, or as capped inline content when
     /// `materialize_lobs`; either way they stay readable via [`QueryOutput::lobs`].
+    /// Tables/views with their columns, plus other named objects, for editor
+    /// autocompletion. Ignores the compare filter rules.
+    fn fetch_completion_metadata(&self, conn: &ConnectionRecord) -> Result<CompletionMetadata>;
     fn run_query(
         &self,
         conn: &ConnectionRecord,

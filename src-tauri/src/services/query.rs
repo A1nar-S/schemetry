@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use anyhow::anyhow;
 
-use crate::models::{ConnectionRecord, QueryServerResult};
+use crate::models::{CompletionMetadata, ConnectionRecord, QueryServerResult};
 use crate::repositories::db_repository::{DbRepository, LobCell, LobSource};
 
 type SharedLobSource = Arc<Mutex<Box<dyn LobSource>>>;
@@ -26,6 +26,10 @@ impl QueryService {
             lob_sources: Mutex::new(HashMap::new()),
             next_result_id: AtomicU64::new(1),
         }
+    }
+
+    pub fn completion_metadata(&self, conn: &ConnectionRecord) -> anyhow::Result<CompletionMetadata> {
+        self.repo.fetch_completion_metadata(conn)
     }
 
     pub fn run_query_on_servers(

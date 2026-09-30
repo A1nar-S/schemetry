@@ -141,6 +141,31 @@ pub struct SchemaObject {
     pub object_type: String,
 }
 
+/// Schema metadata for SQL autocompletion in the query editor.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CompletionMetadata {
+    /// The schema the names belong to (Oracle user / Postgres schema).
+    pub schema: String,
+    /// Tables, views and materialized views, with their columns in order.
+    pub relations: Vec<CompletionRelation>,
+    /// Other objects completed by name: sequences, functions, procedures, packages, …
+    pub objects: Vec<SchemaObject>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CompletionRelation {
+    pub name: String,
+    /// `TABLE`, `VIEW` or `MATERIALIZED VIEW`.
+    pub kind: String,
+    pub columns: Vec<CompletionColumn>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CompletionColumn {
+    pub name: String,
+    pub data_type: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryTableIssue {
     pub history_table: String,

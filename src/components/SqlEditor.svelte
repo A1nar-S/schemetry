@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { EditorView, basicSetup } from 'codemirror';
   import { EditorState, Compartment } from '@codemirror/state';
-  import { sql, PostgreSQL, PLSQL } from '@codemirror/lang-sql';
+  import { sql, PostgreSQL, PLSQL, type SQLNamespace } from '@codemirror/lang-sql';
   import { githubLight, githubDark } from '@uiw/codemirror-theme-github';
   import { get } from 'svelte/store';
   import { resolvedTheme } from '../hooks/useTheme';
@@ -15,6 +15,11 @@
   export let height = '140px';
   /** Which SQL dialect to highlight/autocomplete for. Defaults to Oracle's PL/SQL. */
   export let dialect: 'oracle' | 'postgres' = 'oracle';
+  /** Tables/columns to autocomplete, nested under `defaultSchema`. */
+  export let schema: SQLNamespace | undefined = undefined;
+  export let defaultSchema: string | undefined = undefined;
+  /** Called whenever the editor gains focus. */
+  export let onFocus: (() => void) | undefined = undefined;
 
   let container: HTMLDivElement;
   let view: EditorView;
@@ -27,8 +32,8 @@
     return t === 'dark' ? githubDark : githubLight;
   }
 
-  function languageExt(d: 'oracle' | 'postgres') {
-    return sql({ dialect: d === 'postgres' ? PostgreSQL : PLSQL });
+  function languageExt(d: 'oracle' | 'postgres', ns?: SQLNamespace, nsDefault?: string) {
+    return sql({ dialect: d === 'postgres' ? PostgreSQL : PLSQL, schema: ns, defaultSchema: nsDefault });
   }
 
   onMount(() => {
@@ -39,11 +44,12 @@
         doc: value,
         extensions: [
           basicSetup,
-          languageCompartment.of(languageExt(dialect)),
+          languageCompartment.of(languageExt(dialect, schema, defaultSchema)),
           EditorState.readOnly.of(readonly),
           EditorView.editable.of(!readonly),
           themeCompartment.of(themeExt(initialTheme)),
           EditorView.updateListener.of((upd) => {
+            if (upd.focusChanged && upd.view.hasFocus) onFocus?.();
             if (upd.docChanged && !internalChange) {
               value = upd.state.doc.toString();
             }
@@ -66,9 +72,9 @@
     };
   });
 
-  // React to dialect changes (e.g. switching the selected server) after mount
+  // React to dialect or schema changes (e.g. switching the selected server) after mount
   $: if (view) {
-    view.dispatch({ effects: languageCompartment.reconfigure(languageExt(dialect)) });
+    view.dispatch({ effects: languageCompartment.reconfigure(languageExt(dialect, schema, defaultSchema)) });
   }
 
   // Sync external value changes (e.g. recall from history) → editor

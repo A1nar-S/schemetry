@@ -7,7 +7,8 @@ use oracle::sql_type::{Blob, Clob, Nclob, OracleType, ToSql};
 use oracle::{Connection, InitParams, Row};
 
 use crate::models::{
-    ColumnInfo, ConnectionRecord, HistoryFixResult, HistoryNamingRule, HistoryTableIssue,
+    ColumnInfo, CompletionColumn, CompletionMetadata, CompletionRelation, ConnectionRecord,
+    HistoryFixResult, HistoryNamingRule, HistoryTableIssue,
     MatchType, SchemaObject, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::{DbRepository, LobCell, LobSource, QueryOutput};
@@ -208,6 +209,60 @@ impl DbRepository for DbOracleRepository {
         }
 
         Ok(tables)
+    }
+
+    fn fetch_completion_metadata(&self, conn: &ConnectionRecord) -> Result<CompletionMetadata> {
+        let db = self.connect(conn)?;
+        let err = |e: oracle::Error| anyhow!(e.to_string());
+
+        // Relation kinds; a materialized view also has a TABLE object of the same name.
+        let mut kinds: HashMap<String, String> = HashMap::new();
+        let mut objects = Vec::new();
+        let object_rows = db
+            .query_as::<(String, String)>(
+                "SELECT OBJECT_NAME, OBJECT_TYPE FROM USER_OBJECTS \
+                 WHERE OBJECT_TYPE IN ('TABLE','VIEW','MATERIALIZED VIEW','SEQUENCE','PROCEDURE',\
+                                       'FUNCTION','PACKAGE','SYNONYM','TYPE') \
+                   AND OBJECT_NAME NOT LIKE 'BIN$%'",
+                &[],
+            )
+            .map_err(err)?;
+        for row in object_rows {
+            let (name, object_type) = row.map_err(err)?;
+            match object_type.as_str() {
+                "TABLE" => {
+                    kinds.entry(name).or_insert(object_type);
+                }
+                "VIEW" | "MATERIALIZED VIEW" => {
+                    kinds.insert(name, object_type);
+                }
+                _ => objects.push(SchemaObject { name, object_type }),
+            }
+        }
+
+        let mut relations: Vec<CompletionRelation> = Vec::new();
+        let column_rows = db
+            .query_as::<(String, String, Option<String>)>(
+                "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM USER_TAB_COLUMNS \
+                 WHERE TABLE_NAME NOT LIKE 'BIN$%' ORDER BY TABLE_NAME, COLUMN_ID",
+                &[],
+            )
+            .map_err(err)?;
+        for row in column_rows {
+            let (table, column, data_type) = row.map_err(err)?;
+            if relations.last().map_or(true, |r| r.name != table) {
+                relations.push(CompletionRelation {
+                    kind: kinds.get(&table).cloned().unwrap_or_else(|| "TABLE".to_string()),
+                    name: table,
+                    columns: Vec::new(),
+                });
+            }
+            if let Some(relation) = relations.last_mut() {
+                relation.columns.push(CompletionColumn { name: column, data_type: data_type.unwrap_or_default() });
+            }
+        }
+
+        Ok(CompletionMetadata { schema: conn.username.to_ascii_uppercase(), relations, objects })
     }
 
     fn run_query(

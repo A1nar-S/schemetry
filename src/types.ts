@@ -3,6 +3,12 @@ export type SchemaObject = {
   object_type: string;
 };
 
+export type CompletionMetadata = {
+  schema: string;
+  relations: { name: string; kind: string; columns: { name: string; data_type: string }[] }[];
+  objects: SchemaObject[];
+};
+
 export type DbType = 'oracle' | 'postgres';
 
 export type ConnectionRecord = {

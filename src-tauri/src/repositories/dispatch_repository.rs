@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::models::{
-    ConnectionRecord, DbType, HistoryFixResult, HistoryNamingRule, SchemaObject, TableDdls,
+    CompletionMetadata, ConnectionRecord, DbType, HistoryFixResult, HistoryNamingRule, SchemaObject, TableDdls,
     TableFilterRule,
 };
 use crate::repositories::db_repository::{DbRepository, QueryOutput};
@@ -81,6 +81,10 @@ impl DbRepository for DispatchRepository {
         naming_rules: &[HistoryNamingRule],
     ) -> Result<HistoryFixResult> {
         self.repo(conn).generate_history_fix(conn, naming_rules)
+    }
+
+    fn fetch_completion_metadata(&self, conn: &ConnectionRecord) -> Result<CompletionMetadata> {
+        self.repo(conn).fetch_completion_metadata(conn)
     }
 
     fn run_query(

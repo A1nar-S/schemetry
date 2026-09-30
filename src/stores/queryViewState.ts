@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { QueryServerResult, QueryHistoryEntry } from '../types';
+import type { CompletionMetadata, QueryServerResult, QueryHistoryEntry } from '../types';
 
 export const selectedServers = writable<Set<number>>(new Set());
 export const sql = writable('SELECT * FROM DUAL WHERE ROWNUM <= 10');
@@ -9,6 +9,10 @@ export const lastRunSql = writable('');
 export const activeServer = writable<number | null>(null);
 export const history = writable<QueryHistoryEntry[]>([]);
 export const historyOpen = writable(false);
+// Autocomplete metadata per server id, fetched once per session (or on refresh).
+export const completionCache = writable<Record<number, CompletionMetadata>>({});
+// Server picked for autocomplete (and the editor dialect); null = follow the active tab.
+export const completionServerPick = writable<number | null>(null);
 // Connection groups expanded in the sidebar; everything else starts collapsed.
 // Persisted so the layout survives restarts.
 const EXPANDED_GROUPS_KEY = 'schemetry-query-expanded-groups';
