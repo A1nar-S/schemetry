@@ -28,20 +28,27 @@
 
   let activeView: View = 'query';
   let connections: ConnectionRecord[] = [];
-  let sidebarCollapsed = false;
-  let userToggled = false;
+  const COLLAPSE_BREAKPOINT = 900;
+  const SIDEBAR_KEY = 'schemetry-sidebar-collapsed';
+
+  // The user's explicit choice is persisted and never overridden by resizing.
+  // Shrinking below the breakpoint auto-collapses an expanded sidebar; growing
+  // back re-expands it only if that collapse was automatic.
+  let sidebarCollapsed = localStorage.getItem(SIDEBAR_KEY) === 'true';
+  let autoCollapsed = false;
+  let wasNarrow = false;
   let appVersion = '';
 
-  const COLLAPSE_BREAKPOINT = 900;
-
   function handleResize() {
-    const shouldCollapse = window.innerWidth < COLLAPSE_BREAKPOINT;
-    if (shouldCollapse !== sidebarCollapsed) {
-      userToggled = false;
+    const narrow = window.innerWidth < COLLAPSE_BREAKPOINT;
+    if (narrow && !wasNarrow && !sidebarCollapsed) {
+      sidebarCollapsed = true;
+      autoCollapsed = true;
+    } else if (!narrow && wasNarrow && autoCollapsed) {
+      sidebarCollapsed = false;
+      autoCollapsed = false;
     }
-    if (!userToggled) {
-      sidebarCollapsed = shouldCollapse;
-    }
+    wasNarrow = narrow;
   }
 
   onMount(() => {
@@ -53,8 +60,9 @@
   });
 
   function toggleSidebar() {
-    userToggled = true;
     sidebarCollapsed = !sidebarCollapsed;
+    autoCollapsed = false;
+    localStorage.setItem(SIDEBAR_KEY, String(sidebarCollapsed));
   }
 
   async function loadConnections() {
