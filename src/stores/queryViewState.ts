@@ -9,7 +9,25 @@ export const lastRunSql = writable('');
 export const activeServer = writable<number | null>(null);
 export const history = writable<QueryHistoryEntry[]>([]);
 export const historyOpen = writable(false);
-export const collapsedGroups = writable<Set<string>>(new Set());
+// Connection groups expanded in the sidebar; everything else starts collapsed.
+// Persisted so the layout survives restarts.
+const EXPANDED_GROUPS_KEY = 'schemetry-query-expanded-groups';
+function loadExpandedGroups(): Set<string> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(EXPANDED_GROUPS_KEY) ?? '[]');
+    return new Set(Array.isArray(saved) ? saved.filter((g): g is string => typeof g === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+export const expandedGroups = writable<Set<string>>(loadExpandedGroups());
+expandedGroups.subscribe(groups => {
+  try {
+    localStorage.setItem(EXPANDED_GROUPS_KEY, JSON.stringify([...groups]));
+  } catch {
+    // Storage unavailable — the state just won't persist.
+  }
+});
 export const lastExportDir = writable('');
 // Excel export layout: 'per-server' = one worksheet tab per server,
 // 'single' = all servers combined on one tab with a Server column.

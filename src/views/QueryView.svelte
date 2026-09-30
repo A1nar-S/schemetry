@@ -35,7 +35,7 @@
     exportMode,
     lastRunSql,
     showLobContent,
-    collapsedGroups,
+    expandedGroups,
   } from '../stores/queryViewState';
 
   export let connections: ConnectionRecord[];
@@ -59,11 +59,14 @@
   function deselectSchema(schema: string) {
     selectedServers.update(s => { (schemaGroups.get(schema) ?? []).forEach(c => s.delete(c.id)); return new Set(s); });
   }
+  function clearSelection() {
+    selectedServers.set(new Set());
+  }
   function toggleServer(id: number) {
     selectedServers.update(s => { s.has(id) ? s.delete(id) : s.add(id); return new Set(s); });
   }
   function toggleGroupCollapsed(schema: string) {
-    collapsedGroups.update(s => { s.has(schema) ? s.delete(schema) : s.add(schema); return new Set(s); });
+    expandedGroups.update(s => { s.has(schema) ? s.delete(schema) : s.add(schema); return new Set(s); });
   }
   // Dialect for the editor: the active/first-selected server's engine. Mixed-engine
   // selections just highlight for whichever one happens to be picked first.
@@ -375,20 +378,36 @@
 <div class="query-layout">
   <!-- Schema sidebar -->
   <aside class="schema-sidebar">
+    {#if schemaGroups.size}
+      <div class="schema-selection-bar">
+        <span>{$selectedServers.size} selected</span>
+        <button class="btn-xs" disabled={!$selectedServers.size} on:click={clearSelection}>None</button>
+      </div>
+    {/if}
     {#each [...schemaGroups.entries()] as [schema, conns]}
-      {@const collapsed = $collapsedGroups.has(schema)}
-      <div class="schema-group">
+      {@const collapsed = !$expandedGroups.has(schema)}
+      {@const selectedCount = conns.filter(c => $selectedServers.has(c.id)).length}
+      <div class="schema-group" class:has-selection={selectedCount > 0}>
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
         <div class="schema-group-header" on:click={() => toggleGroupCollapsed(schema)}>
-          <span class="schema-group-chevron" class:collapsed>▾</span>
-          <span class="schema-group-name" title={schema}>{schema}</span>
-          <span class="schema-group-count">({conns.length})</span>
+          <div class="schema-group-title">
+            <span class="schema-group-chevron" class:collapsed>▾</span>
+            <span class="schema-group-name" title={schema}>{schema}</span>
+          </div>
+          <div class="schema-group-meta">
+            {#if selectedCount}
+              <span class="schema-group-count schema-group-count-selected">{selectedCount}/{conns.length} selected</span>
+            {:else}
+              <span class="schema-group-count">{conns.length} connection{conns.length === 1 ? '' : 's'}</span>
+            {/if}
+            <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+            <div class="schema-group-actions" on:click|stopPropagation>
+              <button title="Select all in {schema}" on:click={() => selectSchema(schema)}>All</button>
+              <button title="Deselect all in {schema}" on:click={() => deselectSchema(schema)}>None</button>
+            </div>
+          </div>
         </div>
         {#if !collapsed}
-          <div class="schema-group-actions">
-            <button class="btn-xs" on:click={() => selectSchema(schema)}>All</button>
-            <button class="btn-xs" on:click={() => deselectSchema(schema)}>None</button>
-          </div>
           <div class="schema-group-items">
             {#each conns as conn}
               <label class="schema-item">
