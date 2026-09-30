@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import type { ConnectionRecord } from '../types';
   import type { VCol } from '../components/VirtualTable.svelte';
@@ -22,6 +22,7 @@
     setLastQueryExportDir,
   } from '../api';
   import Modal from '../components/Modal.svelte';
+  import LobViewer from '../components/LobViewer.svelte';
   import type { QueryHistoryEntry, QueryServerResult } from '../types';
   import {
     selectedServers,
@@ -221,91 +222,63 @@
   // ── Cell value viewer ──────────────────────────────────────────────
   let cellViewerOpen = false;
   let cellViewerTitle = '';
-  let cellViewerKind: 'plain' | 'text' | 'binary' = 'plain';
-  let cellViewerText = '';        // plain cell value or loaded CLOB text
+  let cellViewerType = '';
+  let cellViewerIsLob = false;
   let cellViewerRowIndex = -1;
   let cellViewerColIndex = -1;
   let cellViewerResultId: number | null = null;
   let cellViewerLoading = false;
-  let cellViewerLoaded = false;   // LOB content fetched?
-  let lobMime = '';
-  let lobBase64 = '';
-  let lobBlobUrl = '';
-  let lobTruncated = false;
-  let lobSize = 0;
-
-  function resetLobState() {
-    lobRequestSeq++;
-    if (lobBlobUrl) { URL.revokeObjectURL(lobBlobUrl); lobBlobUrl = ''; }
-    cellViewerLoading = false;
-    cellViewerLoaded = false;
-    lobMime = '';
-    lobBase64 = '';
-    lobTruncated = false;
-    lobSize = 0;
-  }
+  let cellViewerText: string | null = null;
+  let cellViewerBytes: Uint8Array | null = null;
+  let cellViewerSize = 0;
+  let cellViewerTruncated = false;
+  let cellViewerSaving = false;
+  // Discards stale responses for a previously opened cell.
+  let lobRequestSeq = 0;
 
   function closeCellViewer() {
+    lobRequestSeq++;
     cellViewerOpen = false;
-    resetLobState();
+    cellViewerText = null;
+    cellViewerBytes = null;
   }
 
   function onCellActivate(row: Record<string, unknown>, colKey: string) {
-    resetLobState();
+    lobRequestSeq++;
     cellViewerTitle = colKey;
-    cellViewerText = '';
+    cellViewerText = null;
+    cellViewerBytes = null;
+    cellViewerTruncated = false;
     cellViewerRowIndex = typeof row.__rowIndex === 'number' ? row.__rowIndex : -1;
     const serverId = typeof row.__serverId === 'number' ? row.__serverId : get(activeServer);
     // Use the row's own server result — column order can differ between servers.
     const rowResult = get(results).find(r => r.server_id === serverId) ?? baseResult;
     cellViewerResultId = rowResult?.result_id ?? null;
     cellViewerColIndex = rowResult ? rowResult.columns.indexOf(colKey) : -1;
+    cellViewerType = rowResult?.column_types?.[cellViewerColIndex] ?? colType[colKey] ?? '';
+    cellViewerIsLob = lobKindOf(cellViewerType) !== null;
+    cellViewerOpen = true;
 
-    const kind = rowResult ? lobKindOf(rowResult.column_types?.[cellViewerColIndex]) : lobKind(colKey);
-    if (kind === null) {
+    if (!cellViewerIsLob) {
       const value = row[colKey];
-      cellViewerKind = 'plain';
       cellViewerText = value == null ? '' : String(value);
-      cellViewerOpen = true;
+      cellViewerSize = cellViewerText.length;
       return;
     }
-    // LOB cell — open and fetch content on demand.
-    cellViewerKind = kind;
-    cellViewerOpen = true;
     void loadLobContent();
   }
-
-  // Discards stale responses for a previously opened cell.
-  let lobRequestSeq = 0;
 
   async function loadLobContent() {
     if (cellViewerRowIndex < 0 || cellViewerColIndex < 0 || cellViewerResultId === null) return;
     const seq = lobRequestSeq;
     cellViewerLoading = true;
     try {
-      const content = await fetchLobContent(
-        cellViewerResultId,
-        cellViewerRowIndex,
-        cellViewerColIndex,
-      );
+      const content = await fetchLobContent(cellViewerResultId, cellViewerRowIndex, cellViewerColIndex);
       if (seq !== lobRequestSeq) return;
-      lobTruncated = content.truncated;
-      lobSize = content.size;
-      if (content.kind === 'text') {
-        cellViewerKind = 'text';
-        cellViewerText = content.text ?? '';
-      } else {
-        cellViewerKind = 'binary';
-        lobMime = content.mime ?? 'application/octet-stream';
-        lobBase64 = content.base64 ?? '';
-        if (!lobTruncated && (lobMime === 'application/pdf' || lobMime.startsWith('image/'))) {
-          const buf = base64ToBytes(lobBase64).buffer as ArrayBuffer;
-          lobBlobUrl = URL.createObjectURL(new Blob([buf], { type: lobMime }));
-        } else if (lobMime === 'text/plain') {
-          cellViewerText = decodeText(lobBase64);
-        }
-      }
-      cellViewerLoaded = true;
+      cellViewerTruncated = content.truncated;
+      cellViewerSize = content.size;
+      if (content.kind === 'text') cellViewerText = content.text ?? '';
+      else cellViewerBytes = base64ToBytes(content.base64 ?? '');
     } catch (e) {
       if (seq === lobRequestSeq) notify(`Failed to load content: ${String(e)}`, 'error');
     } finally {
@@ -313,69 +286,31 @@
     }
   }
 
-  async function saveLobToFile() {
+  async function saveLobToFile(ext: string) {
     if (cellViewerRowIndex < 0 || cellViewerColIndex < 0 || cellViewerResultId === null) return;
     const filePath = await save({
-      title: 'Save BLOB to file',
-      defaultPath: `${cellViewerTitle || 'blob'}${extForMime(lobMime)}`,
+      title: `Save ${cellViewerType || 'LOB'} to file`,
+      defaultPath: `${cellViewerTitle || 'lob'}${ext}`,
     });
     if (!filePath) return;
-    setBusy(true, 'Saving file…');
+    cellViewerSaving = true;
     try {
-      const size = await saveBlobToFile(
-        cellViewerResultId,
-        cellViewerRowIndex,
-        cellViewerColIndex,
-        filePath,
-      );
+      const size = await saveBlobToFile(cellViewerResultId, cellViewerRowIndex, cellViewerColIndex, filePath);
       const dir = filePath.replace(/[/\\][^/\\]+$/, '');
       notify(`Saved ${size.toLocaleString()} bytes to ${filePath}`, 'ok', dir, filePath);
     } catch (e) {
       notify(`Save failed: ${String(e)}`, 'error');
     } finally {
-      setBusy(false);
+      cellViewerSaving = false;
     }
   }
 
-  function copyCellValue() {
-    navigator.clipboard.writeText(cellViewerText).then(() => notify('Copied to clipboard.', 'ok'));
-  }
-
-  // ── BLOB helpers ───────────────────────────────────────────────────
   function base64ToBytes(b64: string): Uint8Array {
     const bin = atob(b64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return bytes;
   }
-
-  function decodeText(b64: string): string {
-    try { return new TextDecoder().decode(base64ToBytes(b64)); } catch { return ''; }
-  }
-
-  function hexDump(b64: string, cap: number): string {
-    const all = base64ToBytes(b64);
-    const bytes = all.subarray(0, cap);
-    let out = '';
-    for (let i = 0; i < bytes.length; i += 16) {
-      const chunk = bytes.subarray(i, i + 16);
-      const hex = [...chunk].map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
-      const ascii = [...chunk].map(b => (b >= 0x20 && b < 0x7f) ? String.fromCharCode(b) : '.').join('');
-      out += i.toString(16).padStart(8, '0').toUpperCase() + '  ' + hex.padEnd(47, ' ') + '  ' + ascii + '\n';
-    }
-    if (all.length > cap) out += `…\n(${all.length.toLocaleString()} bytes total; showing first ${cap.toLocaleString()})`;
-    return out;
-  }
-
-  function extForMime(mime: string): string {
-    const map: Record<string, string> = {
-      'application/pdf': '.pdf', 'image/png': '.png', 'image/jpeg': '.jpg',
-      'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp', 'text/plain': '.txt',
-    };
-    return map[mime] ?? '.bin';
-  }
-
-  onDestroy(() => { if (lobBlobUrl) URL.revokeObjectURL(lobBlobUrl); });
 
   // ── Favorite ───────────────────────────────────────────────────────
   let showFavoriteModal = false;
@@ -656,81 +591,16 @@
 {/if}
 
 {#if cellViewerOpen}
-  <Modal width="820px" onClose={closeCellViewer}>
-    <div class="modal-header">
-      <span class="modal-title">{cellViewerTitle}{colType[cellViewerTitle] ? ` · ${colType[cellViewerTitle]}` : ''}</span>
-      <button class="btn-secondary" on:click={closeCellViewer}>✕</button>
-    </div>
-    <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px;">
-      {#if cellViewerLoading}
-        <div class="empty-state">Loading content…</div>
-      {:else if cellViewerKind === 'binary'}
-        {#if !cellViewerLoaded}
-          <div class="empty-state">No content.</div>
-        {:else if lobTruncated}
-          <div style="font-size:12px;color:var(--text-muted);">
-            Content is large ({lobSize.toLocaleString()} bytes shown, more exists). Use “Save to file…” to export the full BLOB.
-          </div>
-          <pre class="cell-viewer-pre">{hexDump(lobBase64, 4096)}</pre>
-        {:else if lobMime === 'application/pdf' && lobBlobUrl}
-          <iframe title="PDF preview" src={lobBlobUrl} class="cell-viewer-frame"></iframe>
-        {:else if lobMime.startsWith('image/') && lobBlobUrl}
-          <img src={lobBlobUrl} alt="BLOB content" class="cell-viewer-img" />
-        {:else if lobMime === 'text/plain'}
-          <pre class="cell-viewer-pre">{cellViewerText}</pre>
-        {:else}
-          <div style="font-size:12px;color:var(--text-muted);">
-            {lobSize.toLocaleString()} bytes · {lobMime}. Showing a hex preview (first 4&nbsp;KB) — use “Save to file…” for the full content.
-          </div>
-          <pre class="cell-viewer-pre">{hexDump(lobBase64, 4096)}</pre>
-        {/if}
-        <div class="row" style="justify-content:flex-end;gap:8px;align-items:center;">
-          <span style="flex:1;font-size:11px;color:var(--text-muted);">{lobMime}</span>
-          <button class="btn-primary" disabled={$busy} on:click={() => void saveLobToFile()}>💾 Save to file…</button>
-        </div>
-      {:else}
-        {#if lobTruncated}
-          <div style="font-size:12px;color:var(--text-muted);">Text truncated to {lobSize.toLocaleString()} characters.</div>
-        {/if}
-        <pre class="cell-viewer-pre">{cellViewerText}</pre>
-        <div class="row" style="justify-content:flex-end;">
-          <button class="btn-secondary" on:click={copyCellValue}>📋 Copy</button>
-        </div>
-      {/if}
-    </div>
-  </Modal>
+  <LobViewer
+    title={cellViewerTitle}
+    typeLabel={cellViewerType}
+    loading={cellViewerLoading}
+    text={cellViewerText}
+    bytes={cellViewerBytes}
+    size={cellViewerSize}
+    truncated={cellViewerTruncated}
+    onSave={cellViewerIsLob ? (ext) => void saveLobToFile(ext) : undefined}
+    saving={cellViewerSaving}
+    onClose={closeCellViewer}
+  />
 {/if}
-
-<style>
-  .cell-viewer-pre {
-    margin: 0;
-    max-height: 60vh;
-    overflow: auto;
-    background: var(--bg-sql);
-    border: 1px solid var(--border-sql);
-    border-radius: 6px;
-    padding: 10px 12px;
-    font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--text-sql);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .cell-viewer-frame {
-    width: 100%;
-    height: 70vh;
-    border: 1px solid var(--border-sql);
-    border-radius: 6px;
-    background: #fff;
-  }
-  .cell-viewer-img {
-    max-width: 100%;
-    max-height: 70vh;
-    object-fit: contain;
-    align-self: center;
-    border: 1px solid var(--border-sql);
-    border-radius: 6px;
-  }
-</style>
-
