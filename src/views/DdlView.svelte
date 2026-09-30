@@ -22,6 +22,16 @@
   export let connections: ConnectionRecord[];
 
   let ddlLoading = false;
+  let ddlEditor: SqlEditor | undefined;
+
+  // CodeMirror only renders visible lines, so the WebView's native find misses the rest.
+  // Route Ctrl+F to CodeMirror's own search panel whenever DDL is shown.
+  function onWindowKeydown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f' && ddlEditor) {
+      e.preventDefault();
+      ddlEditor.openSearch();
+    }
+  }
 
   // ── Save to folder modal ──────────────────────────────────────────
   let showSaveModal = false;
@@ -209,6 +219,8 @@
   }
 </script>
 
+<svelte:window on:keydown={onWindowKeydown} />
+
 <div style="display:flex;flex-direction:column;height:100%;overflow:hidden;padding:10px;gap:10px;">
 
   {#if $step === 'pick-server'}
@@ -315,7 +327,7 @@
           {#if ddlLoading}
             <div class="empty-state">Generating DDL…</div>
           {:else if $generatedDdl}
-            <SqlEditor value={$generatedDdl} dialect={activeConnection?.db_type ?? 'oracle'} readonly height="100%" />
+            <SqlEditor bind:this={ddlEditor} value={$generatedDdl} dialect={activeConnection?.db_type ?? 'oracle'} readonly height="100%" />
           {/if}
         {:else}
           <div class="empty-state">Select an object from the list to generate its raw DDL. The idempotent migration script is produced when you save to the folder.</div>

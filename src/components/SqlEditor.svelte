@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { EditorView, basicSetup } from 'codemirror';
   import { EditorState, Compartment } from '@codemirror/state';
+  import { openSearchPanel } from '@codemirror/search';
   import { sql, PostgreSQL, PLSQL, type SQLNamespace } from '@codemirror/lang-sql';
   import { githubLight, githubDark } from '@uiw/codemirror-theme-github';
   import { get } from 'svelte/store';
@@ -20,6 +21,13 @@
   export let defaultSchema: string | undefined = undefined;
   /** Called whenever the editor gains focus. */
   export let onFocus: (() => void) | undefined = undefined;
+
+  /** Focuses the editor and opens CodeMirror's find panel (searches the whole doc, not just rendered lines). */
+  export function openSearch() {
+    if (!view) return;
+    view.focus();
+    openSearchPanel(view);
+  }
 
   let container: HTMLDivElement;
   let view: EditorView;
@@ -46,7 +54,6 @@
           basicSetup,
           languageCompartment.of(languageExt(dialect, schema, defaultSchema)),
           EditorState.readOnly.of(readonly),
-          EditorView.editable.of(!readonly),
           themeCompartment.of(themeExt(initialTheme)),
           EditorView.updateListener.of((upd) => {
             if (upd.focusChanged && upd.view.hasFocus) onFocus?.();
