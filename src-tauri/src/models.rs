@@ -103,6 +103,9 @@ pub struct QueryServerResult {
     /// to correlate a result back to its connection (names may repeat).
     pub server_id: i64,
     pub server_name: String,
+    /// Key for this result's LOB cells.
+    #[serde(default)]
+    pub result_id: u64,
     pub columns: Vec<String>,
     pub column_types: Vec<String>,
     pub rows: Vec<Vec<Option<String>>>,

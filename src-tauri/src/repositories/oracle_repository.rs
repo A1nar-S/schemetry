@@ -1,15 +1,16 @@
 use std::collections::{BTreeMap, HashMap};
+use std::io::{Read, Write};
 use std::sync::RwLock;
 
 use anyhow::{anyhow, Result};
-use oracle::sql_type::{OracleType, ToSql};
+use oracle::sql_type::{Blob, Clob, Nclob, OracleType, ToSql};
 use oracle::{Connection, InitParams, Row};
 
 use crate::models::{
     ColumnInfo, ConnectionRecord, HistoryFixResult, HistoryNamingRule, HistoryTableIssue,
     MatchType, SchemaObject, TableDdls, TableFilterRule,
 };
-use crate::repositories::db_repository::{DbRepository, LobCell};
+use crate::repositories::db_repository::{DbRepository, LobCell, LobSource, QueryOutput};
 use crate::repositories::filter_rule_repository::{build_predicate, ParamStyle};
 
 /// Stores the Oracle Instant Client directory path set at startup or via Settings.
@@ -214,108 +215,63 @@ impl DbRepository for DbOracleRepository {
         conn: &ConnectionRecord,
         sql: &str,
         materialize_lobs: bool,
-    ) -> Result<(Vec<String>, Vec<String>, Vec<Vec<Option<String>>>)> {
+    ) -> Result<QueryOutput> {
         let db = self.connect(conn)?;
-        let result_set = db.query(sql, &[]).map_err(|e| anyhow!(e.to_string()))?;
+        // Fetch LOBs as locators so their content is only read on demand.
+        let result_set = db
+            .statement(sql)
+            .lob_locator()
+            .build()
+            .and_then(|stmt| stmt.into_result_set::<Row>(&[]))
+            .map_err(|e| anyhow!(e.to_string()))?;
 
         // Resolve column names, type labels, and per-column kinds before consuming the
         // result set. Binary LOBs must never be read as String — that conversion panics,
         // and with `panic = "abort"` it takes the whole app down.
-        let (columns, types, kinds) = {
+        let (columns, types, oracle_types, kinds) = {
             let infos = result_set.column_info();
             let columns: Vec<String> = infos.iter().map(|c| c.name().to_string()).collect();
             let types: Vec<String> = infos.iter().map(|c| type_label(c.oracle_type())).collect();
+            let oracle_types: Vec<OracleType> = infos.iter().map(|c| c.oracle_type().clone()).collect();
             let kinds: Vec<CellKind> = infos.iter().map(|c| cell_kind(c.oracle_type())).collect();
-            (columns, types, kinds)
+            (columns, types, oracle_types, kinds)
         };
         let col_count = columns.len();
 
         let mut rows = Vec::new();
-        for row_result in result_set {
+        let mut cells = HashMap::new();
+        for (row_idx, row_result) in result_set.enumerate() {
             let row = row_result.map_err(|e| anyhow!(e.to_string()))?;
-            let values = (0..col_count)
-                .map(|i| read_cell(&row, i, kinds[i], materialize_lobs))
-                .collect();
+            let mut values = Vec::with_capacity(col_count);
+            for i in 0..col_count {
+                let kind = kinds[i];
+                if !kind.is_lob() {
+                    values.push(read_cell(&row, i, kind));
+                    continue;
+                }
+                values.push(match take_lob_cell(&row, i, &oracle_types[i]) {
+                    Ok(None) => None,
+                    Ok(Some(cell)) => {
+                        let shown = if materialize_lobs {
+                            materialize(&cell, kind)
+                        } else {
+                            kind.placeholder().to_string()
+                        };
+                        cells.insert((row_idx, i), cell);
+                        Some(shown)
+                    }
+                    Err(_) => Some(kind.placeholder().to_string()),
+                });
+            }
             rows.push(values);
         }
 
-        Ok((columns, types, rows))
-    }
-
-    fn fetch_blob_cell(
-        &self,
-        conn: &ConnectionRecord,
-        sql: &str,
-        row_index: usize,
-        col_index: usize,
-        max_bytes: usize,
-    ) -> Result<Vec<u8>> {
-        let db = self.connect(conn)?;
-        let result_set = db.query(sql, &[]).map_err(|e| anyhow!(e.to_string()))?;
-
-        for (idx, row_result) in result_set.enumerate() {
-            if idx != row_index {
-                continue;
-            }
-            let row = row_result.map_err(|e| anyhow!(e.to_string()))?;
-            let mut bytes = row
-                .get::<usize, Option<Vec<u8>>>(col_index)
-                .map_err(|e| anyhow!(e.to_string()))?
-                .unwrap_or_default();
-            if bytes.len() > max_bytes {
-                bytes.truncate(max_bytes);
-            }
-            return Ok(bytes);
-        }
-
-        Err(anyhow!(
-            "Row {row_index} is no longer in the result set (the data may have changed)."
-        ))
-    }
-
-    fn fetch_lob_cell(
-        &self,
-        conn: &ConnectionRecord,
-        sql: &str,
-        row_index: usize,
-        col_index: usize,
-        max_bytes: usize,
-    ) -> Result<LobCell> {
-        let db = self.connect(conn)?;
-        let result_set = db.query(sql, &[]).map_err(|e| anyhow!(e.to_string()))?;
-
-        // Decide how to read the cell from the column's Oracle type.
-        let is_binary = result_set
-            .column_info()
-            .get(col_index)
-            .map(|c| matches!(cell_kind(c.oracle_type()), CellKind::BinaryLob | CellKind::Raw))
-            .unwrap_or(false);
-
-        for (idx, row_result) in result_set.enumerate() {
-            if idx != row_index {
-                continue;
-            }
-            let row = row_result.map_err(|e| anyhow!(e.to_string()))?;
-            if is_binary {
-                let mut bytes = row
-                    .get::<usize, Option<Vec<u8>>>(col_index)
-                    .map_err(|e| anyhow!(e.to_string()))?
-                    .unwrap_or_default();
-                if bytes.len() > max_bytes {
-                    bytes.truncate(max_bytes);
-                }
-                return Ok(LobCell::Binary(bytes));
-            } else {
-                let text = row
-                    .get::<usize, Option<String>>(col_index)
-                    .map_err(|e| anyhow!(e.to_string()))?;
-                return Ok(LobCell::Text(text));
-            }
-        }
-
-        Err(anyhow!(
-            "Row {row_index} is no longer in the result set (the data may have changed)."
-        ))
+        // Only results with LOB columns keep their session open.
+        let lobs = kinds.iter().any(|k| k.is_lob()).then(|| {
+            let binary_cols = kinds.iter().map(|k| matches!(k, CellKind::BinaryLob)).collect();
+            Box::new(OracleLobSource { cells, binary_cols, _conn: db }) as Box<dyn LobSource>
+        });
+        Ok(QueryOutput { columns, column_types: types, rows, lobs })
     }
 
     fn fetch_table_ddls(
@@ -1463,28 +1419,160 @@ fn cell_kind(oracle_type: &OracleType) -> CellKind {
 /// memory; longer values are truncated. Excel further clips cells at 32,767 chars.
 const MATERIALIZE_TEXT_CAP: usize = 1_000_000;
 
-fn read_cell(row: &Row, i: usize, kind: CellKind, materialize_lobs: bool) -> Option<String> {
+impl CellKind {
+    fn is_lob(self) -> bool {
+        matches!(self, CellKind::TextLob | CellKind::BinaryLob)
+    }
+
+    fn placeholder(self) -> &'static str {
+        match self {
+            CellKind::BinaryLob => "<BLOB>",
+            _ => "<CLOB>",
+        }
+    }
+}
+
+/// Each LOB `read` is a round trip, so read in large chunks.
+const LOB_CHUNK: usize = 1024 * 1024;
+
+/// A LOB cell kept from a query result for later reading.
+enum OraLob {
+    Blob(Blob),
+    Clob(Clob),
+    Nclob(Nclob),
+    /// LONG / LONG RAW / BFILE: no usable locator, so the value is kept.
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+impl OraLob {
+    /// Locators are cloned so each read starts at offset 0.
+    fn read(&self, max_bytes: usize, max_chars: usize) -> Result<LobCell> {
+        let err = |e: std::io::Error| anyhow!(e.to_string());
+        Ok(match self {
+            OraLob::Blob(b) => LobCell::Binary(read_bytes_capped(b.clone(), max_bytes).map_err(err)?),
+            OraLob::Clob(c) => LobCell::Text(Some(read_text_capped(c.clone(), max_chars).map_err(err)?)),
+            OraLob::Nclob(c) => LobCell::Text(Some(read_text_capped(c.clone(), max_chars).map_err(err)?)),
+            OraLob::Text(s) => LobCell::Text(Some(cap_chars(s.clone(), max_chars))),
+            OraLob::Bytes(b) => LobCell::Binary(b[..b.len().min(max_bytes)].to_vec()),
+        })
+    }
+
+    fn copy_to(&self, out: &mut dyn Write) -> Result<u64> {
+        let err = |e: std::io::Error| anyhow!(e.to_string());
+        match self {
+            OraLob::Blob(b) => copy_lob(b.clone(), out).map_err(err),
+            OraLob::Clob(c) => copy_lob(c.clone(), out).map_err(err),
+            OraLob::Nclob(c) => copy_lob(c.clone(), out).map_err(err),
+            OraLob::Text(s) => out.write_all(s.as_bytes()).map(|_| s.len() as u64).map_err(err),
+            OraLob::Bytes(b) => out.write_all(b).map(|_| b.len() as u64).map_err(err),
+        }
+    }
+}
+
+/// Takes a LOB-column cell out of a row fetched in `lob_locator()` mode.
+fn take_lob_cell(row: &Row, i: usize, oracle_type: &OracleType) -> Result<Option<OraLob>> {
+    let err = |e: oracle::Error| anyhow!(e.to_string());
+    Ok(match oracle_type {
+        OracleType::BLOB => row.get::<_, Option<Blob>>(i).map_err(err)?.map(OraLob::Blob),
+        OracleType::CLOB => row.get::<_, Option<Clob>>(i).map_err(err)?.map(OraLob::Clob),
+        OracleType::NCLOB => row.get::<_, Option<Nclob>>(i).map_err(err)?.map(OraLob::Nclob),
+        OracleType::Long => row.get::<_, Option<String>>(i).map_err(err)?.map(OraLob::Text),
+        OracleType::LongRaw | OracleType::BFILE => {
+            row.get::<_, Option<Vec<u8>>>(i).map_err(err)?.map(OraLob::Bytes)
+        }
+        other => return Err(anyhow!("{other:?} is not a LOB type")),
+    })
+}
+
+/// Inline display value for "Show LOB content" mode.
+fn materialize(cell: &OraLob, kind: CellKind) -> String {
+    match cell.read(MATERIALIZE_TEXT_CAP, MATERIALIZE_TEXT_CAP) {
+        Ok(LobCell::Text(text)) => text.unwrap_or_default(),
+        Ok(LobCell::Binary(bytes)) => bytes_to_display(&bytes),
+        Err(_) => kind.placeholder().to_string(),
+    }
+}
+
+
+fn read_bytes_capped(mut r: impl Read, max_bytes: usize) -> std::io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; LOB_CHUNK];
+    while out.len() < max_bytes {
+        let n = r.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+    }
+    out.truncate(max_bytes);
+    Ok(out)
+}
+
+/// Reads a CLOB/NCLOB until more than `max_chars` characters are in hand.
+fn read_text_capped(mut r: impl Read, max_chars: usize) -> std::io::Result<String> {
+    let mut out = Vec::new();
+    let mut chars = 0;
+    let mut buf = vec![0u8; LOB_CHUNK];
+    while chars < max_chars {
+        let n = r.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        chars += buf[..n].iter().filter(|&&b| b & 0xC0 != 0x80).count();
+        out.extend_from_slice(&buf[..n]);
+    }
+    let text = String::from_utf8(out)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    Ok(cap_chars(text, max_chars))
+}
+
+fn copy_lob(mut r: impl Read, out: &mut dyn Write) -> std::io::Result<u64> {
+    let mut total = 0u64;
+    let mut buf = vec![0u8; LOB_CHUNK];
+    loop {
+        let n = r.read(&mut buf)?;
+        if n == 0 {
+            return Ok(total);
+        }
+        out.write_all(&buf[..n])?;
+        total += n as u64;
+    }
+}
+
+/// The LOB cells of one query result, plus the session their locators belong to.
+struct OracleLobSource {
+    // Before `_conn`: locators must drop before their session.
+    cells: HashMap<(usize, usize), OraLob>,
+    binary_cols: Vec<bool>,
+    /// Keeps the locators' session open.
+    _conn: Connection,
+}
+
+// SAFETY: ODPI-C handles are thread-safe, and the source is only used behind a Mutex.
+unsafe impl Send for OracleLobSource {}
+
+impl LobSource for OracleLobSource {
+    fn read(&mut self, row: usize, col: usize, max_bytes: usize, max_chars: usize) -> Result<LobCell> {
+        match self.cells.get(&(row, col)) {
+            Some(cell) => cell.read(max_bytes, max_chars),
+            None if self.binary_cols.get(col).copied().unwrap_or(false) => Ok(LobCell::Binary(Vec::new())),
+            None => Ok(LobCell::Text(None)),
+        }
+    }
+
+    fn copy_to(&mut self, row: usize, col: usize, out: &mut dyn Write) -> Result<u64> {
+        match self.cells.get(&(row, col)) {
+            Some(cell) => cell.copy_to(out),
+            None => Ok(0),
+        }
+    }
+}
+
+fn read_cell(row: &Row, i: usize, kind: CellKind) -> Option<String> {
     match kind {
-        CellKind::BinaryLob => {
-            if !materialize_lobs {
-                return Some("<BLOB>".to_string());
-            }
-            match row.get::<usize, Option<Vec<u8>>>(i) {
-                Ok(Some(bytes)) => Some(bytes_to_display(&bytes)),
-                Ok(None) => None,
-                Err(_) => Some("<BLOB>".to_string()),
-            }
-        }
-        CellKind::TextLob => {
-            if !materialize_lobs {
-                return Some("<CLOB>".to_string());
-            }
-            match row.get::<usize, Option<String>>(i) {
-                Ok(Some(s)) => Some(cap_chars(s, MATERIALIZE_TEXT_CAP)),
-                Ok(None) => None,
-                Err(_) => Some("<CLOB>".to_string()),
-            }
-        }
+        // LOB columns are read through `take_lob_cell`.
+        CellKind::BinaryLob | CellKind::TextLob => None,
         CellKind::Raw => match row.get::<usize, Option<Vec<u8>>>(i) {
             Ok(Some(bytes)) => Some(bytes_to_hex(&bytes, 512)),
             Ok(None) => None,
@@ -1514,8 +1602,12 @@ fn bytes_to_display(bytes: &[u8]) -> String {
         .map(|s| !s.contains('\0'))
         .unwrap_or(false);
     if looks_text {
-        match String::from_utf8(bytes.to_vec()) {
-            Ok(s) => cap_chars(s, MATERIALIZE_TEXT_CAP),
+        match std::str::from_utf8(bytes) {
+            Ok(s) => cap_chars(s.to_string(), MATERIALIZE_TEXT_CAP),
+            // Content capped mid-character — keep the complete prefix.
+            Err(e) if e.error_len().is_none() => {
+                cap_chars(String::from_utf8_lossy(&bytes[..e.valid_up_to()]).into_owned(), MATERIALIZE_TEXT_CAP)
+            }
             Err(_) => bytes_to_hex(bytes, 8192),
         }
     } else {

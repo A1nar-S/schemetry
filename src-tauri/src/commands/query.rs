@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use base64::Engine;
 use serde::Serialize;
 use tauri::State;
@@ -50,12 +52,11 @@ pub struct LobContent {
 }
 
 /// Fetch a LOB cell's content for the viewer: full text for CLOB-like columns, or
-/// type-sniffed binary (base64) for BLOBs. Re-runs the query on the given server.
+/// type-sniffed binary (base64) for BLOBs.
 #[tauri::command]
 pub async fn fetch_lob_content(
     state: State<'_, AppState>,
-    server_id: i64,
-    sql: String,
+    result_id: u64,
     row_index: usize,
     col_index: usize,
 ) -> Result<LobContent, String> {
@@ -64,17 +65,12 @@ pub async fn fetch_lob_content(
     const MAX_BINARY: usize = 16 * 1024 * 1024;
     const MAX_TEXT_CHARS: usize = 1024 * 1024;
 
-    let selected = super::selected_connections(&state.catalog, &[server_id])?;
-    let conn = selected
-        .into_iter()
-        .next()
-        .ok_or_else(|| "Server connection not found.".to_string())?;
     let query_svc = std::sync::Arc::clone(&state.query_svc);
 
     tokio::task::spawn_blocking(move || {
-        // Fetch one extra byte so we can tell whether the binary content was truncated.
+        // One extra byte/char reveals truncation.
         let cell = query_svc
-            .fetch_lob_cell(&conn, &sql, row_index, col_index, MAX_BINARY + 1)
+            .read_lob_cell(result_id, row_index, col_index, MAX_BINARY + 1, MAX_TEXT_CHARS + 1)
             .map_err(|e| e.to_string())?;
 
         let content = match cell {
@@ -116,29 +112,25 @@ pub async fn fetch_lob_content(
     .map_err(|e| e.to_string())?
 }
 
-/// Write the full (untruncated) bytes of a binary LOB cell to `path`.
+/// Stream the full (untruncated) content of a LOB cell to `path`.
 #[tauri::command]
 pub async fn save_blob_to_file(
     state: State<'_, AppState>,
-    server_id: i64,
-    sql: String,
+    result_id: u64,
     row_index: usize,
     col_index: usize,
     path: String,
 ) -> Result<u64, String> {
-    let selected = super::selected_connections(&state.catalog, &[server_id])?;
-    let conn = selected
-        .into_iter()
-        .next()
-        .ok_or_else(|| "Server connection not found.".to_string())?;
     let query_svc = std::sync::Arc::clone(&state.query_svc);
 
     tokio::task::spawn_blocking(move || {
-        let bytes = query_svc
-            .fetch_blob_cell(&conn, &sql, row_index, col_index, usize::MAX)
+        let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+        let mut out = std::io::BufWriter::new(file);
+        let size = query_svc
+            .copy_lob_cell(result_id, row_index, col_index, &mut out)
             .map_err(|e| e.to_string())?;
-        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-        Ok(bytes.len() as u64)
+        out.flush().map_err(|e| e.to_string())?;
+        Ok(size)
     })
     .await
     .map_err(|e| e.to_string())?

@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use schemetry_lib::models::ServerTableDdls;
+use schemetry_lib::repositories::db_repository::LobCell;
 use schemetry_lib::repositories::postgres_repository::DbPostgresRepository;
 use schemetry_lib::services::compare::compare_tables_across_servers;
 use schemetry_lib::services::fix::{generate_fix_script, Dialect};
@@ -235,4 +236,101 @@ fn schema_diff_and_idempotent_fix_execution() {
         discrepancies_final.len(),
         "re-running the fix script should not change the discrepancy count\nafter first run: {discrepancies_after:?}\nafter second run: {discrepancies_final:?}"
     );
+}
+
+// ── LOB cells (`lob_documents`, seeded by the V2 migrations) ─────────────────────
+// Only `bytea` is a LOB here.
+
+const LOB_QUERY: &str = "SELECT doc_id, title, body, payload FROM lob_documents ORDER BY doc_id";
+const PNG_BYTES: [u8; 12] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];
+
+fn lob_bytes(cell: LobCell) -> Vec<u8> {
+    match cell {
+        LobCell::Binary(bytes) => bytes,
+        other => panic!("expected a binary cell, got {other:?}"),
+    }
+}
+
+#[test]
+#[ignore = "requires the two Postgres containers from docker/docker-compose.yml"]
+fn lob_cells_are_read_from_the_kept_result() {
+    let svc = QueryService::new(Arc::new(DbPostgresRepository::new()));
+
+    let results = svc.run_query_on_servers(&[pg::source_connection()], LOB_QUERY, false);
+    let r = &results[0];
+    assert!(r.error.is_none(), "unexpected query error: {:?}", r.error);
+    assert_eq!(r.column_types[2..], ["TEXT", "BYTEA"]);
+    assert_eq!(r.rows.len(), 3);
+    assert_eq!(r.rows[0][2].as_deref(), Some("Price: 5 € — ✓ done"));
+    assert_eq!(r.rows[0][3].as_deref(), Some("<BYTEA>"));
+    assert_eq!(r.rows[1][3], None);
+
+    let read = |row, max_bytes| {
+        svc.read_lob_cell(r.result_id, row, 3, max_bytes, usize::MAX)
+            .expect("read_lob_cell failed")
+    };
+    assert_eq!(lob_bytes(read(0, usize::MAX)), PNG_BYTES);
+    assert!(lob_bytes(read(1, usize::MAX)).is_empty());
+
+    let expected = common::large_lob_content();
+    assert_eq!(lob_bytes(read(2, 1_500_000)), expected[..1_500_000]);
+    let mut full = Vec::new();
+    let size = svc.copy_lob_cell(r.result_id, 2, 3, &mut full).expect("copy_lob_cell failed");
+    assert_eq!(size, 3_000_000);
+    assert!(full == expected, "copied content differs from the seeded row");
+
+    assert!(
+        svc.read_lob_cell(r.result_id, 0, 2, usize::MAX, usize::MAX).is_err(),
+        "a text column is not a LOB cell"
+    );
+}
+
+#[test]
+#[ignore = "requires the two Postgres containers from docker/docker-compose.yml"]
+fn lob_cells_materialize_inline_when_requested() {
+    let svc = QueryService::new(Arc::new(DbPostgresRepository::new()));
+
+    let results = svc.run_query_on_servers(&[pg::source_connection()], LOB_QUERY, true);
+    let r = &results[0];
+    assert!(r.error.is_none(), "unexpected query error: {:?}", r.error);
+    assert_eq!(r.rows[0][3].as_deref(), Some("89504E470D0A1A0A00000000"));
+
+    let mut full = Vec::new();
+    svc.copy_lob_cell(r.result_id, 2, 3, &mut full).expect("copy_lob_cell failed");
+    assert_eq!(full.len(), 3_000_000);
+}
+
+/// LOB cells reflect the data as of the query and are released by the next run.
+#[test]
+#[ignore = "requires the two Postgres containers from docker/docker-compose.yml; writes to TARGET"]
+fn lob_result_is_a_snapshot_released_by_the_next_run() {
+    let svc = QueryService::new(Arc::new(DbPostgresRepository::new()));
+    let target = pg::target_connection();
+
+    pg::execute_script(
+        &target,
+        "DELETE FROM lob_documents WHERE doc_id = 900;\n\
+         INSERT INTO lob_documents (doc_id, title, payload) VALUES (900, 'snapshot', decode('0102', 'hex'));",
+    );
+
+    let results = svc.run_query_on_servers(
+        &[target.clone()],
+        "SELECT payload FROM lob_documents WHERE doc_id = 900",
+        false,
+    );
+    let result_id = results[0].result_id;
+    assert!(results[0].error.is_none(), "unexpected query error: {:?}", results[0].error);
+
+    pg::execute_script(&target, "UPDATE lob_documents SET payload = decode('0304', 'hex') WHERE doc_id = 900;");
+
+    let payload = svc.read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX).unwrap();
+    assert_eq!(lob_bytes(payload), [0x01, 0x02]);
+
+    svc.run_query_on_servers(&[target.clone()], "SELECT 1 AS one", false);
+    assert!(
+        svc.read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX).is_err(),
+        "the previous result should be released by the next run"
+    );
+
+    pg::execute_script(&target, "DELETE FROM lob_documents WHERE doc_id = 900;");
 }

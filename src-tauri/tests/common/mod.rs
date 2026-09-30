@@ -63,6 +63,13 @@ pub fn target_connection() -> ConnectionRecord {
     connection(TARGET_ID, "TARGET", 1522, "SCHEMETRY_TEST_TARGET_PORT")
 }
 
+/// Row 3 body/payload seeded by the V2 migrations.
+pub fn large_lob_content() -> Vec<u8> {
+    (1..=300u32)
+        .flat_map(|i| std::iter::repeat(b'0' + (i % 10) as u8).take(10_000))
+        .collect()
+}
+
 /// Opens a raw connection for helpers (executing the generated fix script) that don't
 /// go through `OracleRepository`.
 pub fn raw_connect(conn: &ConnectionRecord) -> Connection {
@@ -71,17 +78,24 @@ pub fn raw_connect(conn: &ConnectionRecord) -> Connection {
         .expect("raw connection failed")
 }
 
-/// Executes a `;`-separated fix script, statement by statement, and returns how many
-/// ran. Blank statements (trailing separator, comments-only) are skipped.
+/// Executes a fix script SQL*Plus-style (blocks end at a `/` line); returns how many ran.
 pub fn execute_script(db: &Connection, script: &str) -> Result<usize, oracle::Error> {
     let mut executed = 0;
-    for statement in script.split(';') {
-        let trimmed = statement.trim();
-        if trimmed.is_empty() {
+    let mut chunk = String::new();
+    for line in script.lines().chain(std::iter::once("/")) {
+        if line.trim() != "/" {
+            if !(chunk.is_empty() && (line.trim().is_empty() || line.trim_start().starts_with("--"))) {
+                chunk.push_str(line);
+                chunk.push('\n');
+            }
             continue;
         }
-        db.execute(trimmed, &[])?;
-        executed += 1;
+        let statement = chunk.trim();
+        if !statement.is_empty() {
+            db.execute(statement, &[])?;
+            executed += 1;
+        }
+        chunk.clear();
     }
     db.commit()?;
     Ok(executed)

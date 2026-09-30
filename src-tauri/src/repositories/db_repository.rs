@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use anyhow::Result;
 
 use crate::models::{
@@ -41,40 +43,34 @@ pub trait DbRepository: Send + Sync {
         conn: &ConnectionRecord,
         naming_rules: &[HistoryNamingRule],
     ) -> Result<HistoryFixResult>;
-    /// Returns `(column names, column type labels, rows)`. When `materialize_lobs` is
-    /// false, binary LOB cells render as `<BLOB>` and text LOB cells as `<CLOB>` (their
-    /// content can be fetched lazily via [`DbRepository::fetch_lob_cell`]). When
-    /// true, LOB content is materialized inline (capped): CLOB → text, BLOB → decoded
-    /// text or hex.
+    /// LOB cells show as `<BLOB>`/`<CLOB>`, or as capped inline content when
+    /// `materialize_lobs`; either way they stay readable via [`QueryOutput::lobs`].
     fn run_query(
         &self,
         conn: &ConnectionRecord,
         sql: &str,
         materialize_lobs: bool,
-    ) -> Result<(Vec<String>, Vec<String>, Vec<Vec<Option<String>>>)>;
-    /// Re-run `sql` and read the raw bytes of a single BLOB/binary cell, capped at
-    /// `max_bytes`. Used for the full-bytes "Save to file" path.
-    fn fetch_blob_cell(
-        &self,
-        conn: &ConnectionRecord,
-        sql: &str,
-        row_index: usize,
-        col_index: usize,
-        max_bytes: usize,
-    ) -> Result<Vec<u8>>;
-    /// Re-run `sql` and read a single LOB cell, returning text for CLOB-like columns
-    /// and bytes (capped at `max_bytes`) for binary columns, based on the column type.
-    fn fetch_lob_cell(
-        &self,
-        conn: &ConnectionRecord,
-        sql: &str,
-        row_index: usize,
-        col_index: usize,
-        max_bytes: usize,
-    ) -> Result<LobCell>;
+    ) -> Result<QueryOutput>;
+}
+
+pub struct QueryOutput {
+    pub columns: Vec<String>,
+    pub column_types: Vec<String>,
+    pub rows: Vec<Vec<Option<String>>>,
+    /// `None` when the result has no LOB columns.
+    pub lobs: Option<Box<dyn LobSource>>,
+}
+
+/// Keeps a result's LOB cells readable after `run_query`, so nothing is re-queried.
+pub trait LobSource: Send {
+    /// Reads one cell, capped at `max_chars` (text) or `max_bytes` (binary).
+    fn read(&mut self, row: usize, col: usize, max_bytes: usize, max_chars: usize) -> Result<LobCell>;
+    /// Streams a binary cell's full content into `out`, returning the byte count.
+    fn copy_to(&mut self, row: usize, col: usize, out: &mut dyn Write) -> Result<u64>;
 }
 
 /// A single LOB cell fetched on demand for the content viewer.
+#[derive(Debug, PartialEq)]
 pub enum LobCell {
     Text(Option<String>),
     Binary(Vec<u8>),

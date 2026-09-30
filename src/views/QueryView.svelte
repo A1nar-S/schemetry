@@ -225,7 +225,7 @@
   let cellViewerText = '';        // plain cell value or loaded CLOB text
   let cellViewerRowIndex = -1;
   let cellViewerColIndex = -1;
-  let cellViewerServerId: number | null = null;
+  let cellViewerResultId: number | null = null;
   let cellViewerLoading = false;
   let cellViewerLoaded = false;   // LOB content fetched?
   let lobMime = '';
@@ -255,9 +255,10 @@
     cellViewerTitle = colKey;
     cellViewerText = '';
     cellViewerRowIndex = typeof row.__rowIndex === 'number' ? row.__rowIndex : -1;
-    cellViewerServerId = typeof row.__serverId === 'number' ? row.__serverId : get(activeServer);
+    const serverId = typeof row.__serverId === 'number' ? row.__serverId : get(activeServer);
     // Use the row's own server result — column order can differ between servers.
-    const rowResult = get(results).find(r => r.server_id === cellViewerServerId) ?? baseResult;
+    const rowResult = get(results).find(r => r.server_id === serverId) ?? baseResult;
+    cellViewerResultId = rowResult?.result_id ?? null;
     cellViewerColIndex = rowResult ? rowResult.columns.indexOf(colKey) : -1;
 
     const kind = rowResult ? lobKindOf(rowResult.column_types?.[cellViewerColIndex]) : lobKind(colKey);
@@ -278,13 +279,12 @@
   let lobRequestSeq = 0;
 
   async function loadLobContent() {
-    if (cellViewerRowIndex < 0 || cellViewerColIndex < 0 || cellViewerServerId === null) return;
+    if (cellViewerRowIndex < 0 || cellViewerColIndex < 0 || cellViewerResultId === null) return;
     const seq = lobRequestSeq;
     cellViewerLoading = true;
     try {
       const content = await fetchLobContent(
-        cellViewerServerId,
-        get(lastRunSql),
+        cellViewerResultId,
         cellViewerRowIndex,
         cellViewerColIndex,
       );
@@ -314,7 +314,7 @@
   }
 
   async function saveLobToFile() {
-    if (cellViewerRowIndex < 0 || cellViewerColIndex < 0 || cellViewerServerId === null) return;
+    if (cellViewerRowIndex < 0 || cellViewerColIndex < 0 || cellViewerResultId === null) return;
     const filePath = await save({
       title: 'Save BLOB to file',
       defaultPath: `${cellViewerTitle || 'blob'}${extForMime(lobMime)}`,
@@ -323,8 +323,7 @@
     setBusy(true, 'Saving file…');
     try {
       const size = await saveBlobToFile(
-        cellViewerServerId,
-        get(lastRunSql),
+        cellViewerResultId,
         cellViewerRowIndex,
         cellViewerColIndex,
         filePath,

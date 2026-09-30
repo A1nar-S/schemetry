@@ -24,6 +24,8 @@ export type ConnectionRecord = {
 export type QueryServerResult = {
   server_id: number;
   server_name: string;
+  // Key for this result's LOB cells.
+  result_id: number;
   columns: string[];
   column_types: string[];
   rows: (string | null)[][];

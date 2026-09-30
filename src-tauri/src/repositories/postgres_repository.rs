@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 
 use anyhow::{anyhow, Result};
 use tokio_postgres::types::ToSql;
@@ -8,7 +9,7 @@ use crate::models::{
     ColumnInfo, ConnectionRecord, HistoryFixResult, HistoryNamingRule, HistoryTableIssue,
     MatchType, SchemaObject, TableDdls, TableFilterRule,
 };
-use crate::repositories::db_repository::{DbRepository, LobCell};
+use crate::repositories::db_repository::{DbRepository, LobCell, LobSource, QueryOutput};
 use crate::repositories::filter_rule_repository::{build_predicate, ParamStyle};
 
 /// Cap on materialized LOB-like content (characters of text / bytes decoded), mirroring
@@ -862,7 +863,7 @@ impl DbRepository for DbPostgresRepository {
         conn: &ConnectionRecord,
         sql: &str,
         materialize_lobs: bool,
-    ) -> Result<(Vec<String>, Vec<String>, Vec<Vec<Option<String>>>)> {
+    ) -> Result<QueryOutput> {
         self.runtime.block_on(async {
             let client = self.connect(conn).await?;
             let probed = probe_columns(&client, sql).await;
@@ -876,9 +877,11 @@ impl DbRepository for DbPostgresRepository {
             let mut types: Vec<String> = Vec::new();
             let mut kinds: Vec<CellKind> = Vec::new();
             let mut rows: Vec<Vec<Option<String>>> = Vec::new();
+            let mut cells: HashMap<(usize, usize), Vec<u8>> = HashMap::new();
 
             for message in &messages {
                 if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
+                    let row_idx = rows.len();
                     if columns.is_empty() {
                         for (i, col) in row.columns().iter().enumerate() {
                             let (type_name, kind) = match probed.as_ref().and_then(|p| p.get(i)) {
@@ -895,12 +898,15 @@ impl DbRepository for DbPostgresRepository {
                         let kind = kinds.get(i).copied().unwrap_or(CellKind::Text);
                         values.push(match (row.get(i), kind) {
                             (None, _) => None,
-                            (Some(text), CellKind::Binary) if !materialize_lobs => {
-                                let _ = text;
-                                Some("<BYTEA>".to_string())
-                            }
                             (Some(text), CellKind::Binary) => {
-                                Some(bytes_to_hex(&decode_bytea_hex(text), 8192))
+                                let bytes = decode_bytea_hex(text);
+                                let shown = if materialize_lobs {
+                                    bytes_to_hex(&bytes, 8192)
+                                } else {
+                                    "<BYTEA>".to_string()
+                                };
+                                cells.insert((row_idx, i), bytes);
+                                Some(shown)
                             }
                             (Some(text), CellKind::Text) => Some(cap_chars(text.to_string(), MATERIALIZE_TEXT_CAP)),
                         });
@@ -909,74 +915,40 @@ impl DbRepository for DbPostgresRepository {
                 }
             }
 
-            Ok((columns, types, rows))
+            // bytea has no locators, so its bytes are kept for the viewer.
+            let binary_cols: Vec<bool> = kinds.iter().map(|k| matches!(k, CellKind::Binary)).collect();
+            let lobs = binary_cols.iter().any(|&b| b).then(|| {
+                Box::new(PgLobSource { cells, binary_cols }) as Box<dyn LobSource>
+            });
+            Ok(QueryOutput { columns, column_types: types, rows, lobs })
         })
     }
+}
 
-    fn fetch_blob_cell(
-        &self,
-        conn: &ConnectionRecord,
-        sql: &str,
-        row_index: usize,
-        col_index: usize,
-        max_bytes: usize,
-    ) -> Result<Vec<u8>> {
-        self.runtime.block_on(async {
-            let client = self.connect(conn).await?;
-            let messages = client.simple_query(sql).await.map_err(|e| anyhow!(e.to_string()))?;
-            let mut idx = 0;
-            for message in &messages {
-                if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
-                    if idx == row_index {
-                        let mut bytes = row.get(col_index).map(decode_bytea_hex).unwrap_or_default();
-                        if bytes.len() > max_bytes {
-                            bytes.truncate(max_bytes);
-                        }
-                        return Ok(bytes);
-                    }
-                    idx += 1;
-                }
-            }
-            Err(anyhow!("Row {row_index} is no longer in the result set (the data may have changed)."))
-        })
+/// The bytea cells of one query result.
+struct PgLobSource {
+    cells: HashMap<(usize, usize), Vec<u8>>,
+    binary_cols: Vec<bool>,
+}
+
+impl PgLobSource {
+    fn cell(&self, row: usize, col: usize) -> Result<&[u8]> {
+        if !self.binary_cols.get(col).copied().unwrap_or(false) {
+            return Err(anyhow!("Column {col} is not a bytea column."));
+        }
+        Ok(self.cells.get(&(row, col)).map(Vec::as_slice).unwrap_or_default())
+    }
+}
+
+impl LobSource for PgLobSource {
+    fn read(&mut self, row: usize, col: usize, max_bytes: usize, _max_chars: usize) -> Result<LobCell> {
+        let bytes = self.cell(row, col)?;
+        Ok(LobCell::Binary(bytes[..bytes.len().min(max_bytes)].to_vec()))
     }
 
-    fn fetch_lob_cell(
-        &self,
-        conn: &ConnectionRecord,
-        sql: &str,
-        row_index: usize,
-        col_index: usize,
-        max_bytes: usize,
-    ) -> Result<LobCell> {
-        self.runtime.block_on(async {
-            let client = self.connect(conn).await?;
-            let probed = probe_columns(&client, sql).await;
-            let is_binary = probed
-                .as_ref()
-                .and_then(|p| p.get(col_index))
-                .map(|(_, t)| matches!(cell_kind(t), CellKind::Binary))
-                .unwrap_or(false);
-
-            let messages = client.simple_query(sql).await.map_err(|e| anyhow!(e.to_string()))?;
-            let mut idx = 0;
-            for message in &messages {
-                if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
-                    if idx == row_index {
-                        return Ok(if is_binary {
-                            let mut bytes = row.get(col_index).map(decode_bytea_hex).unwrap_or_default();
-                            if bytes.len() > max_bytes {
-                                bytes.truncate(max_bytes);
-                            }
-                            LobCell::Binary(bytes)
-                        } else {
-                            LobCell::Text(row.get(col_index).map(str::to_string))
-                        });
-                    }
-                    idx += 1;
-                }
-            }
-            Err(anyhow!("Row {row_index} is no longer in the result set (the data may have changed)."))
-        })
+    fn copy_to(&mut self, row: usize, col: usize, out: &mut dyn Write) -> Result<u64> {
+        let bytes = self.cell(row, col)?;
+        out.write_all(bytes).map_err(|e| anyhow!(e.to_string()))?;
+        Ok(bytes.len() as u64)
     }
 }

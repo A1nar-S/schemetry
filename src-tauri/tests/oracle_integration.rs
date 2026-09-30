@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use schemetry_lib::models::ServerTableDdls;
+use schemetry_lib::repositories::db_repository::LobCell;
 use schemetry_lib::repositories::oracle_repository::DbOracleRepository;
 use schemetry_lib::services::compare::compare_tables_across_servers;
 use schemetry_lib::services::fix::generate_fix_script;
@@ -226,4 +227,130 @@ fn schema_diff_and_idempotent_fix_execution() {
         discrepancies_final.len(),
         "re-running the fix script should not change the discrepancy count\nafter first run: {discrepancies_after:?}\nafter second run: {discrepancies_final:?}"
     );
+}
+
+// ── LOB cells (`LOB_DOCUMENTS`, seeded by the V2 migrations) ─────────────────────
+
+const LOB_QUERY: &str = "SELECT DOC_ID, TITLE, BODY, PAYLOAD FROM LOB_DOCUMENTS ORDER BY DOC_ID";
+const PNG_BYTES: [u8; 12] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];
+
+fn lob_text(cell: LobCell) -> Option<String> {
+    match cell {
+        LobCell::Text(text) => text,
+        other => panic!("expected a text cell, got {other:?}"),
+    }
+}
+
+fn lob_bytes(cell: LobCell) -> Vec<u8> {
+    match cell {
+        LobCell::Binary(bytes) => bytes,
+        other => panic!("expected a binary cell, got {other:?}"),
+    }
+}
+
+#[test]
+#[ignore = "requires the two Oracle containers from docker/docker-compose.yml"]
+fn lob_cells_are_read_from_the_kept_result() {
+    common::init_oracle_client();
+    let svc = QueryService::new(Arc::new(DbOracleRepository::new()));
+
+    let results = svc.run_query_on_servers(&[common::source_connection()], LOB_QUERY, false);
+    let r = &results[0];
+    assert!(r.error.is_none(), "unexpected query error: {:?}", r.error);
+    assert_eq!(r.column_types[2..], ["CLOB", "BLOB"]);
+    assert_eq!(r.rows.len(), 3);
+    assert_eq!(r.rows[0][2].as_deref(), Some("<CLOB>"));
+    assert_eq!(r.rows[0][3].as_deref(), Some("<BLOB>"));
+    assert_eq!(r.rows[1][2], None);
+    assert_eq!(r.rows[1][3], None);
+
+    let read = |row, col, max_bytes, max_chars| {
+        svc.read_lob_cell(r.result_id, row, col, max_bytes, max_chars)
+            .expect("read_lob_cell failed")
+    };
+    assert_eq!(lob_text(read(0, 2, usize::MAX, usize::MAX)).as_deref(), Some("Price: 5 € — ✓ done"));
+    assert_eq!(lob_bytes(read(0, 3, usize::MAX, usize::MAX)), PNG_BYTES);
+    assert_eq!(lob_text(read(1, 2, usize::MAX, usize::MAX)), None);
+    assert!(lob_bytes(read(1, 3, usize::MAX, usize::MAX)).is_empty());
+
+    // Row 3 spans several read chunks.
+    let expected = common::large_lob_content();
+    let capped_text = lob_text(read(2, 2, usize::MAX, 1_500_000)).expect("row 3 body is not NULL");
+    assert_eq!(capped_text.as_bytes(), &expected[..1_500_000]);
+    assert_eq!(lob_bytes(read(2, 3, 1_500_000, usize::MAX)), expected[..1_500_000]);
+
+    for col in [2, 3] {
+        let mut full = Vec::new();
+        let size = svc.copy_lob_cell(r.result_id, 2, col, &mut full).expect("copy_lob_cell failed");
+        assert_eq!(size, 3_000_000);
+        assert!(full == expected, "column {col}: copied content differs from the seeded row");
+    }
+}
+
+#[test]
+#[ignore = "requires the two Oracle containers from docker/docker-compose.yml"]
+fn lob_cells_materialize_inline_when_requested() {
+    common::init_oracle_client();
+    let svc = QueryService::new(Arc::new(DbOracleRepository::new()));
+
+    let results = svc.run_query_on_servers(&[common::source_connection()], LOB_QUERY, true);
+    let r = &results[0];
+    assert!(r.error.is_none(), "unexpected query error: {:?}", r.error);
+    assert_eq!(r.rows[0][2].as_deref(), Some("Price: 5 € — ✓ done"));
+    assert_eq!(r.rows[0][3].as_deref(), Some("89504E470D0A1A0A00000000"));
+    // Capped at 1,000,000 chars; the all-digit BLOB displays as text.
+    assert_eq!(r.rows[2][2].as_ref().map(|s| s.chars().count()), Some(1_000_000));
+    assert_eq!(r.rows[2][3].as_ref().map(|s| s.chars().count()), Some(1_000_000));
+
+    let mut full = Vec::new();
+    svc.copy_lob_cell(r.result_id, 2, 3, &mut full).expect("copy_lob_cell failed");
+    assert_eq!(full.len(), 3_000_000);
+}
+
+/// LOB cells reflect the data as of the query and are released by the next run.
+#[test]
+#[ignore = "requires the two Oracle containers from docker/docker-compose.yml; writes to TARGET"]
+fn lob_result_is_a_snapshot_released_by_the_next_run() {
+    common::init_oracle_client();
+    let svc = QueryService::new(Arc::new(DbOracleRepository::new()));
+    let target = common::target_connection();
+    let db = common::raw_connect(&target);
+
+    db.execute("DELETE FROM LOB_DOCUMENTS WHERE DOC_ID = 900", &[]).unwrap();
+    db.execute(
+        "INSERT INTO LOB_DOCUMENTS (DOC_ID, TITLE, BODY, PAYLOAD) \
+         VALUES (900, 'snapshot', TO_CLOB('before'), HEXTORAW('0102'))",
+        &[],
+    )
+    .unwrap();
+    db.commit().unwrap();
+
+    let results = svc.run_query_on_servers(
+        &[target.clone()],
+        "SELECT BODY, PAYLOAD FROM LOB_DOCUMENTS WHERE DOC_ID = 900",
+        false,
+    );
+    let result_id = results[0].result_id;
+    assert!(results[0].error.is_none(), "unexpected query error: {:?}", results[0].error);
+
+    db.execute(
+        "UPDATE LOB_DOCUMENTS SET BODY = TO_CLOB('after'), PAYLOAD = HEXTORAW('0304') WHERE DOC_ID = 900",
+        &[],
+    )
+    .unwrap();
+    db.commit().unwrap();
+
+    let body = svc.read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX).unwrap();
+    let payload = svc.read_lob_cell(result_id, 0, 1, usize::MAX, usize::MAX).unwrap();
+    assert_eq!(lob_text(body).as_deref(), Some("before"));
+    assert_eq!(lob_bytes(payload), [0x01, 0x02]);
+
+    svc.run_query_on_servers(&[target], "SELECT 1 AS ONE FROM dual", false);
+    assert!(
+        svc.read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX).is_err(),
+        "the previous result should be released by the next run"
+    );
+
+    db.execute("DELETE FROM LOB_DOCUMENTS WHERE DOC_ID = 900", &[]).unwrap();
+    db.commit().unwrap();
 }

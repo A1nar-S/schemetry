@@ -6,7 +6,7 @@ use crate::models::{
     ConnectionRecord, DbType, HistoryFixResult, HistoryNamingRule, SchemaObject, TableDdls,
     TableFilterRule,
 };
-use crate::repositories::db_repository::{DbRepository, LobCell};
+use crate::repositories::db_repository::{DbRepository, QueryOutput};
 use crate::repositories::oracle_repository::DbOracleRepository;
 use crate::repositories::postgres_repository::DbPostgresRepository;
 
@@ -88,29 +88,7 @@ impl DbRepository for DispatchRepository {
         conn: &ConnectionRecord,
         sql: &str,
         materialize_lobs: bool,
-    ) -> Result<(Vec<String>, Vec<String>, Vec<Vec<Option<String>>>)> {
+    ) -> Result<QueryOutput> {
         self.repo(conn).run_query(conn, sql, materialize_lobs)
-    }
-
-    fn fetch_blob_cell(
-        &self,
-        conn: &ConnectionRecord,
-        sql: &str,
-        row_index: usize,
-        col_index: usize,
-        max_bytes: usize,
-    ) -> Result<Vec<u8>> {
-        self.repo(conn).fetch_blob_cell(conn, sql, row_index, col_index, max_bytes)
-    }
-
-    fn fetch_lob_cell(
-        &self,
-        conn: &ConnectionRecord,
-        sql: &str,
-        row_index: usize,
-        col_index: usize,
-        max_bytes: usize,
-    ) -> Result<LobCell> {
-        self.repo(conn).fetch_lob_cell(conn, sql, row_index, col_index, max_bytes)
     }
 }

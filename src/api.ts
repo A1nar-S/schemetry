@@ -101,29 +101,25 @@ export async function getQueryHistory(): Promise<QueryHistoryEntry[]> {
 }
 
 export async function fetchLobContent(
-  server_id: number,
-  sql: string,
+  result_id: number,
   row_index: number,
   col_index: number,
 ): Promise<LobContent> {
   return invoke('fetch_lob_content', {
-    serverId: server_id,
-    sql,
+    resultId: result_id,
     rowIndex: row_index,
     colIndex: col_index,
   });
 }
 
 export async function saveBlobToFile(
-  server_id: number,
-  sql: string,
+  result_id: number,
   row_index: number,
   col_index: number,
   path: string,
 ): Promise<number> {
   return invoke('save_blob_to_file', {
-    serverId: server_id,
-    sql,
+    resultId: result_id,
     rowIndex: row_index,
     colIndex: col_index,
     path,
