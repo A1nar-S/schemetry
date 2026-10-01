@@ -36,6 +36,23 @@ export const lastExportDir = writable('');
 // Excel export layout: 'per-server' = one worksheet tab per server,
 // 'single' = all servers combined on one tab with a Server column.
 export const exportMode = writable<'per-server' | 'single'>('per-server');
+// Last export file format picked in the save dialog; it's offered first next time.
+const EXPORT_FORMAT_KEY = 'schemetry-query-export-format';
+function loadExportFormat(): 'xlsx' | 'csv' {
+  try {
+    return localStorage.getItem(EXPORT_FORMAT_KEY) === 'csv' ? 'csv' : 'xlsx';
+  } catch {
+    return 'xlsx';
+  }
+}
+export const exportFormat = writable<'xlsx' | 'csv'>(loadExportFormat());
+exportFormat.subscribe(format => {
+  try {
+    localStorage.setItem(EXPORT_FORMAT_KEY, format);
+  } catch {
+    // Storage unavailable — the choice just won't persist.
+  }
+});
 // When true, LOB columns are materialized inline (CLOB → text, BLOB → text/hex)
 // instead of showing <CLOB>/<BLOB> placeholders, for both the grid and export.
 export const showLobContent = writable(false);

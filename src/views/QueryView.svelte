@@ -36,6 +36,7 @@
     historyOpen,
     lastExportDir,
     exportMode,
+    exportFormat,
     lastRunSql,
     showLobContent,
     expandedGroups,
@@ -217,12 +218,18 @@
 
   async function onExport() {
     const lastDir = get(lastExportDir);
+    // The backend picks the format from the extension; the last-used one is offered first.
+    const excelFilter = { name: 'Excel', extensions: ['xlsx'] };
+    const csvFilter = { name: 'CSV (comma-separated)', extensions: ['csv'] };
+    const format = get(exportFormat);
+    const fileName = `query_export.${format}`;
     const filePath = await save({
       title: 'Export Query Results',
-      defaultPath: lastDir ? `${lastDir}\\query_export.xlsx` : 'query_export.xlsx',
-      filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+      defaultPath: lastDir ? `${lastDir}\\${fileName}` : fileName,
+      filters: format === 'csv' ? [csvFilter, excelFilter] : [excelFilter, csvFilter],
     });
     if (!filePath) return;
+    exportFormat.set(/\.csv$/i.test(filePath) ? 'csv' : 'xlsx');
     const dir = filePath.replace(/[/\\][^/\\]+$/, '');
     if (dir !== lastDir) {
       lastExportDir.set(dir);
@@ -502,7 +509,7 @@
         ><Icon name="download" /> Export</button>
         <select
           bind:value={$exportMode}
-          title="Result layout (grid & Excel export)"
+          title="Result layout (grid & Excel export; CSV export is always a single table)"
           style="font-size:12px;padding:5px 8px;"
         >
           <option value="per-server">One tab per server</option>

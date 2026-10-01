@@ -237,6 +237,6 @@ pub fn export_query_results(
     output_path: String,
     single_sheet: bool,
 ) -> Result<(), String> {
-    services::query_export::export_to_excel(&results, &output_path, single_sheet)
+    services::query_export::export_results(&results, &output_path, single_sheet)
         .map_err(|e| e.to_string())
 }

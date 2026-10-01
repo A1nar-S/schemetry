@@ -1,7 +1,91 @@
+use std::borrow::Cow;
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::Path;
+
 use anyhow::{anyhow, Result};
 use rust_xlsxwriter::{Color, Format, FormatBorder, Workbook, Worksheet};
 
 use crate::models::QueryServerResult;
+
+/// Export query results, picking the format from the file extension:
+/// `.csv` writes CSV, anything else writes an Excel workbook.
+pub fn export_results(
+    results: &[QueryServerResult],
+    output_path: &str,
+    single_sheet: bool,
+) -> Result<()> {
+    let is_csv = Path::new(output_path)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("csv"));
+    if is_csv {
+        export_to_csv(results, output_path)
+    } else {
+        export_to_excel(results, output_path, single_sheet)
+    }
+}
+
+/// Export query results to one CSV file (UTF-8, comma-separated, RFC 4180 quoting).
+///
+/// CSV has no tabs, so all servers go into a single table; when more than one
+/// server returned a result set, a leading `Server` column identifies each row's
+/// source. NULLs are written as empty fields and values are never clipped.
+pub fn export_to_csv(results: &[QueryServerResult], output_path: &str) -> Result<()> {
+    let mut writer = BufWriter::new(File::create(output_path)?);
+    write_csv(&mut writer, results)?;
+    writer.flush()?;
+    Ok(())
+}
+
+fn write_csv<W: Write>(out: &mut W, results: &[QueryServerResult]) -> Result<()> {
+    let with_columns: Vec<&QueryServerResult> =
+        results.iter().filter(|r| !r.columns.is_empty()).collect();
+    // The same query runs on every server, so the first result's columns are the header.
+    let Some(first) = with_columns.first() else {
+        return Ok(());
+    };
+    let include_server = with_columns.len() > 1;
+
+    let mut header: Vec<&str> = Vec::with_capacity(first.columns.len() + 1);
+    if include_server {
+        header.push("Server");
+    }
+    header.extend(first.columns.iter().map(String::as_str));
+    write_csv_record(out, &header)?;
+
+    for server_result in &with_columns {
+        for row in &server_result.rows {
+            let mut record: Vec<&str> = Vec::with_capacity(row.len() + 1);
+            if include_server {
+                record.push(&server_result.server_name);
+            }
+            record.extend(row.iter().map(|v| v.as_deref().unwrap_or("")));
+            write_csv_record(out, &record)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_csv_record<W: Write>(out: &mut W, fields: &[&str]) -> Result<()> {
+    for (i, field) in fields.iter().enumerate() {
+        if i > 0 {
+            out.write_all(b",")?;
+        }
+        out.write_all(csv_escape(field).as_bytes())?;
+    }
+    out.write_all(b"\n")?;
+    Ok(())
+}
+
+/// Quote a field when it contains a delimiter, quote, or line break (RFC 4180),
+/// doubling any embedded quotes.
+fn csv_escape(value: &str) -> Cow<'_, str> {
+    if value.contains([',', '"', '\n', '\r']) {
+        Cow::Owned(format!("\"{}\"", value.replace('"', "\"\"")))
+    } else {
+        Cow::Borrowed(value)
+    }
+}
 
 /// Export query results to Excel.
 ///
@@ -195,3 +279,7 @@ fn export_single_sheet(
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "tests/query_export.rs"]
+mod tests;
