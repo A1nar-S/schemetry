@@ -63,7 +63,8 @@
 
   --history-bg:       #1e1e1e;
   --history-hover:    #2a2a2a;
-  --conn-group-color: #9a9a9a;
+  --conn-group-color: #4da3ff;
+  --conn-group-count-bg: rgba(77, 163, 255, 0.16);
 
   --error-bg:     #3a1414;
   --error-border: #7f1d1d;
@@ -133,7 +134,8 @@
 
   --history-bg:       #f5f6f8;
   --history-hover:    #e4e7eb;
-  --conn-group-color: #4d4d4d;
+  --conn-group-color: #0057a8;
+  --conn-group-count-bg: rgba(0, 87, 168, 0.12);
 
   --error-bg:     #fef2f2;
   --error-border: #f19999;
@@ -658,9 +660,19 @@
     display: flex; flex-direction: column; gap: 2px;
   }
   .conn-group-label {
-    font-size: 10px; font-weight: 700; color: var(--conn-group-color);
-    text-transform: uppercase; letter-spacing: 0.08em;
-    padding: 8px 8px 3px;
+    display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+    width: 100%; margin-top: 6px; padding: 5px 6px;
+    background: none; border: none; border-radius: 5px;
+    font-size: 11px; font-weight: 700; color: var(--conn-group-color);
+    text-transform: uppercase; letter-spacing: 0.08em; text-align: left;
+    cursor: pointer; transition: background 0.1s;
+  }
+  .conn-group-label:hover { background: var(--nav-btn-hover-bg); }
+  .conn-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conn-group-count {
+    flex-shrink: 0; padding: 0 6px; border-radius: 8px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0;
+    background: var(--conn-group-count-bg); color: var(--conn-group-color);
   }
   .conn-item {
     display: flex; align-items: center; gap: 6px;

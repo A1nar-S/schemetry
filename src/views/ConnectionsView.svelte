@@ -103,6 +103,30 @@
     return groups;
   }
 
+  // Collapsed group names, remembered across restarts.
+  const COLLAPSED_KEY = 'connections.collapsedGroups';
+  let collapsedGroups = loadCollapsedGroups();
+
+  function loadCollapsedGroups(): Set<string> {
+    try {
+      const raw = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]');
+      return new Set(Array.isArray(raw) ? raw.map(String) : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  function toggleGroup(group: string) {
+    if (collapsedGroups.has(group)) collapsedGroups.delete(group);
+    else collapsedGroups.add(group);
+    collapsedGroups = collapsedGroups;
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedGroups]));
+    } catch {
+      // Not persisted — the toggle still applies for this session.
+    }
+  }
+
   async function onOpenPlsql(conn: ConnectionRecord) {
     setBusy(true, `Launching PL/SQL Developer for ${conn.name}…`);
     try {
@@ -289,8 +313,19 @@
     {/if}
 
     {#each [...schemaGroups.entries()] as [schema, conns]}
-      <div class="conn-group-label">{schema}</div>
-      {#each conns as conn}
+      <!-- A search always shows its matches, even inside a collapsed group. -->
+      {@const collapsed = !searchQuery.trim() && collapsedGroups.has(schema)}
+      <button
+        class="conn-group-label"
+        title={collapsed ? `Expand ${schema}` : `Collapse ${schema}`}
+        aria-expanded={!collapsed}
+        on:click={() => toggleGroup(schema)}
+      >
+        <Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={12} />
+        <span class="conn-group-name">{schema}</span>
+        <span class="conn-group-count">{conns.length}</span>
+      </button>
+      {#each collapsed ? [] : conns as conn}
         <div
           class="conn-item"
         class:selected={editingId === conn.id}
