@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::thread;
 
 use anyhow::Result;
 
@@ -9,6 +8,7 @@ use crate::models::{
     TableFilterRule,
 };
 use crate::repositories::db_repository::DbRepository;
+use crate::services::cancel;
 use crate::repositories::oracle_repository::configure_client_lib_dir;
 
 pub struct SchemaDiffService {
@@ -33,7 +33,7 @@ impl SchemaDiffService {
         for conn in connections.iter().cloned() {
             let repo = Arc::clone(&self.repo);
             let rules = filter_rules.to_vec();
-            handles.push(thread::spawn(move || {
+            handles.push(cancel::spawn(move || {
                 let id = conn.id;
                 match repo.fetch_single(&conn, &rules) {
                     Ok(tables) => (id, Some(tables), None),

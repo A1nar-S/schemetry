@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::Instant;
 
 use anyhow::anyhow;
 
 use crate::models::{CompletionMetadata, ConnectionRecord, QueryServerResult};
 use crate::repositories::db_repository::{DbRepository, LobCell, LobSource};
+use crate::services::cancel;
 
 type SharedLobSource = Arc<Mutex<Box<dyn LobSource>>>;
 
@@ -48,7 +48,7 @@ impl QueryService {
             let repo = Arc::clone(&self.repo);
             let sql_clone = sql_owned.clone();
             let result_id = self.next_result_id.fetch_add(1, Ordering::Relaxed);
-            handles.push(thread::spawn(move || {
+            handles.push(cancel::spawn(move || {
                 let id = conn.id;
                 let name = conn.name.clone();
                 let started = Instant::now();
@@ -74,7 +74,11 @@ impl QueryService {
                             columns: vec![],
                             column_types: vec![],
                             rows: vec![],
-                            error: Some(err.to_string()),
+                            error: Some(if cancel::is_cancelled() {
+                                cancel::CANCELLED.to_string()
+                            } else {
+                                err.to_string()
+                            }),
                             duration_ms: started.elapsed().as_millis() as u64,
                         },
                         None,

@@ -1,3 +1,4 @@
+pub mod cancel;
 pub mod compare;
 pub mod compare_export;
 pub mod connection_catalog;

@@ -1,10 +1,10 @@
 use std::sync::Arc;
-use std::thread;
 
 use tauri::State;
 use tokio;
 
 use crate::models::{HistoryNamingRule, ServerHistoryFixResult};
+use crate::services::cancel::{self, begin_task};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -35,11 +35,12 @@ pub async fn generate_history_fix(
     let diff_svc = Arc::clone(&state.diff_svc);
 
     tokio::task::spawn_blocking(move || {
+        let task = begin_task();
         let mut handles = Vec::new();
         for conn in conns {
             let svc = Arc::clone(&diff_svc);
             let rules = naming_rules.clone();
-            handles.push(thread::spawn(move || {
+            handles.push(cancel::spawn(move || {
                 let id = conn.id;
                 let name = conn.name.clone();
                 match svc.generate_history_fix(&conn, &rules) {
@@ -62,6 +63,7 @@ pub async fn generate_history_fix(
         }
         let mut results: Vec<ServerHistoryFixResult> =
             handles.into_iter().filter_map(|h| h.join().ok()).collect();
+        task.check()?;
         results.sort_by(|a, b| a.server_name.cmp(&b.server_name));
         Ok(results)
     })

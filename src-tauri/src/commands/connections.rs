@@ -2,6 +2,7 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::models::{ConnectionRecord, DbType};
+use crate::services::cancel::begin_task;
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -37,11 +38,19 @@ pub fn delete_all_connections(state: State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn test_connection(
-    state: State<AppState>,
+pub async fn test_connection(
+    state: State<'_, AppState>,
     connection: ConnectionRecord,
 ) -> Result<(), String> {
-    state.diff_svc.test_connection(&connection).map_err(|e| e.to_string())
+    let diff_svc = std::sync::Arc::clone(&state.diff_svc);
+    tokio::task::spawn_blocking(move || {
+        let task = begin_task();
+        let result = diff_svc.test_connection(&connection).map_err(|e| e.to_string());
+        task.check()?;
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Import connections from a JSON array string. Existing connections with the same name

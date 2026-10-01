@@ -5,6 +5,7 @@ use tauri::State;
 use tokio;
 
 use crate::models::SchemaObject;
+use crate::services::cancel::begin_task;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -18,6 +19,7 @@ pub async fn fetch_schema_objects(
     let diff_svc = Arc::clone(&state.diff_svc);
 
     tokio::task::spawn_blocking(move || {
+        let _task = begin_task();
         diff_svc
             .fetch_schema_objects(&conn, &filter_rules)
             .map_err(|e| e.to_string())

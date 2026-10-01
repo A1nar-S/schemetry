@@ -36,3 +36,10 @@ pub(crate) fn selected_connections(
 
     Ok(picked)
 }
+
+/// Stops the task behind the busy overlay, if a cancellable one is running.
+/// Async so it never queues behind a blocking command on the main thread.
+#[tauri::command]
+pub async fn cancel_task() -> bool {
+    crate::services::cancel::cancel_task()
+}

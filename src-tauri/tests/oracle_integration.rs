@@ -21,6 +21,7 @@ use std::sync::Arc;
 use schemetry_lib::models::ServerTableDdls;
 use schemetry_lib::repositories::db_repository::LobCell;
 use schemetry_lib::repositories::oracle_repository::DbOracleRepository;
+use schemetry_lib::services::cancel;
 use schemetry_lib::services::compare::compare_tables_across_servers;
 use schemetry_lib::services::fix::generate_fix_script;
 use schemetry_lib::services::query::QueryService;
@@ -369,4 +370,31 @@ fn completion_metadata_lists_relations_and_columns() {
         departments.columns.iter().map(|c| (c.name.as_str(), c.data_type.as_str())).collect();
     assert_eq!(columns, [("DEPT_ID", "NUMBER"), ("DEPT_NAME", "VARCHAR2")]);
     assert!(meta.relations.iter().any(|r| r.name == "LOB_SAMPLES"));
+}
+
+#[test]
+#[ignore = "requires the two Oracle containers from docker/docker-compose.yml"]
+fn running_query_can_be_cancelled() {
+    common::init_oracle_client();
+    let svc = QueryService::new(Arc::new(DbOracleRepository::new()));
+
+    let task = cancel::begin_task();
+    let stop = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        assert!(cancel::cancel_task(), "no task was running to cancel");
+    });
+
+    let started = std::time::Instant::now();
+    let results = svc.run_query_on_servers(
+        &[common::source_connection()],
+        "SELECT COUNT(*) FROM all_objects a, all_objects b, all_objects c",
+        false,
+    );
+    stop.join().unwrap();
+
+    assert_eq!(results[0].error.as_deref(), Some("Cancelled by user."));
+    assert!(started.elapsed().as_secs() < 30, "cancel took {:?}", started.elapsed());
+    assert!(task.is_cancelled());
+    drop(task);
+    assert!(!cancel::cancel_task(), "task should be cleared once its guard drops");
 }

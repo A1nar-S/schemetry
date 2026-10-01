@@ -200,7 +200,11 @@
       lastRunSql.set(sqlText);
       activeServer.set(queryResults[0]?.server_id ?? null);
       history.set(await getQueryHistory());
-      notify(`Query executed on ${queryResults.length} server(s).`, 'ok');
+      if (queryResults.some(r => r.error === 'Cancelled by user.')) {
+        notify('Query cancelled.', 'error');
+      } else {
+        notify(`Query executed on ${queryResults.length} server(s).`, 'ok');
+      }
     } catch (e) {
       notify(`Query failed: ${String(e)}`, 'error');
     } finally {

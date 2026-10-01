@@ -101,6 +101,11 @@ export async function runQuery(
   return invoke('run_query', { sql, serverIds: server_ids, materializeLobs: materialize_lobs });
 }
 
+/** Stops the backend task behind the busy overlay; false if none was cancellable. */
+export async function cancelTask(): Promise<boolean> {
+  return invoke('cancel_task');
+}
+
 export async function getQueryHistory(): Promise<QueryHistoryEntry[]> {
   return invoke('get_query_history');
 }

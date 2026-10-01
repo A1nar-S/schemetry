@@ -117,6 +117,8 @@ try {
 
 `notify()` and `setBusy()` are from `src/stores/notification.ts`. `StatusBar.svelte` and `BusyOverlay.svelte` consume these stores.
 
+`BusyOverlay`'s **Stop** button calls the `cancel_task` command (`services/cancel.rs`). A slow backend command opts in with `let task = begin_task();` inside its `spawn_blocking`: every Oracle/Postgres connection opened on that thread then gets interrupted server-side on Stop, and the command fails with "Cancelled by user.". Fan out worker threads with `cancel::spawn` (not `thread::spawn`) so they stay in the task; call `cancel::checkpoint()?` in loops that run many statements; and call `task.check()?` before committing partial results (e.g. the compare snapshot).
+
 ### Key components
 
 - **`VirtualTable.svelte`** — TanStack Virtual v3 row virtualization. Used everywhere results are displayed. Supports sorting, column resizing, and row selection.

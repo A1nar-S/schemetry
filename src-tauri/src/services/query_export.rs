@@ -7,6 +7,7 @@ use anyhow::{anyhow, Result};
 use rust_xlsxwriter::{Color, Format, FormatBorder, Workbook, Worksheet};
 
 use crate::models::QueryServerResult;
+use crate::services::cancel::checkpoint;
 
 /// Export query results, picking the format from the file extension:
 /// `.csv` writes CSV, anything else writes an Excel workbook.
@@ -115,6 +116,7 @@ pub fn export_to_excel(
         export_per_server(&mut workbook, results, &header_format, &data_format)?;
     }
 
+    checkpoint()?;
     workbook
         .save(output_path)
         .map_err(|e| anyhow!(e.to_string()))?;
@@ -188,6 +190,7 @@ fn export_per_server(
         }
 
         for (row_idx, row) in server_result.rows.iter().enumerate() {
+            checkpoint()?;
             for (col_idx, value) in row.iter().enumerate() {
                 write_cell(
                     worksheet,
@@ -249,6 +252,7 @@ fn export_single_sheet(
             continue;
         }
         for data_row in &server_result.rows {
+            checkpoint()?;
             worksheet
                 .write_string_with_format(row, 0, &server_result.server_name, data_format)
                 .map_err(|e| anyhow!(e.to_string()))?;

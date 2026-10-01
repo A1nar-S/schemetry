@@ -8,6 +8,7 @@ use tokio;
 
 use crate::models::{Discrepancy};
 use crate::services;
+use crate::services::cancel::begin_task;
 use crate::state::AppState;
 
 #[derive(Serialize)]
@@ -50,7 +51,10 @@ pub async fn fetch_servers(
     let snapshot_lock = Arc::clone(&state.snapshot);
 
     tokio::task::spawn_blocking(move || {
+        let task = begin_task();
         let (servers, errors_map) = diff_svc.fetch_from_connections(&selected, &filter_rules);
+        // Keep the previous snapshot rather than replacing it with a partial fetch.
+        task.check()?;
 
         let loaded_servers = {
             let mut list: Vec<LoadedServer> = servers
@@ -164,6 +168,7 @@ pub async fn generate_fix_script(
         .collect();
 
     tokio::task::spawn_blocking(move || {
+        let task = begin_task();
         // Lazily fetch only the DDLs actually needed for this fix generation.
         let server_table_ddls = match ref_conn {
             Some(conn) => {
@@ -176,6 +181,8 @@ pub async fn generate_fix_script(
             }
             None => HashMap::new(),
         };
+        // A stopped fetch yields no DDLs — don't emit a script missing its CREATE TABLEs.
+        task.check()?;
 
         let snapshot = snapshot_lock.lock().map_err(|_| "Failed to lock server snapshot.".to_string())?;
 

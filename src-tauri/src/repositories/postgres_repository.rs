@@ -12,6 +12,7 @@ use crate::models::{
 };
 use crate::repositories::db_repository::{DbRepository, LobCell, LobSource, QueryOutput};
 use crate::repositories::filter_rule_repository::{build_predicate, ParamStyle};
+use crate::services::cancel::{checkpoint, on_cancel};
 
 /// Cap on materialized LOB-like content (characters of text / bytes decoded), mirroring
 /// `oracle_repository::MATERIALIZE_TEXT_CAP`.
@@ -39,7 +40,9 @@ impl DbPostgresRepository {
         if s.is_empty() { "public".to_string() } else { s.to_string() }
     }
 
+    /// Opens a session that the busy task's Stop button can interrupt.
     async fn connect(&self, conn: &ConnectionRecord) -> Result<Client> {
+        checkpoint()?;
         let mut cfg = tokio_postgres::Config::new();
         cfg.host(&conn.host)
             .port(conn.port)
@@ -52,6 +55,14 @@ impl DbPostgresRepository {
         tokio::spawn(async move {
             let _ = connection.await;
         });
+        let token = client.cancel_token();
+        let runtime = self.runtime.handle().clone();
+        on_cancel(Box::new(move || {
+            let token = token.clone();
+            runtime.spawn(async move {
+                let _ = token.cancel_query(NoTls).await;
+            });
+        }))?;
         Ok(client)
     }
 
@@ -539,6 +550,7 @@ impl DbRepository for DbPostgresRepository {
             let schema = Self::schema_of(conn);
             let mut table_ddls: TableDdls = HashMap::new();
             for table_name in table_names {
+                checkpoint()?;
                 if let Ok(model) = self.build_table_model(&client, &schema, table_name.trim()).await {
                     table_ddls.insert(table_name.clone(), render_table(&model));
                 }
@@ -797,6 +809,7 @@ impl DbRepository for DbPostgresRepository {
             let mut fix_sql = String::new();
 
             for (main_table, history_table) in &pairs {
+                checkpoint()?;
                 let main_cols = client
                     .query(col_sql, &[&schema, main_table])
                     .await

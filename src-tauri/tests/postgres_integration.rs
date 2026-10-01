@@ -23,6 +23,7 @@ use std::sync::Arc;
 use schemetry_lib::models::ServerTableDdls;
 use schemetry_lib::repositories::db_repository::LobCell;
 use schemetry_lib::repositories::postgres_repository::DbPostgresRepository;
+use schemetry_lib::services::cancel;
 use schemetry_lib::services::compare::compare_tables_across_servers;
 use schemetry_lib::services::fix::{generate_fix_script, Dialect};
 use schemetry_lib::services::query::QueryService;
@@ -350,4 +351,26 @@ fn completion_metadata_lists_relations_and_columns() {
     assert!(meta.relations.iter().any(|r| r.name == "lob_samples"));
     // Flyway's own history table lives in the schema too.
     assert!(meta.relations.iter().any(|r| r.name == "flyway_schema_history"));
+}
+
+#[test]
+#[ignore = "requires the two Postgres containers from docker/docker-compose.yml"]
+fn running_query_can_be_cancelled() {
+    let svc = QueryService::new(Arc::new(DbPostgresRepository::new()));
+
+    let task = cancel::begin_task();
+    let stop = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        assert!(cancel::cancel_task(), "no task was running to cancel");
+    });
+
+    let started = std::time::Instant::now();
+    let results = svc.run_query_on_servers(&[pg::source_connection()], "SELECT pg_sleep(60)", false);
+    stop.join().unwrap();
+
+    assert_eq!(results[0].error.as_deref(), Some("Cancelled by user."));
+    assert!(started.elapsed().as_secs() < 30, "cancel took {:?}", started.elapsed());
+    assert!(task.is_cancelled());
+    drop(task);
+    assert!(!cancel::cancel_task(), "task should be cleared once its guard drops");
 }

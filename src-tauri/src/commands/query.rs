@@ -8,6 +8,7 @@ use tokio;
 use crate::models::{CompletionMetadata, QueryHistoryEntry, QueryServerResult};
 use crate::repositories::db_repository::LobCell;
 use crate::services;
+use crate::services::cancel::begin_task;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -26,6 +27,8 @@ pub async fn run_query(
     let history_svc = std::sync::Arc::clone(&state.query_history_svc);
 
     tokio::task::spawn_blocking(move || {
+        // Stopped servers report "Cancelled by user." alongside the finished ones.
+        let _task = begin_task();
         let results = query_svc.run_query_on_servers(&selected, &trimmed, materialize_lobs);
         let _ = history_svc.append_query(&trimmed);
         Ok(results)
@@ -232,11 +235,16 @@ pub fn clear_query_history(state: State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn export_query_results(
+pub async fn export_query_results(
     results: Vec<QueryServerResult>,
     output_path: String,
     single_sheet: bool,
 ) -> Result<(), String> {
-    services::query_export::export_results(&results, &output_path, single_sheet)
-        .map_err(|e| e.to_string())
+    tokio::task::spawn_blocking(move || {
+        let _task = begin_task();
+        services::query_export::export_results(&results, &output_path, single_sheet)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

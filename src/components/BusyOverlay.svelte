@@ -1,6 +1,16 @@
 <script lang="ts">
   import { busy, notification } from '../stores/notification';
+  import { cancelTask } from '../api';
   import Modal from './Modal.svelte';
+
+  let stopping = false;
+  $: if (!$busy) stopping = false;
+
+  // The busy action then fails with "Cancelled by user." and clears the overlay itself.
+  function onStop() {
+    stopping = true;
+    cancelTask().catch(() => {});
+  }
 </script>
 
 {#if $busy}
@@ -9,8 +19,11 @@
       <span class="modal-title">Working</span>
     </div>
     <div class="modal-body-pad">
-      <p class="muted">{$notification.msg}</p>
+      <p class="muted">{stopping ? 'Stopping…' : $notification.msg}</p>
       <div class="progress-track"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" on:click={onStop} disabled={stopping}>Stop</button>
     </div>
   </Modal>
 {/if}

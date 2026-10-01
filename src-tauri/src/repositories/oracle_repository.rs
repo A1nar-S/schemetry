@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{anyhow, Result};
 use oracle::sql_type::{Blob, Clob, Nclob, OracleType, ToSql};
@@ -13,6 +13,7 @@ use crate::models::{
 };
 use crate::repositories::db_repository::{DbRepository, LobCell, LobSource, QueryOutput};
 use crate::repositories::filter_rule_repository::{build_predicate, ParamStyle};
+use crate::services::cancel::{checkpoint, on_cancel};
 
 /// Stores the Oracle Instant Client directory path set at startup or via Settings.
 /// Using a static RwLock avoids touching the process environment (which requires `unsafe`).
@@ -149,12 +150,22 @@ impl DbOracleRepository {
         Err(anyhow!("Synonym {} not found in schema {}", name, schema))
     }
 
-    fn connect(&self, conn: &ConnectionRecord) -> Result<Connection> {
+    /// Opens a session that the busy task's Stop button can interrupt.
+    fn connect(&self, conn: &ConnectionRecord) -> Result<Arc<Connection>> {
         ensure_client_initialized()?;
+        checkpoint()?;
 
         let connect_string = format!("//{}:{}/{}", conn.host, conn.port, conn.service_name);
-        let db = Connection::connect(&conn.username, &conn.password, &connect_string)
-            .map_err(|e| anyhow!(e.to_string()))?;
+        let db = Arc::new(
+            Connection::connect(&conn.username, &conn.password, &connect_string)
+                .map_err(|e| anyhow!(e.to_string()))?,
+        );
+        let weak = Arc::downgrade(&db);
+        on_cancel(Box::new(move || {
+            if let Some(db) = weak.upgrade() {
+                let _ = db.break_execution();
+            }
+        }))?;
         Ok(db)
     }
 }
@@ -296,6 +307,7 @@ impl DbRepository for DbOracleRepository {
         let mut rows = Vec::new();
         let mut cells = HashMap::new();
         for (row_idx, row_result) in result_set.enumerate() {
+            checkpoint()?;
             let row = row_result.map_err(|e| anyhow!(e.to_string()))?;
             let mut values = Vec::with_capacity(col_count);
             for i in 0..col_count {
@@ -375,6 +387,7 @@ impl DbRepository for DbOracleRepository {
 
         let mut table_ddls: TableDdls = HashMap::new();
         for table_name in table_names {
+            checkpoint()?;
             let upper = table_name.trim().to_ascii_uppercase();
             let rows = db.query(
                 "SELECT DBMS_METADATA.GET_DDL('TABLE', :1, :2) FROM DUAL",
@@ -625,6 +638,7 @@ impl DbRepository for DbOracleRepository {
         let mut fix_sql = String::new();
 
         for (main_table, history_table) in &pairs {
+            checkpoint()?;
             let main_cols = fetch_columns(&db, col_sql, main_table, &schema)?;
             let history_cols = fetch_columns(&db, col_sql, history_table, &schema)?;
 
@@ -1601,7 +1615,7 @@ struct OracleLobSource {
     cells: HashMap<(usize, usize), OraLob>,
     binary_cols: Vec<bool>,
     /// Keeps the locators' session open.
-    _conn: Connection,
+    _conn: Arc<Connection>,
 }
 
 // SAFETY: ODPI-C handles are thread-safe, and the source is only used behind a Mutex.
