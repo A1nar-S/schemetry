@@ -1,0 +1,98 @@
+name: Release
+
+# Push a version tag to cut a release:
+#   git tag v1.2.0 && git push origin v1.2.0
+# The tag (minus the leading "v") becomes the app/installer version.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  draft:
+    name: Draft release + notes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Notes are generated from merged PRs since the previous tag, grouped by .github/release.yml.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --draft \
+            --verify-tag \
+            --title "Schemetry $TAG" \
+            --generate-notes
+
+  build-windows:
+    name: Build Windows installers
+    needs: draft
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Set version from tag
+        id: version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          node -e '
+            const fs = require("fs");
+            const p = "src-tauri/tauri.conf.json";
+            const conf = JSON.parse(fs.readFileSync(p, "utf8"));
+            conf.version = process.argv[1];
+            fs.writeFileSync(p, JSON.stringify(conf, null, 2) + "\n");
+          ' "$VERSION"
+          sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" src-tauri/Cargo.toml
+
+      - name: Build (MSI + NSIS)
+        run: npm run tauri build -- --bundles msi,nsis
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          mkdir -p out
+          cp src-tauri/target/release/bundle/msi/*.msi out/
+          cp src-tauri/target/release/bundle/nsis/*-setup.exe out/
+          # Portable build: the bare app executable (needs the WebView2 runtime, preinstalled on Windows 10/11).
+          cp src-tauri/target/release/schemetry.exe "out/Schemetry_${V}_x64_portable.exe"
+          cd out && sha256sum * > SHA256SUMS.txt && ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: schemetry-windows-${{ steps.version.outputs.version }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: Attach to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" out/* --clobber
+
+  publish:
+    name: Publish release
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest

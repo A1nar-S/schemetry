@@ -1,0 +1,37 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Base images for the integration-test containers (Oracle, Postgres, Flyway).
+  - package-ecosystem: docker-compose
+    directory: /docker
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: docker
+    directory: /docker/flyway
+    schedule:
+      interval: monthly
