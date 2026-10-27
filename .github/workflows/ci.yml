@@ -27,6 +27,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Tauri crate/npm versions match
+        run: npm run check:tauri-versions
       - name: Lint (ESLint)
         run: npm run lint
       - name: Type check (TypeScript + Svelte)
