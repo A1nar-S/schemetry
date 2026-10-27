@@ -1,5 +1,13 @@
 # Schemetry
 
+[![CI](https://github.com/A1nar-S/schemetry/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/A1nar-S/schemetry/actions/workflows/ci.yml)
+[![Security](https://github.com/A1nar-S/schemetry/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/A1nar-S/schemetry/actions/workflows/security.yml)
+[![codecov](https://codecov.io/gh/A1nar-S/schemetry/graph/badge.svg)](https://codecov.io/gh/A1nar-S/schemetry)
+[![Latest release](https://img.shields.io/github/v/release/A1nar-S/schemetry?sort=semver)](https://github.com/A1nar-S/schemetry/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/A1nar-S/schemetry)](LICENSE)
+![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)
+[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%20v2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
+
 Desktop database tooling: schema comparison, DDL generation, SQL querying, and fix script generation. Currently supports Oracle and PostgreSQL.
 
 ## Purpose

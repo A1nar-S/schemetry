@@ -84,8 +84,11 @@ jobs:
       - run: cargo test --locked
 
   postgres-integration:
-    name: Integration tests (Postgres)
+    name: Integration tests (Postgres) + coverage
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Codecov OIDC upload
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install Tauri Linux build dependencies
@@ -95,10 +98,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
+          components: llvm-tools-preview
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
-          key: integration
+          key: coverage
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-llvm-cov
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
@@ -110,9 +117,19 @@ jobs:
           docker compose up -d --wait postgres-source postgres-target
           docker compose run --rm flyway-pg-source
           docker compose run --rm flyway-pg-target
-      - name: Run Postgres integration suite
+      - name: Run unit tests + Postgres integration suite (with coverage)
         working-directory: src-tauri
-        run: cargo test --locked --test postgres_integration -- --ignored
+        run: |
+          cargo llvm-cov --locked --no-report --lib
+          cargo llvm-cov --locked --no-report --test postgres_integration -- --ignored
+          cargo llvm-cov report --lcov --output-path lcov.info
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          files: src-tauri/lcov.info
+          flags: unit,postgres
+          use_oidc: true
+          fail_ci_if_error: false
       - name: Container logs on failure
         if: failure()
         working-directory: docker
@@ -123,8 +140,11 @@ jobs:
         run: docker compose down -v
 
   oracle-integration:
-    name: Integration tests (Oracle)
+    name: Integration tests (Oracle) + coverage
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # Codecov OIDC upload
     env:
       ORACLE_CLIENT_LIB_DIR: ${{ github.workspace }}/instantclient
       LD_LIBRARY_PATH: ${{ github.workspace }}/instantclient
@@ -145,10 +165,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
+          components: llvm-tools-preview
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
-          key: integration
+          key: coverage
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-llvm-cov
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
@@ -161,9 +185,16 @@ jobs:
           docker compose up -d --wait --wait-timeout 600 oracle-source oracle-target
           docker compose run --rm flyway-source
           docker compose run --rm flyway-target
-      - name: Run Oracle integration suite
+      - name: Run Oracle integration suite (with coverage)
         working-directory: src-tauri
-        run: cargo test --locked --test oracle_integration -- --ignored
+        run: cargo llvm-cov --locked --lcov --output-path lcov.info --test oracle_integration -- --ignored
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          files: src-tauri/lcov.info
+          flags: oracle
+          use_oidc: true
+          fail_ci_if_error: false
       - name: Container logs on failure
         if: failure()
         working-directory: docker
