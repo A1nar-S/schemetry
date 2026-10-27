@@ -4,8 +4,13 @@ use crate::models::SchemaFolderOverride;
 use crate::state::AppState;
 
 #[tauri::command]
-pub fn list_folder_schema_overrides(state: State<AppState>) -> Result<Vec<SchemaFolderOverride>, String> {
-    state.folder_schema_overrides_svc.list_overrides().map_err(|e| e.to_string())
+pub fn list_folder_schema_overrides(
+    state: State<AppState>,
+) -> Result<Vec<SchemaFolderOverride>, String> {
+    state
+        .folder_schema_overrides_svc
+        .list_overrides()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -41,10 +46,16 @@ pub fn save_folder_schema_override(
         migration_version_label: data.migration_version_label.trim().to_string(),
         ..data
     };
-    state.folder_schema_overrides_svc.save_override(&data).map_err(|e| e.to_string())
+    state
+        .folder_schema_overrides_svc
+        .save_override(&data)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_folder_schema_override(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.folder_schema_overrides_svc.delete_override(id).map_err(|e| e.to_string())
+    state
+        .folder_schema_overrides_svc
+        .delete_override(id)
+        .map_err(|e| e.to_string())
 }

@@ -11,9 +11,6 @@ src/dist/
 # Vite
 .vite/
 
-# Cargo
-Cargo.lock
-
 # IDE/editor
 .vscode/
 .idea/

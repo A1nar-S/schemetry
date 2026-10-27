@@ -25,7 +25,7 @@ use schemetry_lib::repositories::db_repository::LobCell;
 use schemetry_lib::repositories::postgres_repository::DbPostgresRepository;
 use schemetry_lib::services::cancel;
 use schemetry_lib::services::compare::compare_tables_across_servers;
-use schemetry_lib::services::fix::{generate_fix_script, Dialect};
+use schemetry_lib::services::fix::{Dialect, generate_fix_script};
 use schemetry_lib::services::query::QueryService;
 use schemetry_lib::services::schema_diff::SchemaDiffService;
 
@@ -95,8 +95,11 @@ fn multi_server_query_execution() {
     let query_svc = QueryService::new(Arc::new(DbPostgresRepository::new()));
     let connections = vec![pg::source_connection(), pg::target_connection()];
 
-    let results =
-        query_svc.run_query_on_servers(&connections, "SELECT COUNT(*) AS cnt FROM departments", false);
+    let results = query_svc.run_query_on_servers(
+        &connections,
+        "SELECT COUNT(*) AS cnt FROM departments",
+        false,
+    );
 
     assert_eq!(results.len(), 2);
     for result in &results {
@@ -107,7 +110,12 @@ fn multi_server_query_execution() {
             result.error
         );
         assert_eq!(result.columns, vec!["cnt".to_string()]);
-        assert_eq!(result.rows.len(), 1, "expected exactly one row from {}", result.server_name);
+        assert_eq!(
+            result.rows.len(),
+            1,
+            "expected exactly one row from {}",
+            result.server_name
+        );
         assert_eq!(
             result.rows[0][0].as_deref(),
             Some("2"),
@@ -140,9 +148,16 @@ fn schema_diff_and_idempotent_fix_execution() {
     let (servers, errors) = diff_svc.fetch_from_connections(&[source.clone(), target.clone()], &[]);
     assert!(errors.is_empty(), "fetch errors: {errors:?}");
 
-    let discrepancies =
-        compare_tables_across_servers(&servers, &server_names(), common::SOURCE_ID, true, true, true, true)
-            .expect("compare failed");
+    let discrepancies = compare_tables_across_servers(
+        &servers,
+        &server_names(),
+        common::SOURCE_ID,
+        true,
+        true,
+        true,
+        true,
+    )
+    .expect("compare failed");
 
     let has = |diff: &str, element: &str, table: &str, column: &str| {
         discrepancies.iter().any(|d| {
@@ -196,7 +211,10 @@ fn schema_diff_and_idempotent_fix_execution() {
     );
 
     let executed_first = pg::execute_script(&target, &fix.script);
-    assert!(executed_first > 0, "expected at least one statement to execute");
+    assert!(
+        executed_first > 0,
+        "expected at least one statement to execute"
+    );
 
     let expected_resolved = [
         ("MISSING", "TABLE", "audit_log", ""),
@@ -206,10 +224,20 @@ fn schema_diff_and_idempotent_fix_execution() {
 
     let (servers_after, errors_after) =
         diff_svc.fetch_from_connections(&[source.clone(), target.clone()], &[]);
-    assert!(errors_after.is_empty(), "fetch errors after fix: {errors_after:?}");
-    let discrepancies_after =
-        compare_tables_across_servers(&servers_after, &server_names(), common::SOURCE_ID, true, true, true, true)
-            .expect("compare after fix failed");
+    assert!(
+        errors_after.is_empty(),
+        "fetch errors after fix: {errors_after:?}"
+    );
+    let discrepancies_after = compare_tables_across_servers(
+        &servers_after,
+        &server_names(),
+        common::SOURCE_ID,
+        true,
+        true,
+        true,
+        true,
+    )
+    .expect("compare after fix failed");
 
     for (diff, element, table, column) in expected_resolved {
         assert!(
@@ -227,10 +255,20 @@ fn schema_diff_and_idempotent_fix_execution() {
     assert!(executed_second > 0);
 
     let (servers_final, errors_final) = diff_svc.fetch_from_connections(&[source, target], &[]);
-    assert!(errors_final.is_empty(), "fetch errors after second run: {errors_final:?}");
-    let discrepancies_final =
-        compare_tables_across_servers(&servers_final, &server_names(), common::SOURCE_ID, true, true, true, true)
-            .expect("compare after second fix run failed");
+    assert!(
+        errors_final.is_empty(),
+        "fetch errors after second run: {errors_final:?}"
+    );
+    let discrepancies_final = compare_tables_across_servers(
+        &servers_final,
+        &server_names(),
+        common::SOURCE_ID,
+        true,
+        true,
+        true,
+        true,
+    )
+    .expect("compare after second fix run failed");
 
     assert_eq!(
         discrepancies_after.len(),
@@ -276,12 +314,18 @@ fn lob_cells_are_read_from_the_kept_result() {
     let expected = common::large_lob_content();
     assert_eq!(lob_bytes(read(2, 1_500_000)), expected[..1_500_000]);
     let mut full = Vec::new();
-    let size = svc.copy_lob_cell(r.result_id, 2, 3, &mut full).expect("copy_lob_cell failed");
+    let size = svc
+        .copy_lob_cell(r.result_id, 2, 3, &mut full)
+        .expect("copy_lob_cell failed");
     assert_eq!(size, 3_000_000);
-    assert!(full == expected, "copied content differs from the seeded row");
+    assert!(
+        full == expected,
+        "copied content differs from the seeded row"
+    );
 
     assert!(
-        svc.read_lob_cell(r.result_id, 0, 2, usize::MAX, usize::MAX).is_err(),
+        svc.read_lob_cell(r.result_id, 0, 2, usize::MAX, usize::MAX)
+            .is_err(),
         "a text column is not a LOB cell"
     );
 }
@@ -297,7 +341,8 @@ fn lob_cells_materialize_inline_when_requested() {
     assert_eq!(r.rows[0][3].as_deref(), Some("89504E470D0A1A0A00000000"));
 
     let mut full = Vec::new();
-    svc.copy_lob_cell(r.result_id, 2, 3, &mut full).expect("copy_lob_cell failed");
+    svc.copy_lob_cell(r.result_id, 2, 3, &mut full)
+        .expect("copy_lob_cell failed");
     assert_eq!(full.len(), 3_000_000);
 }
 
@@ -320,16 +365,26 @@ fn lob_result_is_a_snapshot_released_by_the_next_run() {
         false,
     );
     let result_id = results[0].result_id;
-    assert!(results[0].error.is_none(), "unexpected query error: {:?}", results[0].error);
+    assert!(
+        results[0].error.is_none(),
+        "unexpected query error: {:?}",
+        results[0].error
+    );
 
-    pg::execute_script(&target, "UPDATE lob_documents SET payload = decode('0304', 'hex') WHERE doc_id = 900;");
+    pg::execute_script(
+        &target,
+        "UPDATE lob_documents SET payload = decode('0304', 'hex') WHERE doc_id = 900;",
+    );
 
-    let payload = svc.read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX).unwrap();
+    let payload = svc
+        .read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX)
+        .unwrap();
     assert_eq!(lob_bytes(payload), [0x01, 0x02]);
 
     svc.run_query_on_servers(&[target.clone()], "SELECT 1 AS one", false);
     assert!(
-        svc.read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX).is_err(),
+        svc.read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX)
+            .is_err(),
         "the previous result should be released by the next run"
     );
 
@@ -341,16 +396,35 @@ fn lob_result_is_a_snapshot_released_by_the_next_run() {
 fn completion_metadata_lists_relations_and_columns() {
     let svc = QueryService::new(Arc::new(DbPostgresRepository::new()));
 
-    let meta = svc.completion_metadata(&pg::source_connection()).expect("completion_metadata failed");
+    let meta = svc
+        .completion_metadata(&pg::source_connection())
+        .expect("completion_metadata failed");
     assert_eq!(meta.schema, "public");
-    let departments = meta.relations.iter().find(|r| r.name == "departments").expect("departments missing");
+    let departments = meta
+        .relations
+        .iter()
+        .find(|r| r.name == "departments")
+        .expect("departments missing");
     assert_eq!(departments.kind, "TABLE");
-    let columns: Vec<(&str, &str)> =
-        departments.columns.iter().map(|c| (c.name.as_str(), c.data_type.as_str())).collect();
-    assert_eq!(columns, [("dept_id", "integer"), ("dept_name", "character varying(50)")]);
+    let columns: Vec<(&str, &str)> = departments
+        .columns
+        .iter()
+        .map(|c| (c.name.as_str(), c.data_type.as_str()))
+        .collect();
+    assert_eq!(
+        columns,
+        [
+            ("dept_id", "integer"),
+            ("dept_name", "character varying(50)")
+        ]
+    );
     assert!(meta.relations.iter().any(|r| r.name == "lob_samples"));
     // Flyway's own history table lives in the schema too.
-    assert!(meta.relations.iter().any(|r| r.name == "flyway_schema_history"));
+    assert!(
+        meta.relations
+            .iter()
+            .any(|r| r.name == "flyway_schema_history")
+    );
 }
 
 #[test]
@@ -365,12 +439,20 @@ fn running_query_can_be_cancelled() {
     });
 
     let started = std::time::Instant::now();
-    let results = svc.run_query_on_servers(&[pg::source_connection()], "SELECT pg_sleep(60)", false);
+    let results =
+        svc.run_query_on_servers(&[pg::source_connection()], "SELECT pg_sleep(60)", false);
     stop.join().unwrap();
 
     assert_eq!(results[0].error.as_deref(), Some("Cancelled by user."));
-    assert!(started.elapsed().as_secs() < 30, "cancel took {:?}", started.elapsed());
+    assert!(
+        started.elapsed().as_secs() < 30,
+        "cancel took {:?}",
+        started.elapsed()
+    );
     assert!(task.is_cancelled());
     drop(task);
-    assert!(!cancel::cancel_task(), "task should be cleared once its guard drops");
+    assert!(
+        !cancel::cancel_task(),
+        "task should be cleared once its guard drops"
+    );
 }

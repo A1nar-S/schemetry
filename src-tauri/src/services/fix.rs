@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::models::{ColumnInfo, Discrepancy, ServerTableDdls, ServersData, TableColumns};
@@ -87,7 +87,10 @@ fn detect_fix_kind(row: &Discrepancy) -> FixKind {
             FixKind::IndexName
         } else if row.details.starts_with("COLUMN_NAME:") {
             FixKind::ColumnName
-        } else if row.details.contains(" != ") && row.details.contains('(') && row.details.contains(')') {
+        } else if row.details.contains(" != ")
+            && row.details.contains('(')
+            && row.details.contains(')')
+        {
             FixKind::DataLength
         } else {
             FixKind::Unsupported
@@ -126,7 +129,9 @@ pub fn discrepancy_target_server(
 }
 
 fn resolve_loaded_server_id(servers: &ServersData, target_server_id: i64) -> Option<i64> {
-    servers.contains_key(&target_server_id).then_some(target_server_id)
+    servers
+        .contains_key(&target_server_id)
+        .then_some(target_server_id)
 }
 
 fn desired_type_sql(reference_col: &ColumnInfo) -> Option<String> {
@@ -170,10 +175,7 @@ fn find_reference_column<'a>(
     table: &str,
     column: &str,
 ) -> Option<&'a ColumnInfo> {
-    servers
-        .get(&reference_server_id)?
-        .get(table)?
-        .get(column)
+    servers.get(&reference_server_id)?.get(table)?.get(column)
 }
 
 fn find_reference_table_columns<'a>(
@@ -182,15 +184,15 @@ fn find_reference_table_columns<'a>(
     table: &str,
 ) -> Option<&'a TableColumns> {
     let tables = servers.get(&reference_server_id)?;
-    tables
-        .get(table)
-        .or_else(|| tables.iter().find_map(|(name, cols)| {
+    tables.get(table).or_else(|| {
+        tables.iter().find_map(|(name, cols)| {
             if name.eq_ignore_ascii_case(table) {
                 Some(cols)
             } else {
                 None
             }
-        }))
+        })
+    })
 }
 
 fn find_reference_table_ddl<'a>(
@@ -203,13 +205,15 @@ fn find_reference_table_ddl<'a>(
         .get(table)
         .or_else(|| table_ddls.get(&table.to_ascii_uppercase()))
         .or_else(|| table_ddls.get(&table.to_ascii_lowercase()))
-        .or_else(|| table_ddls.iter().find_map(|(name, ddl)| {
-            if name.eq_ignore_ascii_case(table) {
-                Some(ddl)
-            } else {
-                None
-            }
-        }))
+        .or_else(|| {
+            table_ddls.iter().find_map(|(name, ddl)| {
+                if name.eq_ignore_ascii_case(table) {
+                    Some(ddl)
+                } else {
+                    None
+                }
+            })
+        })
         .map(String::as_str)
 }
 
@@ -233,11 +237,7 @@ fn normalize_ddl_for_execute_immediate(ddl: &str) -> Option<String> {
         break;
     }
 
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn build_create_table_block(table: &str, reference_table_ddl: &str) -> Option<String> {
@@ -270,7 +270,12 @@ fn build_comments_suffix(table: &str, reference_columns: &TableColumns) -> Strin
             Some(c) => c,
             None => continue,
         };
-        let comment = match col.comments.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        let comment = match col
+            .comments
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
             Some(c) => c,
             None => continue,
         };
@@ -306,7 +311,12 @@ fn build_indexes_suffix(table: &str, reference_columns: &TableColumns) -> String
             Some(c) => c,
             None => continue,
         };
-        if let Some(idx) = col.index_name.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        if let Some(idx) = col
+            .index_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
             index_columns
                 .entry(idx.to_string())
                 .or_default()
@@ -315,7 +325,11 @@ fn build_indexes_suffix(table: &str, reference_columns: &TableColumns) -> String
     }
     for (index_name, cols) in &index_columns {
         let index_key = to_upper_key(index_name);
-        let col_list = cols.iter().map(|c| quoted_ident(c)).collect::<Vec<_>>().join(", ");
+        let col_list = cols
+            .iter()
+            .map(|c| quoted_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
         let create_index_sql = format!(
             "CREATE INDEX {} ON {} ({})",
             quoted_ident(index_name),
@@ -386,7 +400,12 @@ fn build_add_column_block(table: &str, column: &str, reference_col: &ColumnInfo)
         alter_lit = sql_literal(&alter_sql),
     );
 
-    if let Some(comment) = reference_col.comments.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(comment) = reference_col
+        .comments
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         let comment_sql = format!(
             "COMMENT ON COLUMN {}.{} IS {}",
             quoted_ident(table),
@@ -408,7 +427,11 @@ fn build_add_column_block(table: &str, column: &str, reference_col: &ColumnInfo)
     Some(block)
 }
 
-fn build_modify_type_block(table: &str, column: &str, reference_col: &ColumnInfo) -> Option<String> {
+fn build_modify_type_block(
+    table: &str,
+    column: &str,
+    reference_col: &ColumnInfo,
+) -> Option<String> {
     let type_sql = desired_type_sql(reference_col)?;
     let expected_type = reference_col.data_type.as_deref()?.trim();
     let expected_length = reference_col
@@ -476,7 +499,11 @@ fn build_default_block(table: &str, column: &str, reference_col: &ColumnInfo) ->
 }
 
 fn build_comment_block(table: &str, column: &str, reference_col: &ColumnInfo) -> Option<String> {
-    let desired_comment = reference_col.comments.as_deref().map(str::trim).unwrap_or("");
+    let desired_comment = reference_col
+        .comments
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("");
     let comment_sql = format!(
         "COMMENT ON COLUMN {}.{} IS {}",
         quoted_ident(table),
@@ -507,7 +534,10 @@ fn build_create_table_block_pg(table: &str, reference_table_ddl: &str) -> Option
     Some(crate::repositories::postgres_repository::build_deploy_script("TABLE", table, &ddl))
 }
 
-fn build_create_table_from_columns_block_pg(table: &str, reference_columns: &TableColumns) -> Option<String> {
+fn build_create_table_from_columns_block_pg(
+    table: &str,
+    reference_columns: &TableColumns,
+) -> Option<String> {
     if reference_columns.is_empty() {
         return None;
     }
@@ -529,7 +559,12 @@ fn build_create_table_from_columns_block_pg(table: &str, reference_columns: &Tab
 
     for column_name in &column_names {
         let col = reference_columns.get(*column_name)?;
-        if let Some(comment) = col.comments.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        if let Some(comment) = col
+            .comments
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
             out.push_str(&format!(
                 "\nCOMMENT ON COLUMN {}.{} IS {};",
                 quoted_ident(table),
@@ -539,15 +574,28 @@ fn build_create_table_from_columns_block_pg(table: &str, reference_columns: &Tab
         }
     }
 
-    let mut index_columns: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    let mut index_columns: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
     for column_name in &column_names {
         let col = reference_columns.get(*column_name)?;
-        if let Some(idx) = col.index_name.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-            index_columns.entry(idx.to_string()).or_default().push((*column_name).clone());
+        if let Some(idx) = col
+            .index_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            index_columns
+                .entry(idx.to_string())
+                .or_default()
+                .push((*column_name).clone());
         }
     }
     for (index_name, cols) in &index_columns {
-        let col_list = cols.iter().map(|c| quoted_ident(c)).collect::<Vec<_>>().join(", ");
+        let col_list = cols
+            .iter()
+            .map(|c| quoted_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
         out.push_str(&format!(
             "\nCREATE INDEX IF NOT EXISTS {} ON {} ({});",
             quoted_ident(index_name),
@@ -559,7 +607,11 @@ fn build_create_table_from_columns_block_pg(table: &str, reference_columns: &Tab
     Some(out)
 }
 
-fn build_add_column_block_pg(table: &str, column: &str, reference_col: &ColumnInfo) -> Option<String> {
+fn build_add_column_block_pg(
+    table: &str,
+    column: &str,
+    reference_col: &ColumnInfo,
+) -> Option<String> {
     let type_sql = desired_type_sql(reference_col)?;
     let mut block = format!(
         "ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}{};",
@@ -569,7 +621,12 @@ fn build_add_column_block_pg(table: &str, column: &str, reference_col: &ColumnIn
         default_clause(reference_col)
     );
 
-    if let Some(comment) = reference_col.comments.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(comment) = reference_col
+        .comments
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         block.push_str(&format!(
             "\nCOMMENT ON COLUMN {}.{} IS {};",
             quoted_ident(table),
@@ -584,7 +641,11 @@ fn build_add_column_block_pg(table: &str, column: &str, reference_col: &ColumnIn
 /// Postgres has no conditional "only if the type actually differs" form, but
 /// `ALTER COLUMN ... TYPE` is itself safe to reissue (a no-op if already that type),
 /// so this — unlike the Oracle version — doesn't need a guard block.
-fn build_modify_type_block_pg(table: &str, column: &str, reference_col: &ColumnInfo) -> Option<String> {
+fn build_modify_type_block_pg(
+    table: &str,
+    column: &str,
+    reference_col: &ColumnInfo,
+) -> Option<String> {
     let type_sql = desired_type_sql(reference_col)?;
     Some(format!(
         "ALTER TABLE {} ALTER COLUMN {} TYPE {} USING {}::{};",
@@ -613,7 +674,11 @@ fn build_default_block_pg(table: &str, column: &str, reference_col: &ColumnInfo)
 }
 
 fn build_comment_block_pg(table: &str, column: &str, reference_col: &ColumnInfo) -> Option<String> {
-    let desired_comment = reference_col.comments.as_deref().map(str::trim).unwrap_or("");
+    let desired_comment = reference_col
+        .comments
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("");
     Some(format!(
         "COMMENT ON COLUMN {}.{} IS {};",
         quoted_ident(table),
@@ -662,7 +727,10 @@ pub fn generate_fix_script(
     if !servers.contains_key(&reference_server_id) {
         return Err(anyhow!(
             "Reference server '{}' is not loaded in current fetch data.",
-            server_names.get(&reference_server_id).cloned().unwrap_or_else(|| reference_server_id.to_string())
+            server_names
+                .get(&reference_server_id)
+                .cloned()
+                .unwrap_or_else(|| reference_server_id.to_string())
         ));
     }
 
@@ -693,7 +761,8 @@ pub fn generate_fix_script(
             continue;
         }
 
-        let Some(target_server_id) = resolve_target_server(row, reference_server_id, server_names) else {
+        let Some(target_server_id) = resolve_target_server(row, reference_server_id, server_names)
+        else {
             skipped_count += 1;
             skipped_messages.push(format!(
                 "#{}: could not resolve target server for this discrepancy.",
@@ -707,7 +776,10 @@ pub fn generate_fix_script(
             skipped_messages.push(format!(
                 "#{}: target server '{}' is not loaded in fetched data.",
                 id + 1,
-                server_names.get(&target_server_id).cloned().unwrap_or_else(|| target_server_id.to_string())
+                server_names
+                    .get(&target_server_id)
+                    .cloned()
+                    .unwrap_or_else(|| target_server_id.to_string())
             ));
             continue;
         };
@@ -740,16 +812,26 @@ pub fn generate_fix_script(
                     row.table_name.trim(),
                 ) {
                     let built = match dialect {
-                        Dialect::Oracle => build_create_table_block(row.table_name.trim(), table_ddl),
-                        Dialect::Postgres => build_create_table_block_pg(row.table_name.trim(), table_ddl),
+                        Dialect::Oracle => {
+                            build_create_table_block(row.table_name.trim(), table_ddl)
+                        }
+                        Dialect::Postgres => {
+                            build_create_table_block_pg(row.table_name.trim(), table_ddl)
+                        }
                     };
                     if let Some(block) = built {
-                        let suffix = find_reference_table_columns(servers, reference_server_id, row.table_name.trim())
-                            .map(|cols| match dialect {
-                                Dialect::Oracle => build_comments_and_indexes_suffix(row.table_name.trim(), cols),
-                                Dialect::Postgres => String::new(),
-                            })
-                            .unwrap_or_default();
+                        let suffix = find_reference_table_columns(
+                            servers,
+                            reference_server_id,
+                            row.table_name.trim(),
+                        )
+                        .map(|cols| match dialect {
+                            Dialect::Oracle => {
+                                build_comments_and_indexes_suffix(row.table_name.trim(), cols)
+                            }
+                            Dialect::Postgres => String::new(),
+                        })
+                        .unwrap_or_default();
                         Some(format!("{}{}", block, suffix))
                     } else {
                         let Some(reference_columns) = find_reference_table_columns(
@@ -767,8 +849,14 @@ pub fn generate_fix_script(
                         };
 
                         let fallback_block = match dialect {
-                            Dialect::Oracle => build_create_table_from_columns_block(row.table_name.trim(), reference_columns),
-                            Dialect::Postgres => build_create_table_from_columns_block_pg(row.table_name.trim(), reference_columns),
+                            Dialect::Oracle => build_create_table_from_columns_block(
+                                row.table_name.trim(),
+                                reference_columns,
+                            ),
+                            Dialect::Postgres => build_create_table_from_columns_block_pg(
+                                row.table_name.trim(),
+                                reference_columns,
+                            ),
                         };
                         let Some(fallback_block) = fallback_block else {
                             skipped_count += 1;
@@ -801,8 +889,14 @@ pub fn generate_fix_script(
                     };
 
                     let fallback_block = match dialect {
-                        Dialect::Oracle => build_create_table_from_columns_block(row.table_name.trim(), reference_columns),
-                        Dialect::Postgres => build_create_table_from_columns_block_pg(row.table_name.trim(), reference_columns),
+                        Dialect::Oracle => build_create_table_from_columns_block(
+                            row.table_name.trim(),
+                            reference_columns,
+                        ),
+                        Dialect::Postgres => build_create_table_from_columns_block_pg(
+                            row.table_name.trim(),
+                            reference_columns,
+                        ),
                     };
                     let Some(fallback_block) = fallback_block else {
                         skipped_count += 1;
@@ -837,8 +931,16 @@ pub fn generate_fix_script(
                     continue;
                 };
                 match dialect {
-                    Dialect::Oracle => build_add_column_block(row.table_name.trim(), row.column_name.trim(), reference_col),
-                    Dialect::Postgres => build_add_column_block_pg(row.table_name.trim(), row.column_name.trim(), reference_col),
+                    Dialect::Oracle => build_add_column_block(
+                        row.table_name.trim(),
+                        row.column_name.trim(),
+                        reference_col,
+                    ),
+                    Dialect::Postgres => build_add_column_block_pg(
+                        row.table_name.trim(),
+                        row.column_name.trim(),
+                        reference_col,
+                    ),
                 }
             }
             FixKind::DataType | FixKind::DataLength => {
@@ -858,8 +960,16 @@ pub fn generate_fix_script(
                     continue;
                 };
                 match dialect {
-                    Dialect::Oracle => build_modify_type_block(row.table_name.trim(), row.column_name.trim(), reference_col),
-                    Dialect::Postgres => build_modify_type_block_pg(row.table_name.trim(), row.column_name.trim(), reference_col),
+                    Dialect::Oracle => build_modify_type_block(
+                        row.table_name.trim(),
+                        row.column_name.trim(),
+                        reference_col,
+                    ),
+                    Dialect::Postgres => build_modify_type_block_pg(
+                        row.table_name.trim(),
+                        row.column_name.trim(),
+                        reference_col,
+                    ),
                 }
             }
             FixKind::DataDefault => {
@@ -879,8 +989,16 @@ pub fn generate_fix_script(
                     continue;
                 };
                 match dialect {
-                    Dialect::Oracle => build_default_block(row.table_name.trim(), row.column_name.trim(), reference_col),
-                    Dialect::Postgres => build_default_block_pg(row.table_name.trim(), row.column_name.trim(), reference_col),
+                    Dialect::Oracle => build_default_block(
+                        row.table_name.trim(),
+                        row.column_name.trim(),
+                        reference_col,
+                    ),
+                    Dialect::Postgres => build_default_block_pg(
+                        row.table_name.trim(),
+                        row.column_name.trim(),
+                        reference_col,
+                    ),
                 }
             }
             FixKind::Comments => {
@@ -900,8 +1018,16 @@ pub fn generate_fix_script(
                     continue;
                 };
                 match dialect {
-                    Dialect::Oracle => build_comment_block(row.table_name.trim(), row.column_name.trim(), reference_col),
-                    Dialect::Postgres => build_comment_block_pg(row.table_name.trim(), row.column_name.trim(), reference_col),
+                    Dialect::Oracle => build_comment_block(
+                        row.table_name.trim(),
+                        row.column_name.trim(),
+                        reference_col,
+                    ),
+                    Dialect::Postgres => build_comment_block_pg(
+                        row.table_name.trim(),
+                        row.column_name.trim(),
+                        reference_col,
+                    ),
                 }
             }
             _ => None,
@@ -936,33 +1062,47 @@ pub fn generate_fix_script(
         generated_blocks.push((
             target_server_id,
             format!(
-            "-- discrepancy #{}\n-- table: {}\n-- column: {}\n{}",
-            id + 1,
-            row.table_name,
-            if row.column_name.trim().is_empty() {
-                "(table-level)".to_string()
-            } else {
-                row.column_name.clone()
-            },
-            block
-        )));
+                "-- discrepancy #{}\n-- table: {}\n-- column: {}\n{}",
+                id + 1,
+                row.table_name,
+                if row.column_name.trim().is_empty() {
+                    "(table-level)".to_string()
+                } else {
+                    row.column_name.clone()
+                },
+                block
+            ),
+        ));
     }
 
-    let name_of = |id: i64| server_names.get(&id).cloned().unwrap_or_else(|| id.to_string());
+    let name_of = |id: i64| {
+        server_names
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| id.to_string())
+    };
 
     let mut script = String::new();
-    script.push_str(&format!("-- Reference server: {}\n", name_of(reference_server_id)));
+    script.push_str(&format!(
+        "-- Reference server: {}\n",
+        name_of(reference_server_id)
+    ));
     script.push_str("-- Review carefully before execution.\n\n");
 
     if generated_blocks.is_empty() {
-        script.push_str("-- No executable fix statements were generated for the current selection.\n");
+        script.push_str(
+            "-- No executable fix statements were generated for the current selection.\n",
+        );
     } else {
         for (index, target_server_id) in generated_targets.iter().enumerate() {
             if index > 0 {
                 script.push('\n');
             }
 
-            script.push_str(&format!("-- Target data source: {}\n\n", name_of(*target_server_id)));
+            script.push_str(&format!(
+                "-- Target data source: {}\n\n",
+                name_of(*target_server_id)
+            ));
 
             let blocks: Vec<&str> = generated_blocks
                 .iter()

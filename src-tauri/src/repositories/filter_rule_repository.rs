@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::models::{FilterAction, MatchType, TableFilterRule};
 
@@ -91,13 +91,19 @@ impl FilterRuleRepository for SqliteFilterRuleRepository {
             [],
         )?;
 
-        let count: i64 = conn.query_row("SELECT COUNT(1) FROM table_filter_rules", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(1) FROM table_filter_rules", [], |row| {
+            row.get(0)
+        })?;
         if count == 0 {
             for &(match_type, pattern) in DEFAULT_RULES {
                 conn.execute(
                     "INSERT INTO table_filter_rules (action, match_type, pattern, enabled)
                      VALUES (?1, ?2, ?3, 1)",
-                    params![Self::action_str(FilterAction::Exclude), Self::match_type_str(match_type), pattern],
+                    params![
+                        Self::action_str(FilterAction::Exclude),
+                        Self::match_type_str(match_type),
+                        pattern
+                    ],
                 )?;
             }
         }
@@ -147,7 +153,11 @@ impl FilterRuleRepository for SqliteFilterRuleRepository {
         let conn = Connection::open(Self::db_path())?;
 
         let exists: Option<i64> = conn
-            .query_row("SELECT id FROM table_filter_rules WHERE id = ?1", [id], |row| row.get(0))
+            .query_row(
+                "SELECT id FROM table_filter_rules WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
             .optional()?;
         exists.ok_or_else(|| anyhow::anyhow!("Filter rule id={id} not found."))?;
 
@@ -211,7 +221,10 @@ pub fn build_predicate(
     let mut next_idx = start_idx;
 
     for rule in enabled.iter().filter(|r| r.action == FilterAction::Exclude) {
-        clauses.push(format!("UPPER({column}) NOT LIKE {}", style.placeholder(next_idx)));
+        clauses.push(format!(
+            "UPPER({column}) NOT LIKE {}",
+            style.placeholder(next_idx)
+        ));
         binds.push(like_pattern(rule.match_type, &rule.pattern));
         next_idx += 1;
     }

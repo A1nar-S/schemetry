@@ -478,7 +478,7 @@
         Paste a JSON array of connection objects. Connections with an existing name will be overwritten.
       </p>
       <p style="font-size:12px;color:var(--text-muted);margin:0 0 4px;">Expected format (JSON array):</p>
-      <pre style="font-size:11px;color:var(--text-muted);margin:0 0 8px;font-family:'Consolas',monospace;white-space:pre-wrap;word-break:break-all;background:var(--bg-base);border-radius:4px;padding:6px 8px;">[{"{"}"name":"…","db_type":"oracle","host":"…","port":1521,"service_name":"…","username":"…","password":"…","group_name":"…","pg_schema":""{"}"}]</pre>
+      <pre style="font-size:11px;color:var(--text-muted);margin:0 0 8px;font-family:'Consolas',monospace;white-space:pre-wrap;word-break:break-all;background:var(--bg-base);border-radius:4px;padding:6px 8px;">[&#123;"name":"…","db_type":"oracle","host":"…","port":1521,"service_name":"…","username":"…","password":"…","group_name":"…","pg_schema":""&#125;]</pre>
       <p style="font-size:11px;color:var(--text-muted);margin:0 0 8px;">
         <code>db_type</code> defaults to <code>"oracle"</code> if omitted, for older exports.
       </p>

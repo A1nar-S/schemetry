@@ -38,6 +38,11 @@ impl HistoryNamingRuleService {
     /// Rules currently enabled, ready to be passed into the Oracle repository's
     /// history-table pairing query.
     pub fn list_active_rules(&self) -> Result<Vec<HistoryNamingRule>> {
-        Ok(self.repo.list_rules()?.into_iter().filter(|r| r.enabled).collect())
+        Ok(self
+            .repo
+            .list_rules()?
+            .into_iter()
+            .filter(|r| r.enabled)
+            .collect())
     }
 }

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::models::QueryHistoryEntry;
 
@@ -149,7 +149,10 @@ impl QueryHistoryRepository for SqliteQueryHistoryRepository {
 
     fn clear_history(&self) -> Result<()> {
         let conn = Connection::open(Self::db_path())?;
-        conn.execute("DELETE FROM query_history WHERE pinned = 0 AND favorite = 0", [])?;
+        conn.execute(
+            "DELETE FROM query_history WHERE pinned = 0 AND favorite = 0",
+            [],
+        )?;
         Ok(())
     }
 }

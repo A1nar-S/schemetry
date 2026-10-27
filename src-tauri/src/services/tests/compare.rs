@@ -1,6 +1,6 @@
 use super::*;
-use std::collections::HashMap;
 use crate::models::{ColumnInfo, TableColumns};
+use std::collections::HashMap;
 
 const REF: i64 = 1;
 const TGT: i64 = 2;
@@ -102,7 +102,9 @@ fn skip_index_diff_both_real_indexes() {
 #[test]
 fn compare_unknown_reference_returns_err() {
     let (servers, names) = make_servers(&[(REF, "SERVER_A", &[])]);
-    assert!(compare_tables_across_servers(&servers, &names, 999, true, true, false, false).is_err());
+    assert!(
+        compare_tables_across_servers(&servers, &names, 999, true, true, false, false).is_err()
+    );
 }
 
 #[test]
@@ -112,8 +114,12 @@ fn compare_identical_schemas_no_discrepancies() {
         (REF, "REF", &[("T", &[("C1", info.clone())])]),
         (TGT, "TGT", &[("T", &[("C1", info)])]),
     ]);
-    let result = compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
-    assert!(result.is_empty(), "expected no discrepancies, got: {result:?}");
+    let result =
+        compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
+    assert!(
+        result.is_empty(),
+        "expected no discrepancies, got: {result:?}"
+    );
 }
 
 #[test]
@@ -122,7 +128,8 @@ fn compare_table_missing_in_target() {
         (REF, "REF", &[("ORDERS", &[("ID", col_info("NUMBER"))])]),
         (TGT, "TGT", &[]),
     ]);
-    let discs = compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
+    let discs =
+        compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
     assert_eq!(discs.len(), 1);
     assert_eq!(discs[0].difference, "MISSING");
     assert_eq!(discs[0].element, "TABLE");
@@ -137,7 +144,8 @@ fn compare_table_missing_in_reference() {
         (REF, "REF", &[]),
         (TGT, "TGT", &[("EXTRA", &[("ID", col_info("NUMBER"))])]),
     ]);
-    let discs = compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
+    let discs =
+        compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
     assert_eq!(discs.len(), 1);
     assert_eq!(discs[0].difference, "MISSING");
     assert_eq!(discs[0].element, "TABLE");
@@ -151,17 +159,29 @@ fn compare_table_missing_ignored_when_flag_off() {
         (REF, "REF", &[("ORDERS", &[("ID", col_info("NUMBER"))])]),
         (TGT, "TGT", &[]),
     ]);
-    let discs = compare_tables_across_servers(&servers, &names, REF, false, true, false, false).unwrap();
-    assert!(discs.is_empty(), "expected no discrepancies, got: {discs:?}");
+    let discs =
+        compare_tables_across_servers(&servers, &names, REF, false, true, false, false).unwrap();
+    assert!(
+        discs.is_empty(),
+        "expected no discrepancies, got: {discs:?}"
+    );
 }
 
 #[test]
 fn compare_column_missing_in_target() {
     let (servers, names) = make_servers(&[
-        (REF, "REF", &[("T", &[("C1", col_info("NUMBER")), ("C2", col_info("VARCHAR2"))])]),
+        (
+            REF,
+            "REF",
+            &[(
+                "T",
+                &[("C1", col_info("NUMBER")), ("C2", col_info("VARCHAR2"))],
+            )],
+        ),
         (TGT, "TGT", &[("T", &[("C1", col_info("NUMBER"))])]),
     ]);
-    let discs = compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
+    let discs =
+        compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
     assert_eq!(discs.len(), 1);
     assert_eq!(discs[0].element, "COLUMN");
     assert_eq!(discs[0].column_name, "C2");
@@ -173,9 +193,14 @@ fn compare_column_missing_in_target() {
 fn compare_column_missing_in_reference() {
     let (servers, names) = make_servers(&[
         (REF, "REF", &[("T", &[("C1", col_info("NUMBER"))])]),
-        (TGT, "TGT", &[("T", &[("C1", col_info("NUMBER")), ("C2", col_info("DATE"))])]),
+        (
+            TGT,
+            "TGT",
+            &[("T", &[("C1", col_info("NUMBER")), ("C2", col_info("DATE"))])],
+        ),
     ]);
-    let discs = compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
+    let discs =
+        compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
     assert_eq!(discs.len(), 1);
     assert_eq!(discs[0].element, "COLUMN");
     assert_eq!(discs[0].column_name, "C2");
@@ -186,22 +211,40 @@ fn compare_column_missing_in_reference() {
 #[test]
 fn compare_column_missing_ignored_when_flag_off() {
     let (servers, names) = make_servers(&[
-        (REF, "REF", &[("T", &[("C1", col_info("NUMBER")), ("C2", col_info("VARCHAR2"))])]),
+        (
+            REF,
+            "REF",
+            &[(
+                "T",
+                &[("C1", col_info("NUMBER")), ("C2", col_info("VARCHAR2"))],
+            )],
+        ),
         (TGT, "TGT", &[("T", &[("C1", col_info("NUMBER"))])]),
     ]);
-    let discs = compare_tables_across_servers(&servers, &names, REF, true, false, false, false).unwrap();
-    assert!(discs.is_empty(), "expected no discrepancies, got: {discs:?}");
+    let discs =
+        compare_tables_across_servers(&servers, &names, REF, true, false, false, false).unwrap();
+    assert!(
+        discs.is_empty(),
+        "expected no discrepancies, got: {discs:?}"
+    );
 }
 
 #[test]
 fn compare_data_type_mismatch() {
-    let ref_info = ColumnInfo { data_type: Some("NUMBER".to_string()), ..Default::default() };
-    let tgt_info = ColumnInfo { data_type: Some("VARCHAR2".to_string()), ..Default::default() };
+    let ref_info = ColumnInfo {
+        data_type: Some("NUMBER".to_string()),
+        ..Default::default()
+    };
+    let tgt_info = ColumnInfo {
+        data_type: Some("VARCHAR2".to_string()),
+        ..Default::default()
+    };
     let (servers, names) = make_servers(&[
         (REF, "REF", &[("T", &[("C1", ref_info)])]),
         (TGT, "TGT", &[("T", &[("C1", tgt_info)])]),
     ]);
-    let discs = compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
+    let discs =
+        compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap();
     assert_eq!(discs.len(), 1);
     assert_eq!(discs[0].difference, "DIFFERENT");
     assert_eq!(discs[0].element, "DATA_TYPE");
@@ -209,36 +252,63 @@ fn compare_data_type_mismatch() {
 
 #[test]
 fn compare_data_type_mismatch_ignored_when_columns_flag_off() {
-    let ref_info = ColumnInfo { data_type: Some("NUMBER".to_string()), ..Default::default() };
-    let tgt_info = ColumnInfo { data_type: Some("VARCHAR2".to_string()), ..Default::default() };
+    let ref_info = ColumnInfo {
+        data_type: Some("NUMBER".to_string()),
+        ..Default::default()
+    };
+    let tgt_info = ColumnInfo {
+        data_type: Some("VARCHAR2".to_string()),
+        ..Default::default()
+    };
     let (servers, names) = make_servers(&[
         (REF, "REF", &[("T", &[("C1", ref_info)])]),
         (TGT, "TGT", &[("T", &[("C1", tgt_info)])]),
     ]);
-    let discs = compare_tables_across_servers(&servers, &names, REF, true, false, false, false).unwrap();
-    assert!(discs.is_empty(), "expected no discrepancies, got: {discs:?}");
+    let discs =
+        compare_tables_across_servers(&servers, &names, REF, true, false, false, false).unwrap();
+    assert!(
+        discs.is_empty(),
+        "expected no discrepancies, got: {discs:?}"
+    );
 }
 
 #[test]
 fn compare_comment_mismatch_ignored_when_flag_off() {
-    let ref_info = ColumnInfo { comments: Some("Doc".to_string()), ..col_info("NUMBER") };
-    let tgt_info = ColumnInfo { comments: Some("Other".to_string()), ..col_info("NUMBER") };
+    let ref_info = ColumnInfo {
+        comments: Some("Doc".to_string()),
+        ..col_info("NUMBER")
+    };
+    let tgt_info = ColumnInfo {
+        comments: Some("Other".to_string()),
+        ..col_info("NUMBER")
+    };
     let (servers, names) = make_servers(&[
         (REF, "REF", &[("T", &[("C1", ref_info)])]),
         (TGT, "TGT", &[("T", &[("C1", tgt_info)])]),
     ]);
-    assert!(compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap().is_empty());
+    assert!(
+        compare_tables_across_servers(&servers, &names, REF, true, true, false, false)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
 fn compare_comment_mismatch_detected_when_flag_on() {
-    let ref_info = ColumnInfo { comments: Some("Doc".to_string()), ..col_info("NUMBER") };
-    let tgt_info = ColumnInfo { comments: Some("Other".to_string()), ..col_info("NUMBER") };
+    let ref_info = ColumnInfo {
+        comments: Some("Doc".to_string()),
+        ..col_info("NUMBER")
+    };
+    let tgt_info = ColumnInfo {
+        comments: Some("Other".to_string()),
+        ..col_info("NUMBER")
+    };
     let (servers, names) = make_servers(&[
         (REF, "REF", &[("T", &[("C1", ref_info)])]),
         (TGT, "TGT", &[("T", &[("C1", tgt_info)])]),
     ]);
-    let discs = compare_tables_across_servers(&servers, &names, REF, true, true, true, false).unwrap();
+    let discs =
+        compare_tables_across_servers(&servers, &names, REF, true, true, true, false).unwrap();
     assert_eq!(discs.len(), 1);
     assert_eq!(discs[0].element, "COMMENTS");
 }
@@ -246,13 +316,20 @@ fn compare_comment_mismatch_detected_when_flag_on() {
 #[test]
 fn compare_comment_mismatch_detected_even_when_columns_flag_off() {
     // Comments are an independent toggle from structural column checks.
-    let ref_info = ColumnInfo { comments: Some("Doc".to_string()), ..col_info("NUMBER") };
-    let tgt_info = ColumnInfo { comments: Some("Other".to_string()), ..col_info("NUMBER") };
+    let ref_info = ColumnInfo {
+        comments: Some("Doc".to_string()),
+        ..col_info("NUMBER")
+    };
+    let tgt_info = ColumnInfo {
+        comments: Some("Other".to_string()),
+        ..col_info("NUMBER")
+    };
     let (servers, names) = make_servers(&[
         (REF, "REF", &[("T", &[("C1", ref_info)])]),
         (TGT, "TGT", &[("T", &[("C1", tgt_info)])]),
     ]);
-    let discs = compare_tables_across_servers(&servers, &names, REF, true, false, true, false).unwrap();
+    let discs =
+        compare_tables_across_servers(&servers, &names, REF, true, false, true, false).unwrap();
     assert_eq!(discs.len(), 1);
     assert_eq!(discs[0].element, "COMMENTS");
 }
@@ -260,25 +337,42 @@ fn compare_comment_mismatch_detected_even_when_columns_flag_off() {
 #[test]
 fn compare_index_mismatch_ignored_when_flag_off() {
     // ref has real index; target has "none" → should be detected, but flag is off so skipped
-    let ref_info = ColumnInfo { index_name: Some("IDX_A".to_string()), ..col_info("NUMBER") };
-    let tgt_info = ColumnInfo { index_name: Some("none".to_string()), ..col_info("NUMBER") };
+    let ref_info = ColumnInfo {
+        index_name: Some("IDX_A".to_string()),
+        ..col_info("NUMBER")
+    };
+    let tgt_info = ColumnInfo {
+        index_name: Some("none".to_string()),
+        ..col_info("NUMBER")
+    };
     let (servers, names) = make_servers(&[
         (REF, "REF", &[("T", &[("C1", ref_info)])]),
         (TGT, "TGT", &[("T", &[("C1", tgt_info)])]),
     ]);
-    assert!(compare_tables_across_servers(&servers, &names, REF, true, true, false, false).unwrap().is_empty());
+    assert!(
+        compare_tables_across_servers(&servers, &names, REF, true, true, false, false)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
 fn compare_index_mismatch_detected_when_flag_on() {
     // ref has real index; target has "none" → detected when flag is on
-    let ref_info = ColumnInfo { index_name: Some("IDX_A".to_string()), ..col_info("NUMBER") };
-    let tgt_info = ColumnInfo { index_name: Some("none".to_string()), ..col_info("NUMBER") };
+    let ref_info = ColumnInfo {
+        index_name: Some("IDX_A".to_string()),
+        ..col_info("NUMBER")
+    };
+    let tgt_info = ColumnInfo {
+        index_name: Some("none".to_string()),
+        ..col_info("NUMBER")
+    };
     let (servers, names) = make_servers(&[
         (REF, "REF", &[("T", &[("C1", ref_info)])]),
         (TGT, "TGT", &[("T", &[("C1", tgt_info)])]),
     ]);
-    let discs = compare_tables_across_servers(&servers, &names, REF, true, true, false, true).unwrap();
+    let discs =
+        compare_tables_across_servers(&servers, &names, REF, true, true, false, true).unwrap();
     assert_eq!(discs.len(), 1);
     assert_eq!(discs[0].element, "INDEX_NAME");
 }
@@ -287,11 +381,21 @@ fn compare_index_mismatch_detected_when_flag_on() {
 fn compare_both_real_index_names_differ_are_skipped() {
     // skip_index_diff returns true when both sides have non-"none" index names,
     // so differing real index names are intentionally not flagged
-    let ref_info = ColumnInfo { index_name: Some("IDX_A".to_string()), ..col_info("NUMBER") };
-    let tgt_info = ColumnInfo { index_name: Some("IDX_B".to_string()), ..col_info("NUMBER") };
+    let ref_info = ColumnInfo {
+        index_name: Some("IDX_A".to_string()),
+        ..col_info("NUMBER")
+    };
+    let tgt_info = ColumnInfo {
+        index_name: Some("IDX_B".to_string()),
+        ..col_info("NUMBER")
+    };
     let (servers, names) = make_servers(&[
         (REF, "REF", &[("T", &[("C1", ref_info)])]),
         (TGT, "TGT", &[("T", &[("C1", tgt_info)])]),
     ]);
-    assert!(compare_tables_across_servers(&servers, &names, REF, true, true, false, true).unwrap().is_empty());
+    assert!(
+        compare_tables_across_servers(&servers, &names, REF, true, true, false, true)
+            .unwrap()
+            .is_empty()
+    );
 }

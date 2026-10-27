@@ -3,8 +3,8 @@ use std::io::Write;
 use anyhow::Result;
 
 use crate::models::{
-    CompletionMetadata, ConnectionRecord, HistoryFixResult, HistoryNamingRule, SchemaObject, TableDdls,
-    TableFilterRule,
+    CompletionMetadata, ConnectionRecord, HistoryFixResult, HistoryNamingRule, SchemaObject,
+    TableDdls, TableFilterRule,
 };
 
 /// Engine-agnostic schema/query interface. `DbOracleRepository` and
@@ -33,7 +33,12 @@ pub trait DbRepository: Send + Sync {
         conn: &ConnectionRecord,
         filter_rules: &[TableFilterRule],
     ) -> Result<Vec<SchemaObject>>;
-    fn fetch_object_ddl(&self, conn: &ConnectionRecord, name: &str, object_type: &str) -> Result<String>;
+    fn fetch_object_ddl(
+        &self,
+        conn: &ConnectionRecord,
+        name: &str,
+        object_type: &str,
+    ) -> Result<String>;
     /// Pair up main tables with their history-table counterpart using the given
     /// enabled naming rules (e.g. a `HIST_` prefix and/or a `_HIST` suffix rule) and
     /// report any column drift between them. Only `Prefix`/`Suffix` rules are honored;
@@ -67,7 +72,13 @@ pub struct QueryOutput {
 /// Keeps a result's LOB cells readable after `run_query`, so nothing is re-queried.
 pub trait LobSource: Send {
     /// Reads one cell, capped at `max_chars` (text) or `max_bytes` (binary).
-    fn read(&mut self, row: usize, col: usize, max_bytes: usize, max_chars: usize) -> Result<LobCell>;
+    fn read(
+        &mut self,
+        row: usize,
+        col: usize,
+        max_bytes: usize,
+        max_chars: usize,
+    ) -> Result<LobCell>;
     /// Streams a binary cell's full content into `out`, returning the byte count.
     fn copy_to(&mut self, row: usize, col: usize, out: &mut dyn Write) -> Result<u64>;
 }

@@ -73,6 +73,11 @@
     return details;
   }
 
+  // `details` carries database-sourced text (defaults, type names) — escape before {@html}.
+  function escapeHtml(s: string): string {
+    return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  }
+
   function buildChangeHtml(details: string): string {
     const greenStyle  = 'color:var(--text-ok,#34d399);font-weight:600;white-space:nowrap;';
     const arrowStyle  = 'color:var(--text-muted);padding:0 6px;';
@@ -85,7 +90,7 @@
       const actual = details.slice(idx + sep.length);
       const colonIdx = ref.indexOf(': ');
       if (colonIdx !== -1) ref = ref.slice(colonIdx + 2);
-      return `<span style="${redStyle}">${actual}</span><span style="${arrowStyle}">→</span><span style="${greenStyle}">${ref}</span>`;
+      return `<span style="${redStyle}">${escapeHtml(actual)}</span><span style="${arrowStyle}">→</span><span style="${greenStyle}">${escapeHtml(ref)}</span>`;
     }
     if (details.includes('not in server')) {
       return `<span style="${redStyle}">missing</span><span style="${arrowStyle}">→</span><span style="${greenStyle}">present</span>`;
@@ -93,7 +98,7 @@
     if (details.includes('not in reference')) {
       return `<span style="${yellowStyle}">extra</span>`;
     }
-    return `<span style="${yellowStyle}">${details}</span>`;
+    return `<span style="${yellowStyle}">${escapeHtml(details)}</span>`;
   }
 
   $: referenceServerName = $loadedServers.find(s => s.id === $referenceServer)?.name ?? '';
@@ -242,7 +247,7 @@
       filters: [{ name: 'Excel', extensions: ['xlsx'] }],
     });
     if (!filePath) return;
-    const dir = filePath.replace(/[\/\\][^\/\\]+$/, '');
+    const dir = filePath.replace(/[/\\][^/\\]+$/, '');
     if (dir !== lastDir) {
       outputFolder.set(dir);
       setOutputFolder(dir).catch(() => {});

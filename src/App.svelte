@@ -175,7 +175,7 @@
 
   <!-- Bottom status bar -->
   <footer class="status-bar">
-    {#if appVersion}<span class="status-version">v{appVersion}</span>{/if}
+    {#if appVersion}<span class="status-version">{appVersion === '0.0.0' ? 'dev' : `v${appVersion}`}</span>{/if}
   </footer>
 </div>
 

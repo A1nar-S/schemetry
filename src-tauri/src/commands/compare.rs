@@ -6,7 +6,7 @@ use serde::Serialize;
 use tauri::State;
 use tokio;
 
-use crate::models::{Discrepancy};
+use crate::models::Discrepancy;
 use crate::services;
 use crate::services::cancel::begin_task;
 use crate::state::AppState;
@@ -39,14 +39,16 @@ pub async fn fetch_servers(
 
     if let Some(first) = selected.first() {
         if selected.iter().any(|c| c.db_type != first.db_type) {
-            return Err(
-                "Cannot compare servers from different database engines.".to_string(),
-            );
+            return Err("Cannot compare servers from different database engines.".to_string());
         }
     }
 
-    let id_to_name: HashMap<i64, String> = selected.iter().map(|c| (c.id, c.name.clone())).collect();
-    let filter_rules = state.filter_rules_svc.list_active_rules().map_err(|e| e.to_string())?;
+    let id_to_name: HashMap<i64, String> =
+        selected.iter().map(|c| (c.id, c.name.clone())).collect();
+    let filter_rules = state
+        .filter_rules_svc
+        .list_active_rules()
+        .map_err(|e| e.to_string())?;
     let diff_svc = Arc::clone(&state.diff_svc);
     let snapshot_lock = Arc::clone(&state.snapshot);
 
@@ -59,7 +61,12 @@ pub async fn fetch_servers(
         let loaded_servers = {
             let mut list: Vec<LoadedServer> = servers
                 .keys()
-                .filter_map(|id| id_to_name.get(id).map(|name| LoadedServer { id: *id, name: name.clone() }))
+                .filter_map(|id| {
+                    id_to_name.get(id).map(|name| LoadedServer {
+                        id: *id,
+                        name: name.clone(),
+                    })
+                })
                 .collect();
             list.sort_by(|a, b| a.name.cmp(&b.name));
             list
@@ -75,11 +82,16 @@ pub async fn fetch_servers(
             .collect();
         errors.sort_by(|a, b| a.server.cmp(&b.server));
 
-        let mut snapshot = snapshot_lock.lock().map_err(|_| "Failed to lock server snapshot.".to_string())?;
+        let mut snapshot = snapshot_lock
+            .lock()
+            .map_err(|_| "Failed to lock server snapshot.".to_string())?;
         snapshot.servers = servers;
         snapshot.server_table_ddls = HashMap::new();
 
-        Ok(FetchServersResponse { loaded_servers, errors })
+        Ok(FetchServersResponse {
+            loaded_servers,
+            errors,
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -101,7 +113,10 @@ pub fn compare_discrepancies(
         .into_iter()
         .map(|c| (c.id, c.name))
         .collect();
-    let snapshot = state.snapshot.lock().map_err(|_| "Failed to lock server snapshot.")?;
+    let snapshot = state
+        .snapshot
+        .lock()
+        .map_err(|_| "Failed to lock server snapshot.")?;
     services::compare::compare_tables_across_servers(
         &snapshot.servers,
         &server_names,
@@ -151,7 +166,10 @@ pub async fn generate_fix_script(
 
     let diff_svc = Arc::clone(&state.diff_svc);
     let snapshot_lock = Arc::clone(&state.snapshot);
-    let all_connections = state.catalog.get_all_connections().map_err(|e| e.to_string())?;
+    let all_connections = state
+        .catalog
+        .get_all_connections()
+        .map_err(|e| e.to_string())?;
     let server_names: HashMap<i64, String> = all_connections
         .iter()
         .map(|c| (c.id, c.name.clone()))
@@ -184,7 +202,9 @@ pub async fn generate_fix_script(
         // A stopped fetch yields no DDLs — don't emit a script missing its CREATE TABLEs.
         task.check()?;
 
-        let snapshot = snapshot_lock.lock().map_err(|_| "Failed to lock server snapshot.".to_string())?;
+        let snapshot = snapshot_lock
+            .lock()
+            .map_err(|_| "Failed to lock server snapshot.".to_string())?;
 
         services::fix::generate_fix_script(
             &discrepancies,
@@ -206,9 +226,11 @@ pub fn export_compare_report(
     discrepancies: Vec<Discrepancy>,
     output_folder: String,
 ) -> Result<(String, String), String> {
-    let (csv_path, xlsx_path) =
-        services::compare_export::save_discrepancy_reports(&discrepancies, Path::new(&output_folder))
-            .map_err(|e| e.to_string())?;
+    let (csv_path, xlsx_path) = services::compare_export::save_discrepancy_reports(
+        &discrepancies,
+        Path::new(&output_folder),
+    )
+    .map_err(|e| e.to_string())?;
     Ok((
         csv_path.to_string_lossy().into_owned(),
         xlsx_path.to_string_lossy().into_owned(),

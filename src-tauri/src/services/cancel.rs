@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 pub const CANCELLED: &str = "Cancelled by user.";
 
@@ -50,7 +50,9 @@ struct Scope {
 
 impl Scope {
     fn enter(task: Option<Arc<Cancellation>>) -> Self {
-        Self { previous: CURRENT.with(|c| c.replace(task)) }
+        Self {
+            previous: CURRENT.with(|c| c.replace(task)),
+        }
     }
 }
 
@@ -73,14 +75,21 @@ impl TaskGuard {
 
     /// Fails with [`CANCELLED`] if the task was stopped.
     pub fn check(&self) -> Result<(), String> {
-        if self.is_cancelled() { Err(CANCELLED.to_string()) } else { Ok(()) }
+        if self.is_cancelled() {
+            Err(CANCELLED.to_string())
+        } else {
+            Ok(())
+        }
     }
 }
 
 impl Drop for TaskGuard {
     fn drop(&mut self) {
         let mut active = ACTIVE_TASK.lock().unwrap();
-        if active.as_ref().is_some_and(|c| Arc::ptr_eq(c, &self.cancellation)) {
+        if active
+            .as_ref()
+            .is_some_and(|c| Arc::ptr_eq(c, &self.cancellation))
+        {
             *active = None;
         }
     }
@@ -89,14 +98,21 @@ impl Drop for TaskGuard {
 /// Starts a cancellable task on this thread, replacing any previous one as the
 /// task [`cancel_task`] stops.
 pub fn begin_task() -> TaskGuard {
-    let cancellation = Arc::new(Cancellation { hooks: Mutex::new(Some(Vec::new())) });
+    let cancellation = Arc::new(Cancellation {
+        hooks: Mutex::new(Some(Vec::new())),
+    });
     *ACTIVE_TASK.lock().unwrap() = Some(Arc::clone(&cancellation));
-    TaskGuard { _scope: Scope::enter(Some(Arc::clone(&cancellation))), cancellation }
+    TaskGuard {
+        _scope: Scope::enter(Some(Arc::clone(&cancellation))),
+        cancellation,
+    }
 }
 
 /// Stops the active task, if any. Returns whether there was one.
 pub fn cancel_task() -> bool {
-    let Some(cancellation) = ACTIVE_TASK.lock().unwrap().clone() else { return false };
+    let Some(cancellation) = ACTIVE_TASK.lock().unwrap().clone() else {
+        return false;
+    };
     let hooks = cancellation.hooks.lock().unwrap().take();
     for hook in hooks.into_iter().flatten() {
         hook();
@@ -116,7 +132,9 @@ pub fn spawn<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> JoinH
 /// Registers `hook` to interrupt work of this thread's task; fails if it was already
 /// cancelled. A no-op outside a task.
 pub fn on_cancel(hook: Hook) -> Result<()> {
-    let Some(cancellation) = current() else { return Ok(()) };
+    let Some(cancellation) = current() else {
+        return Ok(());
+    };
     match cancellation.hooks.lock().unwrap().as_mut() {
         Some(hooks) => {
             hooks.push(hook);
