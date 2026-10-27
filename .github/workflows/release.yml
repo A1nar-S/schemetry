@@ -55,14 +55,9 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          node -e '
-            const fs = require("fs");
-            const p = "src-tauri/tauri.conf.json";
-            const conf = JSON.parse(fs.readFileSync(p, "utf8"));
-            conf.version = process.argv[1];
-            fs.writeFileSync(p, JSON.stringify(conf, null, 2) + "\n");
-          ' "$VERSION"
+          # The repo holds a 0.0.0 placeholder; tauri.conf.json has no version, so Tauri reads Cargo.toml.
           sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" src-tauri/Cargo.toml
+          grep -q "^version = \"$VERSION\"" src-tauri/Cargo.toml
 
       - name: Build (MSI + NSIS)
         run: npm run tauri build -- --bundles msi,nsis

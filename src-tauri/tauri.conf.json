@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Schemetry",
-  "version": "1.0.0",
   "identifier": "lv.schemetry.app",
   "build": {
     "beforeDevCommand": "npm run dev",
