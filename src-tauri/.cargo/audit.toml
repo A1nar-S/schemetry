@@ -1,0 +1,16 @@
+# cargo-audit config (read from src-tauri/, where CI runs `cargo audit`).
+#
+# Each ignore below is for a crate that appears in Cargo.lock only as an optional
+# dependency of a polars feature we don't enable, so it is never compiled into the app
+# (`cargo tree --target all -e all -i <crate>` prints nothing). polars 0.55.2 is the
+# latest release; drop these once polars moves to the fixed versions.
+[advisories]
+ignore = [
+  # quick-xml 0.39.4 — via object_store (polars `cloud` feature, not enabled)
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+  # zstd 0.13.3 / zstd-safe 7.3.0 — via polars-arrow (zstd compression, not enabled)
+  "RUSTSEC-2026-0391",
+  "RUSTSEC-2026-0398",
+  "RUSTSEC-2026-0403",
+]
