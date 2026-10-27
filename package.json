@@ -14,7 +14,7 @@
     "check:tauri-versions": "node scripts/check-tauri-versions.mjs"
   },
   "dependencies": {
-    "@babel/runtime": "^7.29.2",
+    "@babel/runtime": "^8.0.8",
     "@codemirror/lang-html": "^6.4.12",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-sql": "^6.10.0",
