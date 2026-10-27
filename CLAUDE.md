@@ -21,6 +21,9 @@ npm run tauri build
 # TypeScript / Svelte type checking
 npm run check
 
+# ESLint (TypeScript + Svelte); `npm run lint:fix` applies autofixes
+npm run lint
+
 # Run all Rust unit tests
 cd src-tauri && cargo test
 

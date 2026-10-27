@@ -41,8 +41,8 @@ impl ConnectionCatalogService {
     /// Parse a JSON array of `ConnectionRecord` and upsert each entry.
     /// Returns the number of records processed.
     pub fn import_from_json(&self, json: &str) -> Result<usize> {
-        let records: Vec<ConnectionRecord> =
-            serde_json::from_str(json).context("Invalid JSON: expected an array of connection objects")?;
+        let records: Vec<ConnectionRecord> = serde_json::from_str(json)
+            .context("Invalid JSON: expected an array of connection objects")?;
         let count = records.len();
         for record in &records {
             self.repo.upsert_connection(record)?;

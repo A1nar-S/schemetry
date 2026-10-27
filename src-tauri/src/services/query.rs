@@ -28,7 +28,10 @@ impl QueryService {
         }
     }
 
-    pub fn completion_metadata(&self, conn: &ConnectionRecord) -> anyhow::Result<CompletionMetadata> {
+    pub fn completion_metadata(
+        &self,
+        conn: &ConnectionRecord,
+    ) -> anyhow::Result<CompletionMetadata> {
         self.repo.fetch_completion_metadata(conn)
     }
 

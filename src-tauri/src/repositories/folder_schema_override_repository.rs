@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::models::SchemaFolderOverride;
 
@@ -9,7 +9,8 @@ pub trait SchemaFolderOverrideRepository: Send + Sync {
     fn init_db(&self) -> Result<()>;
     fn list_overrides(&self) -> Result<Vec<SchemaFolderOverride>>;
     fn insert_override(&self, data: &SchemaFolderOverride) -> Result<SchemaFolderOverride>;
-    fn update_override(&self, id: i64, data: &SchemaFolderOverride) -> Result<SchemaFolderOverride>;
+    fn update_override(&self, id: i64, data: &SchemaFolderOverride)
+    -> Result<SchemaFolderOverride>;
     fn delete_override(&self, id: i64) -> Result<()>;
     /// The override row for a schema, matched case-insensitively, if one is set.
     fn find_for_schema(&self, schema_name: &str) -> Result<Option<SchemaFolderOverride>>;
@@ -68,7 +69,9 @@ impl SchemaFolderOverrideRepository for SqliteSchemaFolderOverrideRepository {
             "migration_version_label",
         ] {
             let _ = conn.execute(
-                &format!("ALTER TABLE folder_schema_overrides ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"),
+                &format!(
+                    "ALTER TABLE folder_schema_overrides ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+                ),
                 [],
             );
         }
@@ -77,8 +80,9 @@ impl SchemaFolderOverrideRepository for SqliteSchemaFolderOverrideRepository {
 
     fn list_overrides(&self) -> Result<Vec<SchemaFolderOverride>> {
         let conn = Connection::open(Self::db_path())?;
-        let mut stmt =
-            conn.prepare(&format!("SELECT {COLUMNS} FROM folder_schema_overrides ORDER BY schema_name"))?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM folder_schema_overrides ORDER BY schema_name"
+        ))?;
 
         let rows = stmt
             .query_map([], row_to_override)?
@@ -113,11 +117,19 @@ impl SchemaFolderOverrideRepository for SqliteSchemaFolderOverrideRepository {
         Ok(SchemaFolderOverride { id, ..data.clone() })
     }
 
-    fn update_override(&self, id: i64, data: &SchemaFolderOverride) -> Result<SchemaFolderOverride> {
+    fn update_override(
+        &self,
+        id: i64,
+        data: &SchemaFolderOverride,
+    ) -> Result<SchemaFolderOverride> {
         let conn = Connection::open(Self::db_path())?;
 
         let exists: Option<i64> = conn
-            .query_row("SELECT id FROM folder_schema_overrides WHERE id = ?1", [id], |row| row.get(0))
+            .query_row(
+                "SELECT id FROM folder_schema_overrides WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
             .optional()?;
         exists.ok_or_else(|| anyhow::anyhow!("Schema folder override id={id} not found."))?;
 
@@ -155,7 +167,9 @@ impl SchemaFolderOverrideRepository for SqliteSchemaFolderOverrideRepository {
     fn find_for_schema(&self, schema_name: &str) -> Result<Option<SchemaFolderOverride>> {
         let conn = Connection::open(Self::db_path())?;
         conn.query_row(
-            &format!("SELECT {COLUMNS} FROM folder_schema_overrides WHERE lower(schema_name) = lower(?1)"),
+            &format!(
+                "SELECT {COLUMNS} FROM folder_schema_overrides WHERE lower(schema_name) = lower(?1)"
+            ),
             params![schema_name],
             row_to_override,
         )

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 fn db_path() -> PathBuf {
     PathBuf::from("schemetry.db")
@@ -126,7 +126,9 @@ pub fn load_ddl_extensions() -> std::collections::HashMap<String, String> {
         .map(|(t, ext)| (t.to_string(), ext.to_string()))
         .collect();
     if let Some(saved) = load_setting("ddl_file_extensions") {
-        if let Ok(overrides) = serde_json::from_str::<std::collections::HashMap<String, String>>(&saved) {
+        if let Ok(overrides) =
+            serde_json::from_str::<std::collections::HashMap<String, String>>(&saved)
+        {
             for (k, v) in overrides {
                 if !v.trim().is_empty() {
                     map.insert(k.to_ascii_uppercase(), v.trim().to_string());
@@ -157,7 +159,9 @@ pub fn resolve_ddl_extension(object_type: &str) -> String {
 /// file and an idempotent migration file).
 pub fn load_storage_modes() -> std::collections::HashMap<String, String> {
     load_setting("ddl_storage_modes")
-        .and_then(|saved| serde_json::from_str::<std::collections::HashMap<String, String>>(&saved).ok())
+        .and_then(|saved| {
+            serde_json::from_str::<std::collections::HashMap<String, String>>(&saved).ok()
+        })
         .map(|map| {
             map.into_iter()
                 .map(|(k, v)| (k.to_ascii_uppercase(), v))
@@ -176,7 +180,10 @@ pub fn save_storage_modes(map: &std::collections::HashMap<String, String>) -> Re
 /// the global setting and falling back to `"both"`.
 pub fn resolve_storage_mode(object_type: &str) -> String {
     let key = object_type.trim().to_ascii_uppercase();
-    load_storage_modes().get(&key).cloned().unwrap_or_else(|| "both".to_string())
+    load_storage_modes()
+        .get(&key)
+        .cloned()
+        .unwrap_or_else(|| "both".to_string())
 }
 
 pub fn load_naming_convention() -> Option<String> {

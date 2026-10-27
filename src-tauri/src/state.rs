@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use crate::models::{ServersData, ServerTableDdls};
+use crate::models::{ServerTableDdls, ServersData};
 use crate::repositories::connection_repository::SqliteConnectionRepository;
 use crate::repositories::db_repository::DbRepository;
 use crate::repositories::dispatch_repository::DispatchRepository;
@@ -12,8 +12,8 @@ use crate::services::connection_catalog::ConnectionCatalogService;
 use crate::services::filter_rules::FilterRuleService;
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
 use crate::services::history_naming_rules::HistoryNamingRuleService;
-use crate::services::query_history::QueryHistoryService;
 use crate::services::query::QueryService;
+use crate::services::query_history::QueryHistoryService;
 use crate::services::schema_diff::SchemaDiffService;
 
 #[derive(Default)]

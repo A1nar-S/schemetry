@@ -84,7 +84,9 @@ pub fn execute_script(db: &Connection, script: &str) -> Result<usize, oracle::Er
     let mut chunk = String::new();
     for line in script.lines().chain(std::iter::once("/")) {
         if line.trim() != "/" {
-            if !(chunk.is_empty() && (line.trim().is_empty() || line.trim_start().starts_with("--"))) {
+            if !(chunk.is_empty()
+                && (line.trim().is_empty() || line.trim_start().starts_with("--")))
+            {
                 chunk.push_str(line);
                 chunk.push('\n');
             }

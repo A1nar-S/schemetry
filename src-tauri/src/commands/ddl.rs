@@ -15,7 +15,10 @@ pub async fn fetch_schema_objects(
 ) -> Result<Vec<SchemaObject>, String> {
     let mut conns = super::selected_connections(&state.catalog, &[server_id])?;
     let conn = conns.remove(0);
-    let filter_rules = state.filter_rules_svc.list_active_rules().map_err(|e| e.to_string())?;
+    let filter_rules = state
+        .filter_rules_svc
+        .list_active_rules()
+        .map_err(|e| e.to_string())?;
     let diff_svc = Arc::clone(&state.diff_svc);
 
     tokio::task::spawn_blocking(move || {
@@ -85,7 +88,9 @@ fn next_migration_version(migration_dir: &std::path::Path) -> u32 {
     }
 
     fn scan_dir_max(dir: &std::path::Path, max: &mut u32) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -135,8 +140,8 @@ pub fn save_ddl_to_folder(
         .resolve_schema_dir(&schema_lower, &schema_root)
         .map_err(|e| e.to_string())?;
 
-    let global_code_folder = crate::services::settings::load_code_folder_name()
-        .unwrap_or_else(|| "code".to_string());
+    let global_code_folder =
+        crate::services::settings::load_code_folder_name().unwrap_or_else(|| "code".to_string());
     let code_folder = state
         .folder_schema_overrides_svc
         .resolve_code_folder_name(&schema_lower, &global_code_folder)
@@ -178,7 +183,8 @@ pub fn save_ddl_to_folder(
         .resolve_migration_folder_mode(&schema_lower, &global_folder_mode)
         .map_err(|e| e.to_string())?;
 
-    let global_version_label = crate::services::settings::load_migration_version_label().unwrap_or_default();
+    let global_version_label =
+        crate::services::settings::load_migration_version_label().unwrap_or_default();
     let version_label = state
         .folder_schema_overrides_svc
         .resolve_migration_version_label(&schema_lower, &global_version_label)
@@ -190,8 +196,8 @@ pub fn save_ddl_to_folder(
         .resolve_extension(&schema_lower, &object_type, &global_ext)
         .map_err(|e| e.to_string())?;
 
-    let default_encoding = crate::services::settings::load_ddl_file_encoding()
-        .unwrap_or_else(|| "utf8".to_string());
+    let default_encoding =
+        crate::services::settings::load_ddl_file_encoding().unwrap_or_else(|| "utf8".to_string());
     let encoding = state
         .folder_schema_overrides_svc
         .resolve_encoding(&schema_lower, &default_encoding)
@@ -212,12 +218,14 @@ pub fn save_ddl_to_folder(
         };
         let code_file = code_dir.join(code_filename);
         let code_content = encode_content(&ddl, &encoding);
-        fs::write(&code_file, &code_content).map_err(|e| format!("Failed to write code file: {e}"))?;
+        fs::write(&code_file, &code_content)
+            .map_err(|e| format!("Failed to write code file: {e}"))?;
         code_path = Some(code_file.to_string_lossy().into_owned());
     }
 
     if write_migration {
-        fs::create_dir_all(&migration_dir).map_err(|e| format!("Failed to create migration dir: {e}"))?;
+        fs::create_dir_all(&migration_dir)
+            .map_err(|e| format!("Failed to create migration dir: {e}"))?;
 
         let migration_ddl = if db_type.eq_ignore_ascii_case("postgres") {
             crate::repositories::postgres_repository::build_deploy_script(
@@ -266,7 +274,10 @@ pub fn save_ddl_to_folder(
         migration_path = Some(migration_file.to_string_lossy().into_owned());
     }
 
-    Ok(SaveDdlResult { code_path, migration_path })
+    Ok(SaveDdlResult {
+        code_path,
+        migration_path,
+    })
 }
 
 #[tauri::command]

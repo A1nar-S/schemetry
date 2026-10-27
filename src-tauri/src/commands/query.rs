@@ -48,9 +48,13 @@ pub async fn fetch_completion_metadata(
         .next()
         .ok_or_else(|| "Server connection not found.".to_string())?;
     let query_svc = std::sync::Arc::clone(&state.query_svc);
-    tokio::task::spawn_blocking(move || query_svc.completion_metadata(&conn).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || {
+        query_svc
+            .completion_metadata(&conn)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// On-demand content of a single LOB cell, returned to the viewer.
@@ -89,7 +93,13 @@ pub async fn fetch_lob_content(
     tokio::task::spawn_blocking(move || {
         // One extra byte/char reveals truncation.
         let cell = query_svc
-            .read_lob_cell(result_id, row_index, col_index, MAX_BINARY + 1, MAX_TEXT_CHARS + 1)
+            .read_lob_cell(
+                result_id,
+                row_index,
+                col_index,
+                MAX_BINARY + 1,
+                MAX_TEXT_CHARS + 1,
+            )
             .map_err(|e| e.to_string())?;
 
         let content = match cell {
@@ -211,7 +221,12 @@ pub fn pin_query_history_item(state: State<AppState>, id: i64, pinned: bool) -> 
 }
 
 #[tauri::command]
-pub fn set_query_favorite(state: State<AppState>, id: i64, favorite: bool, description: String) -> Result<(), String> {
+pub fn set_query_favorite(
+    state: State<AppState>,
+    id: i64,
+    favorite: bool,
+    description: String,
+) -> Result<(), String> {
     state
         .query_history_svc
         .set_favorite(id, favorite, &description)

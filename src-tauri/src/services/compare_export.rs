@@ -10,8 +10,14 @@ use crate::models::Discrepancy;
 fn build_dataframe(discrepancies: &[Discrepancy]) -> Result<DataFrame> {
     let difference: Vec<String> = discrepancies.iter().map(|d| d.difference.clone()).collect();
     let table_name: Vec<String> = discrepancies.iter().map(|d| d.table_name.clone()).collect();
-    let column_name: Vec<String> = discrepancies.iter().map(|d| d.column_name.clone()).collect();
-    let server_name: Vec<String> = discrepancies.iter().map(|d| d.server_name.clone()).collect();
+    let column_name: Vec<String> = discrepancies
+        .iter()
+        .map(|d| d.column_name.clone())
+        .collect();
+    let server_name: Vec<String> = discrepancies
+        .iter()
+        .map(|d| d.server_name.clone())
+        .collect();
     let details: Vec<String> = discrepancies.iter().map(|d| d.details.clone()).collect();
 
     let df = df!(
@@ -46,7 +52,13 @@ pub fn save_discrepancy_reports(
     let mut workbook = Workbook::new();
     let worksheet = workbook.add_worksheet();
 
-    let headers = ["DIFFERENCE", "TABLE_NAME", "COLUMN_NAME", "SERVER_NAME", "DETAILS"];
+    let headers = [
+        "DIFFERENCE",
+        "TABLE_NAME",
+        "COLUMN_NAME",
+        "SERVER_NAME",
+        "DETAILS",
+    ];
     for (col, header) in headers.iter().enumerate() {
         worksheet.write_string(0, col as u16, *header)?;
     }

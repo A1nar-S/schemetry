@@ -1,13 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use crate::models::{Discrepancy, ServersData};
 
 /// Display label for a connection id — falls back to the id itself if the id isn't in
 /// the name map (e.g. the connection was deleted since the data was fetched).
 fn name_of(server_names: &HashMap<i64, String>, id: i64) -> String {
-    server_names.get(&id).cloned().unwrap_or_else(|| format!("#{id}"))
+    server_names
+        .get(&id)
+        .cloned()
+        .unwrap_or_else(|| format!("#{id}"))
 }
 
 fn equal_ci(left: &Option<String>, right: &Option<String>) -> bool {
@@ -153,12 +156,32 @@ pub fn compare_tables_across_servers(
                     .expect("contains_key checked above");
 
                 let fields = [
-                    ("COLUMN_NAME", &ref_col_info.column_name, &curr_col_info.column_name),
-                    ("DATA_TYPE", &ref_col_info.data_type, &curr_col_info.data_type),
-                    ("DATA_LENGTH", &ref_col_info.data_length, &curr_col_info.data_length),
-                    ("DATA_DEFAULT", &ref_col_info.data_default, &curr_col_info.data_default),
+                    (
+                        "COLUMN_NAME",
+                        &ref_col_info.column_name,
+                        &curr_col_info.column_name,
+                    ),
+                    (
+                        "DATA_TYPE",
+                        &ref_col_info.data_type,
+                        &curr_col_info.data_type,
+                    ),
+                    (
+                        "DATA_LENGTH",
+                        &ref_col_info.data_length,
+                        &curr_col_info.data_length,
+                    ),
+                    (
+                        "DATA_DEFAULT",
+                        &ref_col_info.data_default,
+                        &curr_col_info.data_default,
+                    ),
                     ("COMMENTS", &ref_col_info.comments, &curr_col_info.comments),
-                    ("INDEX_NAME", &ref_col_info.index_name, &curr_col_info.index_name),
+                    (
+                        "INDEX_NAME",
+                        &ref_col_info.index_name,
+                        &curr_col_info.index_name,
+                    ),
                 ];
 
                 for (key, ref_value, curr_value) in fields {
@@ -168,7 +191,11 @@ pub fn compare_tables_across_servers(
                     if key == "INDEX_NAME" && !check_indexes {
                         continue;
                     }
-                    if matches!(key, "COLUMN_NAME" | "DATA_TYPE" | "DATA_LENGTH" | "DATA_DEFAULT") && !check_columns {
+                    if matches!(
+                        key,
+                        "COLUMN_NAME" | "DATA_TYPE" | "DATA_LENGTH" | "DATA_DEFAULT"
+                    ) && !check_columns
+                    {
                         continue;
                     }
                     if key == "INDEX_NAME" && skip_index_diff(ref_value, curr_value) {

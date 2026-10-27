@@ -34,14 +34,20 @@ pub fn get_settings() -> AppSettings {
         client_lib_dir: services::settings::load_client_lib_dir().unwrap_or_default(),
         last_query_export_dir: services::settings::load_last_query_export_dir().unwrap_or_default(),
         schema_root_folder: services::settings::load_schema_root_folder().unwrap_or_default(),
-        ddl_file_encoding: services::settings::load_ddl_file_encoding().unwrap_or_else(|| "utf8".to_string()),
+        ddl_file_encoding: services::settings::load_ddl_file_encoding()
+            .unwrap_or_else(|| "utf8".to_string()),
         ddl_file_extensions: services::settings::load_ddl_extensions(),
         storage_modes: services::settings::load_storage_modes(),
-        naming_convention: services::settings::load_naming_convention().unwrap_or_else(|| "timestamp".to_string()),
-        code_folder_name: services::settings::load_code_folder_name().unwrap_or_else(|| "code".to_string()),
-        migration_folder_name: services::settings::load_migration_folder_name().unwrap_or_else(|| "migration".to_string()),
-        migration_folder_mode: services::settings::load_migration_folder_mode().unwrap_or_else(|| "year".to_string()),
-        migration_version_label: services::settings::load_migration_version_label().unwrap_or_default(),
+        naming_convention: services::settings::load_naming_convention()
+            .unwrap_or_else(|| "timestamp".to_string()),
+        code_folder_name: services::settings::load_code_folder_name()
+            .unwrap_or_else(|| "code".to_string()),
+        migration_folder_name: services::settings::load_migration_folder_name()
+            .unwrap_or_else(|| "migration".to_string()),
+        migration_folder_mode: services::settings::load_migration_folder_mode()
+            .unwrap_or_else(|| "year".to_string()),
+        migration_version_label: services::settings::load_migration_version_label()
+            .unwrap_or_default(),
         plsql_dev_path: services::settings::load_plsql_dev_path().unwrap_or_default(),
     }
 }
@@ -63,15 +69,22 @@ pub fn save_settings(
 ) -> Result<SaveSettingsResponse, String> {
     services::settings::save_output_folder(output_folder.trim()).map_err(|e| e.to_string())?;
     services::settings::save_client_lib_dir(client_lib_dir.trim()).map_err(|e| e.to_string())?;
-    services::settings::save_schema_root_folder(schema_root_folder.trim()).map_err(|e| e.to_string())?;
-    services::settings::save_ddl_file_encoding(ddl_file_encoding.trim()).map_err(|e| e.to_string())?;
+    services::settings::save_schema_root_folder(schema_root_folder.trim())
+        .map_err(|e| e.to_string())?;
+    services::settings::save_ddl_file_encoding(ddl_file_encoding.trim())
+        .map_err(|e| e.to_string())?;
     services::settings::save_ddl_extensions(&ddl_file_extensions).map_err(|e| e.to_string())?;
     services::settings::save_storage_modes(&storage_modes).map_err(|e| e.to_string())?;
-    services::settings::save_naming_convention(naming_convention.trim()).map_err(|e| e.to_string())?;
-    services::settings::save_code_folder_name(code_folder_name.trim()).map_err(|e| e.to_string())?;
-    services::settings::save_migration_folder_name(migration_folder_name.trim()).map_err(|e| e.to_string())?;
-    services::settings::save_migration_folder_mode(migration_folder_mode.trim()).map_err(|e| e.to_string())?;
-    services::settings::save_migration_version_label(migration_version_label.trim()).map_err(|e| e.to_string())?;
+    services::settings::save_naming_convention(naming_convention.trim())
+        .map_err(|e| e.to_string())?;
+    services::settings::save_code_folder_name(code_folder_name.trim())
+        .map_err(|e| e.to_string())?;
+    services::settings::save_migration_folder_name(migration_folder_name.trim())
+        .map_err(|e| e.to_string())?;
+    services::settings::save_migration_folder_mode(migration_folder_mode.trim())
+        .map_err(|e| e.to_string())?;
+    services::settings::save_migration_version_label(migration_version_label.trim())
+        .map_err(|e| e.to_string())?;
     services::settings::save_plsql_dev_path(plsql_dev_path.trim()).map_err(|e| e.to_string())?;
 
     set_client_lib_dir_hint(client_lib_dir.trim());
@@ -146,7 +159,8 @@ pub(crate) fn launch_vscode(path: &std::path::Path) -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     let mut cmd = std::process::Command::new("code");
 
-    const NOT_FOUND: &str = "Couldn't start VS Code — make sure it's installed and the `code` command is on PATH.";
+    const NOT_FOUND: &str =
+        "Couldn't start VS Code — make sure it's installed and the `code` command is on PATH.";
     // No pipes: VS Code inherits the handles and would keep them open.
     let mut child = cmd
         .arg(path)

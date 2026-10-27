@@ -1,17 +1,15 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::models::{HistoryNamingRule, MatchType};
 
 /// Default seed rules, matching the naming convention that used to be hardcoded as a
 /// single prefix + suffix pair. Users can edit or delete these from the History Tables
 /// view once seeded.
-const DEFAULT_RULES: &[(MatchType, &str)] = &[
-    (MatchType::Prefix, "HIST_"),
-    (MatchType::Suffix, "_HIST"),
-];
+const DEFAULT_RULES: &[(MatchType, &str)] =
+    &[(MatchType::Prefix, "HIST_"), (MatchType::Suffix, "_HIST")];
 
 pub trait HistoryNamingRuleRepository: Send + Sync {
     fn init_db(&self) -> Result<()>;
@@ -62,7 +60,10 @@ impl HistoryNamingRuleRepository for SqliteHistoryNamingRuleRepository {
             [],
         )?;
 
-        let count: i64 = conn.query_row("SELECT COUNT(1) FROM history_naming_rules", [], |row| row.get(0))?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(1) FROM history_naming_rules", [], |row| {
+                row.get(0)
+            })?;
         if count == 0 {
             for &(match_type, pattern) in DEFAULT_RULES {
                 conn.execute(
@@ -116,7 +117,11 @@ impl HistoryNamingRuleRepository for SqliteHistoryNamingRuleRepository {
         let conn = Connection::open(Self::db_path())?;
 
         let exists: Option<i64> = conn
-            .query_row("SELECT id FROM history_naming_rules WHERE id = ?1", [id], |row| row.get(0))
+            .query_row(
+                "SELECT id FROM history_naming_rules WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
             .optional()?;
         exists.ok_or_else(|| anyhow::anyhow!("History naming rule id={id} not found."))?;
 

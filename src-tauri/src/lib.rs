@@ -11,9 +11,7 @@ use crate::repositories::connection_repository::SqliteConnectionRepository;
 use crate::repositories::filter_rule_repository::SqliteFilterRuleRepository;
 use crate::repositories::folder_schema_override_repository::SqliteSchemaFolderOverrideRepository;
 use crate::repositories::history_naming_rule_repository::SqliteHistoryNamingRuleRepository;
-use crate::repositories::oracle_repository::{
-    configure_client_lib_dir, set_client_lib_dir_hint,
-};
+use crate::repositories::oracle_repository::{configure_client_lib_dir, set_client_lib_dir_hint};
 use crate::repositories::query_history_repository::SqliteQueryHistoryRepository;
 use crate::services::connection_catalog::ConnectionCatalogService;
 use crate::services::filter_rules::FilterRuleService;
@@ -32,8 +30,7 @@ fn bootstrap() {
         eprintln!("Failed to initialize sqlite: {err}");
     }
 
-    let query_history_svc =
-        QueryHistoryService::new(Arc::new(SqliteQueryHistoryRepository::new()));
+    let query_history_svc = QueryHistoryService::new(Arc::new(SqliteQueryHistoryRepository::new()));
     if let Err(err) = query_history_svc.init_db() {
         eprintln!("Failed to initialize query history sqlite table: {err}");
     }
