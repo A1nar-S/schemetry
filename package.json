@@ -8,7 +8,9 @@
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "dependencies": {
     "@babel/runtime": "^7.29.2",
@@ -28,15 +30,20 @@
     "svelte": "^5.55.5"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tailwindcss/postcss": "^4.3.0",
     "@tauri-apps/cli": "^2.11.1",
     "@tsconfig/svelte": "^5.0.8",
     "autoprefixer": "^10.5.0",
+    "eslint": "^10.13.0",
+    "eslint-plugin-svelte": "^3.23.1",
+    "globals": "^17.13.0",
     "postcss": "^8.5.14",
     "svelte-check": "^4.4.8",
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.1",
     "vite": "^8.0.12"
   }
 }

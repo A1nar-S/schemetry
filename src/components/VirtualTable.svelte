@@ -178,7 +178,7 @@
           </div>
         {/if}
         {#each columns as col, i}
-          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div class="vt-hcell" on:click={() => toggleSort(col.key)}>
             <span class="vt-hcell-text">{col.header}</span>
             {#if sortKey === col.key}
@@ -187,7 +187,7 @@
               <span class="vt-sort-hint"><Icon name="arrow-up-down" size={12} /></span>
             {/if}
             <!-- Resize handle — stops propagation so sort doesn't fire during drag -->
-            <!-- svelte-ignore a11y-no-static-element-interactions -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="vt-resize-handle"
               class:vt-resize-active={resizingCol === i}
@@ -232,7 +232,7 @@
         {#each $virt.getVirtualItems() as item (item.key)}
           {@const row = sortedRows[item.index]}
           {@const rowId = getRowId ? getRowId(row) : item.index}
-          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div
             class="vt-row"
             class:vt-row-selected={selectedIds.has(rowId)}
@@ -250,7 +250,7 @@
               </div>
             {/if}
             {#each columns as col}
-              <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 class="vt-cell {getCellClass ? getCellClass(row, col.key) : ''}"
                 title={String(row[col.titleKey ?? col.key] ?? '')}
