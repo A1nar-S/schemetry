@@ -20,7 +20,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 oracle = { version = "0.6", default-features = false }
 tokio-postgres = { version = "0.7", default-features = false, features = ["runtime"] }
 polars = { version = "0.55", default-features = false, features = ["csv"] }
-rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.41", default-features = false, features = ["bundled"] }
 rust_xlsxwriter = { version = "0.101", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
