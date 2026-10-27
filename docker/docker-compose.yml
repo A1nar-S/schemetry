@@ -120,7 +120,7 @@ services:
   # Postgres needs no custom Flyway image — the official image already bundles the
   # Postgres JDBC driver (unlike Oracle's, which is license-restricted).
   flyway-pg-source:
-    image: flyway/flyway:13.5.0-alpine
+    image: flyway/flyway:13.11.1-alpine
     container_name: schemetry-flyway-pg-source
     depends_on:
       postgres-source:
@@ -136,7 +136,7 @@ services:
       migrate
 
   flyway-pg-target:
-    image: flyway/flyway:13.5.0-alpine
+    image: flyway/flyway:13.11.1-alpine
     container_name: schemetry-flyway-pg-target
     depends_on:
       postgres-target:
