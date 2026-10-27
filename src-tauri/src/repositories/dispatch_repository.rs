@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::models::{
-    CompletionMetadata, ConnectionRecord, DbType, HistoryFixResult, HistoryNamingRule, SchemaObject, TableDdls,
-    TableFilterRule,
+    CompletionMetadata, ConnectionRecord, DbType, HistoryFixResult, HistoryNamingRule,
+    SchemaObject, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::{DbRepository, QueryOutput};
 use crate::repositories::oracle_repository::DbOracleRepository;
@@ -60,7 +60,8 @@ impl DbRepository for DispatchRepository {
         conn: &ConnectionRecord,
         table_names: &[String],
     ) -> Result<TableDdls> {
-        self.repo(conn).fetch_table_ddls_for_tables(conn, table_names)
+        self.repo(conn)
+            .fetch_table_ddls_for_tables(conn, table_names)
     }
 
     fn fetch_schema_objects(
@@ -71,7 +72,12 @@ impl DbRepository for DispatchRepository {
         self.repo(conn).fetch_schema_objects(conn, filter_rules)
     }
 
-    fn fetch_object_ddl(&self, conn: &ConnectionRecord, name: &str, object_type: &str) -> Result<String> {
+    fn fetch_object_ddl(
+        &self,
+        conn: &ConnectionRecord,
+        name: &str,
+        object_type: &str,
+    ) -> Result<String> {
         self.repo(conn).fetch_object_ddl(conn, name, object_type)
     }
 

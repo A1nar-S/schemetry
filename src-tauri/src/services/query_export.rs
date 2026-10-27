@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rust_xlsxwriter::{Color, Format, FormatBorder, Workbook, Worksheet};
 
 use crate::models::QueryServerResult;
@@ -106,9 +106,7 @@ pub fn export_to_excel(
         .set_font_color(Color::White)
         .set_border(FormatBorder::Thin);
 
-    let data_format = Format::new()
-        .set_border(FormatBorder::Thin)
-        .set_text_wrap();
+    let data_format = Format::new().set_border(FormatBorder::Thin).set_text_wrap();
 
     if single_sheet {
         export_single_sheet(&mut workbook, results, &header_format, &data_format)?;
@@ -174,7 +172,12 @@ fn export_per_server(
         if !used_names.insert(sheet_name.clone()) {
             let suffix = format!(" ({})", server_result.server_id);
             let base_len = 31usize.saturating_sub(suffix.chars().count());
-            sheet_name = server_result.server_name.chars().take(base_len).collect::<String>() + &suffix;
+            sheet_name = server_result
+                .server_name
+                .chars()
+                .take(base_len)
+                .collect::<String>()
+                + &suffix;
             used_names.insert(sheet_name.clone());
         }
 

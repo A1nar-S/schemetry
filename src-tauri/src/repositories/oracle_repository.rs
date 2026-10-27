@@ -2,17 +2,17 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::sync::{Arc, RwLock};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use oracle::sql_type::{Blob, Clob, Nclob, OracleType, ToSql};
 use oracle::{Connection, InitParams, Row};
 
 use crate::models::{
     ColumnInfo, CompletionColumn, CompletionMetadata, CompletionRelation, ConnectionRecord,
-    HistoryFixResult, HistoryNamingRule, HistoryTableIssue,
-    MatchType, SchemaObject, TableDdls, TableFilterRule,
+    HistoryFixResult, HistoryNamingRule, HistoryTableIssue, MatchType, SchemaObject, TableDdls,
+    TableFilterRule,
 };
 use crate::repositories::db_repository::{DbRepository, LobCell, LobSource, QueryOutput};
-use crate::repositories::filter_rule_repository::{build_predicate, ParamStyle};
+use crate::repositories::filter_rule_repository::{ParamStyle, build_predicate};
 use crate::services::cancel::{checkpoint, on_cancel};
 
 /// Stores the Oracle Instant Client directory path set at startup or via Settings.
@@ -122,7 +122,7 @@ impl DbOracleRepository {
     /// Build `CREATE OR REPLACE SYNONYM name FOR owner.target[@db_link]` from ALL_SYNONYMS.
     /// DBMS_METADATA drops the target owner under EMIT_SCHEMA=FALSE, so we assemble it here.
     fn fetch_synonym_ddl(&self, db: &Connection, name: &str, schema: &str) -> Result<String> {
-        let rows = db
+        let mut rows = db
             .query(
                 "SELECT TABLE_OWNER, TABLE_NAME, DB_LINK FROM ALL_SYNONYMS \
                  WHERE OWNER = :1 AND SYNONYM_NAME = :2",
@@ -130,7 +130,7 @@ impl DbOracleRepository {
             )
             .map_err(|e| anyhow!(e.to_string()))?;
 
-        for row_result in rows {
+        if let Some(row_result) = rows.next() {
             let row = row_result.map_err(|e| anyhow!(e.to_string()))?;
             let table_owner: Option<String> = row.get(0).ok().flatten();
             let table_name: String = row.get(1).map_err(|e| anyhow!(e.to_string()))?;
@@ -185,16 +185,15 @@ impl DbRepository for DbOracleRepository {
         let db = self.connect(conn)?;
         let schema = conn.username.to_ascii_uppercase();
 
-        let (filter_clause, filter_binds) = build_predicate(filter_rules, "atc.TABLE_NAME", 2, ParamStyle::Colon);
+        let (filter_clause, filter_binds) =
+            build_predicate(filter_rules, "atc.TABLE_NAME", 2, ParamStyle::Colon);
         let sql = format!("{FETCH_SQL_BASE}{filter_clause}{FETCH_SQL_ORDER_BY}");
         let mut binds: Vec<&dyn ToSql> = vec![&schema];
         for b in &filter_binds {
             binds.push(b);
         }
 
-        let rows = db
-            .query(&sql, &binds)
-            .map_err(|e| anyhow!(e.to_string()))?;
+        let rows = db.query(&sql, &binds).map_err(|e| anyhow!(e.to_string()))?;
 
         let mut tables: crate::models::ServerTables = HashMap::new();
 
@@ -263,17 +262,27 @@ impl DbRepository for DbOracleRepository {
             let (table, column, data_type) = row.map_err(err)?;
             if relations.last().map_or(true, |r| r.name != table) {
                 relations.push(CompletionRelation {
-                    kind: kinds.get(&table).cloned().unwrap_or_else(|| "TABLE".to_string()),
+                    kind: kinds
+                        .get(&table)
+                        .cloned()
+                        .unwrap_or_else(|| "TABLE".to_string()),
                     name: table,
                     columns: Vec::new(),
                 });
             }
             if let Some(relation) = relations.last_mut() {
-                relation.columns.push(CompletionColumn { name: column, data_type: data_type.unwrap_or_default() });
+                relation.columns.push(CompletionColumn {
+                    name: column,
+                    data_type: data_type.unwrap_or_default(),
+                });
             }
         }
 
-        Ok(CompletionMetadata { schema: conn.username.to_ascii_uppercase(), relations, objects })
+        Ok(CompletionMetadata {
+            schema: conn.username.to_ascii_uppercase(),
+            relations,
+            objects,
+        })
     }
 
     fn run_query(
@@ -298,7 +307,8 @@ impl DbRepository for DbOracleRepository {
             let infos = result_set.column_info();
             let columns: Vec<String> = infos.iter().map(|c| c.name().to_string()).collect();
             let types: Vec<String> = infos.iter().map(|c| type_label(c.oracle_type())).collect();
-            let oracle_types: Vec<OracleType> = infos.iter().map(|c| c.oracle_type().clone()).collect();
+            let oracle_types: Vec<OracleType> =
+                infos.iter().map(|c| c.oracle_type().clone()).collect();
             let kinds: Vec<CellKind> = infos.iter().map(|c| cell_kind(c.oracle_type())).collect();
             (columns, types, oracle_types, kinds)
         };
@@ -335,10 +345,22 @@ impl DbRepository for DbOracleRepository {
 
         // Only results with LOB columns keep their session open.
         let lobs = kinds.iter().any(|k| k.is_lob()).then(|| {
-            let binary_cols = kinds.iter().map(|k| matches!(k, CellKind::BinaryLob)).collect();
-            Box::new(OracleLobSource { cells, binary_cols, _conn: db }) as Box<dyn LobSource>
+            let binary_cols = kinds
+                .iter()
+                .map(|k| matches!(k, CellKind::BinaryLob))
+                .collect();
+            Box::new(OracleLobSource {
+                cells,
+                binary_cols,
+                _conn: db,
+            }) as Box<dyn LobSource>
         });
-        Ok(QueryOutput { columns, column_types: types, rows, lobs })
+        Ok(QueryOutput {
+            columns,
+            column_types: types,
+            rows,
+            lobs,
+        })
     }
 
     fn fetch_table_ddls(
@@ -350,16 +372,15 @@ impl DbRepository for DbOracleRepository {
         let schema = conn.username.to_ascii_uppercase();
         let _ = db.execute(DDL_TRANSFORM_SQL, &[]);
 
-        let (filter_clause, filter_binds) = build_predicate(filter_rules, "at.TABLE_NAME", 2, ParamStyle::Colon);
+        let (filter_clause, filter_binds) =
+            build_predicate(filter_rules, "at.TABLE_NAME", 2, ParamStyle::Colon);
         let sql = format!("{TABLE_DDL_SQL_BASE}{filter_clause}{TABLE_DDL_SQL_ORDER_BY}");
         let mut binds: Vec<&dyn ToSql> = vec![&schema];
         for b in &filter_binds {
             binds.push(b);
         }
 
-        let ddl_rows = db
-            .query(&sql, &binds)
-            .map_err(|e| anyhow!(e.to_string()))?;
+        let ddl_rows = db.query(&sql, &binds).map_err(|e| anyhow!(e.to_string()))?;
 
         let mut table_ddls: TableDdls = HashMap::new();
         for row_result in ddl_rows {
@@ -393,17 +414,15 @@ impl DbRepository for DbOracleRepository {
                 "SELECT DBMS_METADATA.GET_DDL('TABLE', :1, :2) FROM DUAL",
                 &[&upper, &schema],
             );
-            let rows = match rows {
+            let mut rows = match rows {
                 Ok(r) => r,
                 Err(_) => continue,
             };
-            for row_result in rows {
-                if let Ok(row) = row_result {
-                    if let Ok(ddl) = row.get::<usize, String>(0) {
-                        table_ddls.insert(upper.clone(), ddl);
-                    }
-                }
-                break; // only one row expected per table
+            // Only one row expected per table.
+            if let Some(Ok(row)) = rows.next()
+                && let Ok(ddl) = row.get::<usize, String>(0)
+            {
+                table_ddls.insert(upper.clone(), ddl);
             }
         }
 
@@ -418,7 +437,8 @@ impl DbRepository for DbOracleRepository {
         let db = self.connect(conn)?;
         let schema = conn.username.to_ascii_uppercase();
 
-        let (filter_clause, filter_binds) = build_predicate(filter_rules, "o.OBJECT_NAME", 2, ParamStyle::Colon);
+        let (filter_clause, filter_binds) =
+            build_predicate(filter_rules, "o.OBJECT_NAME", 2, ParamStyle::Colon);
         let sql = format!(
             "SELECT o.OBJECT_NAME, o.OBJECT_TYPE \
              FROM ALL_OBJECTS o \
@@ -437,9 +457,7 @@ impl DbRepository for DbOracleRepository {
             binds.push(b);
         }
 
-        let rows = db
-            .query(&sql, &binds)
-            .map_err(|e| anyhow!(e.to_string()))?;
+        let rows = db.query(&sql, &binds).map_err(|e| anyhow!(e.to_string()))?;
 
         let mut objects = Vec::new();
         for row_result in rows {
@@ -481,14 +499,14 @@ impl DbRepository for DbOracleRepository {
 
         // DBMS_METADATA uses underscored names for some types
         let metadata_type = match upper_type.as_str() {
-            "PACKAGE BODY"      => "PACKAGE_BODY",
-            "TYPE BODY"         => "TYPE_BODY",
+            "PACKAGE BODY" => "PACKAGE_BODY",
+            "TYPE BODY" => "TYPE_BODY",
             "MATERIALIZED VIEW" => "MATERIALIZED_VIEW",
-            "JOB"               => "PROCOBJ",
-            other               => other,
+            "JOB" => "PROCOBJ",
+            other => other,
         };
 
-        let rows = db
+        let mut rows = db
             .query(
                 "SELECT DBMS_METADATA.GET_DDL(:1, :2, :3) FROM DUAL",
                 &[&metadata_type, &upper_name, &schema],
@@ -496,10 +514,11 @@ impl DbRepository for DbOracleRepository {
             .map_err(|e| anyhow!(e.to_string()))?;
 
         let mut ddl = String::new();
-        for row_result in rows {
+        if let Some(row_result) = rows.next() {
             let row = row_result.map_err(|e| anyhow!(e.to_string()))?;
-            ddl = row.get::<usize, String>(0).map_err(|e| anyhow!(e.to_string()))?;
-            break;
+            ddl = row
+                .get::<usize, String>(0)
+                .map_err(|e| anyhow!(e.to_string()))?;
         }
         if ddl.is_empty() {
             return Err(anyhow!("DDL not found for {} {}", upper_type, upper_name));
@@ -530,7 +549,10 @@ impl DbRepository for DbOracleRepository {
 
         // Owned pattern/wildcard strings, computed up front so `join_binds` and
         // `not_like_binds` below can hold stable references into them.
-        let patterns: Vec<String> = rules.iter().map(|r| r.pattern.trim().to_ascii_uppercase()).collect();
+        let patterns: Vec<String> = rules
+            .iter()
+            .map(|r| r.pattern.trim().to_ascii_uppercase())
+            .collect();
         let wildcards: Vec<String> = rules
             .iter()
             .zip(&patterns)
@@ -650,7 +672,9 @@ impl DbRepository for DbOracleRepository {
                 // Match: same name, or the history column carries one of the configured prefixes.
                 let found = history_cols.iter().find(|(hcol, _, _)| {
                     hcol.eq_ignore_ascii_case(col_name)
-                        || prefix_patterns.iter().any(|p| hcol.eq_ignore_ascii_case(&format!("{p}{col_name}")))
+                        || prefix_patterns
+                            .iter()
+                            .any(|p| hcol.eq_ignore_ascii_case(&format!("{p}{col_name}")))
                 });
 
                 match found {
@@ -658,8 +682,8 @@ impl DbRepository for DbOracleRepository {
                         issues.push(HistoryTableIssue {
                             history_table: history_table.clone(),
                             column_name: col_name.clone(),
-                            issue_type:  "MISSING".to_string(),
-                            main_type:   main_fmt.clone(),
+                            issue_type: "MISSING".to_string(),
+                            main_type: main_fmt.clone(),
                             history_type: String::new(),
                         });
                         table_fixes.push_str(&format!(
@@ -672,8 +696,8 @@ impl DbRepository for DbOracleRepository {
                             issues.push(HistoryTableIssue {
                                 history_table: history_table.clone(),
                                 column_name: col_name.clone(),
-                                issue_type:  "TYPE_MISMATCH".to_string(),
-                                main_type:   main_fmt.clone(),
+                                issue_type: "TYPE_MISMATCH".to_string(),
+                                main_type: main_fmt.clone(),
                                 history_type: history_fmt.clone(),
                             });
                             table_fixes.push_str(&format!(
@@ -720,9 +744,9 @@ fn fetch_columns(
     let mut cols = Vec::new();
     for row_result in rows {
         let row = row_result.map_err(|e| anyhow!(e.to_string()))?;
-        let col_name:   String         = row.get(0).map_err(|e| anyhow!(e.to_string()))?;
-        let data_type:  String         = row.get(1).map_err(|e| anyhow!(e.to_string()))?;
-        let data_len:   Option<String> = row.get(2).ok().flatten();
+        let col_name: String = row.get(0).map_err(|e| anyhow!(e.to_string()))?;
+        let data_type: String = row.get(1).map_err(|e| anyhow!(e.to_string()))?;
+        let data_len: Option<String> = row.get(2).ok().flatten();
         cols.push((col_name, data_type, data_len));
     }
     Ok(cols)
@@ -994,7 +1018,11 @@ fn build_table_model(db: &Connection, schema: &str, table: &str) -> Result<Table
     }
     let column_comments: Vec<(String, String)> = columns
         .iter()
-        .filter_map(|c| comment_map.get(&c.name).map(|t| (c.name.clone(), t.clone())))
+        .filter_map(|c| {
+            comment_map
+                .get(&c.name)
+                .map(|t| (c.name.clone(), t.clone()))
+        })
         .collect();
 
     // Indexes (excluding those backing PK/UK constraints)
@@ -1134,7 +1162,10 @@ fn render_constraint(table: &str, c: &ConstraintDef) -> String {
         ConstraintKind::Primary => format!("{head}primary key ({});", c.cols.join(", ")),
         ConstraintKind::Unique => format!("{head}unique ({});", c.cols.join(", ")),
         ConstraintKind::Check => {
-            format!("{head}check ({});", c.check_cond.clone().unwrap_or_default())
+            format!(
+                "{head}check ({});",
+                c.check_cond.clone().unwrap_or_default()
+            )
         }
         ConstraintKind::ForeignKey => {
             let mut s = format!(
@@ -1257,7 +1288,13 @@ fn split_comments(comment_part: &str) -> Vec<String> {
 fn indent_lines(s: &str, spaces: usize) -> String {
     let pad = " ".repeat(spaces);
     s.lines()
-        .map(|l| if l.trim().is_empty() { String::new() } else { format!("{pad}{l}") })
+        .map(|l| {
+            if l.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{pad}{l}")
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -1403,7 +1440,12 @@ fn build_table_deploy(name: &str, raw: &str) -> String {
             blocks.push(guarded_block("USER_INDEXES", "INDEX_NAME", &idx, &[stmt]));
         } else if lower.starts_with("alter table") {
             let cons = token_after(&stmt, "add constraint").unwrap_or_default();
-            blocks.push(guarded_block("USER_CONSTRAINTS", "CONSTRAINT_NAME", &cons, &[stmt]));
+            blocks.push(guarded_block(
+                "USER_CONSTRAINTS",
+                "CONSTRAINT_NAME",
+                &cons,
+                &[stmt],
+            ));
         } else {
             // create table + comment on … → grouped into the table block
             table_group.push(stmt);
@@ -1412,7 +1454,12 @@ fn build_table_deploy(name: &str, raw: &str) -> String {
 
     let mut out: Vec<String> = Vec::new();
     if !table_group.is_empty() {
-        out.push(guarded_block("USER_TABLES", "TABLE_NAME", name, &table_group));
+        out.push(guarded_block(
+            "USER_TABLES",
+            "TABLE_NAME",
+            name,
+            &table_group,
+        ));
     }
     out.extend(blocks);
     out.join("\n\n")
@@ -1519,9 +1566,15 @@ impl OraLob {
     fn read(&self, max_bytes: usize, max_chars: usize) -> Result<LobCell> {
         let err = |e: std::io::Error| anyhow!(e.to_string());
         Ok(match self {
-            OraLob::Blob(b) => LobCell::Binary(read_bytes_capped(b.clone(), max_bytes).map_err(err)?),
-            OraLob::Clob(c) => LobCell::Text(Some(read_text_capped(c.clone(), max_chars).map_err(err)?)),
-            OraLob::Nclob(c) => LobCell::Text(Some(read_text_capped(c.clone(), max_chars).map_err(err)?)),
+            OraLob::Blob(b) => {
+                LobCell::Binary(read_bytes_capped(b.clone(), max_bytes).map_err(err)?)
+            }
+            OraLob::Clob(c) => {
+                LobCell::Text(Some(read_text_capped(c.clone(), max_chars).map_err(err)?))
+            }
+            OraLob::Nclob(c) => {
+                LobCell::Text(Some(read_text_capped(c.clone(), max_chars).map_err(err)?))
+            }
             OraLob::Text(s) => LobCell::Text(Some(cap_chars(s.clone(), max_chars))),
             OraLob::Bytes(b) => LobCell::Binary(b[..b.len().min(max_bytes)].to_vec()),
         })
@@ -1533,7 +1586,10 @@ impl OraLob {
             OraLob::Blob(b) => copy_lob(b.clone(), out).map_err(err),
             OraLob::Clob(c) => copy_lob(c.clone(), out).map_err(err),
             OraLob::Nclob(c) => copy_lob(c.clone(), out).map_err(err),
-            OraLob::Text(s) => out.write_all(s.as_bytes()).map(|_| s.len() as u64).map_err(err),
+            OraLob::Text(s) => out
+                .write_all(s.as_bytes())
+                .map(|_| s.len() as u64)
+                .map_err(err),
             OraLob::Bytes(b) => out.write_all(b).map(|_| b.len() as u64).map_err(err),
         }
     }
@@ -1543,13 +1599,26 @@ impl OraLob {
 fn take_lob_cell(row: &Row, i: usize, oracle_type: &OracleType) -> Result<Option<OraLob>> {
     let err = |e: oracle::Error| anyhow!(e.to_string());
     Ok(match oracle_type {
-        OracleType::BLOB => row.get::<_, Option<Blob>>(i).map_err(err)?.map(OraLob::Blob),
-        OracleType::CLOB => row.get::<_, Option<Clob>>(i).map_err(err)?.map(OraLob::Clob),
-        OracleType::NCLOB => row.get::<_, Option<Nclob>>(i).map_err(err)?.map(OraLob::Nclob),
-        OracleType::Long => row.get::<_, Option<String>>(i).map_err(err)?.map(OraLob::Text),
-        OracleType::LongRaw | OracleType::BFILE => {
-            row.get::<_, Option<Vec<u8>>>(i).map_err(err)?.map(OraLob::Bytes)
-        }
+        OracleType::BLOB => row
+            .get::<_, Option<Blob>>(i)
+            .map_err(err)?
+            .map(OraLob::Blob),
+        OracleType::CLOB => row
+            .get::<_, Option<Clob>>(i)
+            .map_err(err)?
+            .map(OraLob::Clob),
+        OracleType::NCLOB => row
+            .get::<_, Option<Nclob>>(i)
+            .map_err(err)?
+            .map(OraLob::Nclob),
+        OracleType::Long => row
+            .get::<_, Option<String>>(i)
+            .map_err(err)?
+            .map(OraLob::Text),
+        OracleType::LongRaw | OracleType::BFILE => row
+            .get::<_, Option<Vec<u8>>>(i)
+            .map_err(err)?
+            .map(OraLob::Bytes),
         other => return Err(anyhow!("{other:?} is not a LOB type")),
     })
 }
@@ -1562,7 +1631,6 @@ fn materialize(cell: &OraLob, kind: CellKind) -> String {
         Err(_) => kind.placeholder().to_string(),
     }
 }
-
 
 fn read_bytes_capped(mut r: impl Read, max_bytes: usize) -> std::io::Result<Vec<u8>> {
     let mut out = Vec::new();
@@ -1622,10 +1690,18 @@ struct OracleLobSource {
 unsafe impl Send for OracleLobSource {}
 
 impl LobSource for OracleLobSource {
-    fn read(&mut self, row: usize, col: usize, max_bytes: usize, max_chars: usize) -> Result<LobCell> {
+    fn read(
+        &mut self,
+        row: usize,
+        col: usize,
+        max_bytes: usize,
+        max_chars: usize,
+    ) -> Result<LobCell> {
         match self.cells.get(&(row, col)) {
             Some(cell) => cell.read(max_bytes, max_chars),
-            None if self.binary_cols.get(col).copied().unwrap_or(false) => Ok(LobCell::Binary(Vec::new())),
+            None if self.binary_cols.get(col).copied().unwrap_or(false) => {
+                Ok(LobCell::Binary(Vec::new()))
+            }
             None => Ok(LobCell::Text(None)),
         }
     }
@@ -1674,9 +1750,10 @@ fn bytes_to_display(bytes: &[u8]) -> String {
         match std::str::from_utf8(bytes) {
             Ok(s) => cap_chars(s.to_string(), MATERIALIZE_TEXT_CAP),
             // Content capped mid-character — keep the complete prefix.
-            Err(e) if e.error_len().is_none() => {
-                cap_chars(String::from_utf8_lossy(&bytes[..e.valid_up_to()]).into_owned(), MATERIALIZE_TEXT_CAP)
-            }
+            Err(e) if e.error_len().is_none() => cap_chars(
+                String::from_utf8_lossy(&bytes[..e.valid_up_to()]).into_owned(),
+                MATERIALIZE_TEXT_CAP,
+            ),
             Err(_) => bytes_to_hex(bytes, 8192),
         }
     } else {

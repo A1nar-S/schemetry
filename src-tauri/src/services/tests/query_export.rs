@@ -38,7 +38,12 @@ fn csv_escape_quotes_special_characters() {
 
 #[test]
 fn csv_single_server_has_no_server_column() {
-    let results = [result(1, "DEV", &["ID", "NAME"], &[&[Some("1"), Some("x")], &[Some("2"), None]])];
+    let results = [result(
+        1,
+        "DEV",
+        &["ID", "NAME"],
+        &[&[Some("1"), Some("x")], &[Some("2"), None]],
+    )];
     assert_eq!(csv_string(&results), "ID,NAME\n1,x\n2,\n");
 }
 

@@ -25,7 +25,10 @@ fn task_lifecycle() {
     assert_eq!(task.check(), Err(CANCELLED.to_string()));
     assert_eq!(checkpoint().unwrap_err().to_string(), CANCELLED);
     // Late registrations (a connection opened after Stop) are refused.
-    assert_eq!(on_cancel(Box::new(|| {})).unwrap_err().to_string(), CANCELLED);
+    assert_eq!(
+        on_cancel(Box::new(|| {})).unwrap_err().to_string(),
+        CANCELLED
+    );
     // Hooks run once only.
     assert!(cancel_task());
     assert_eq!(calls.load(Ordering::SeqCst), 1);

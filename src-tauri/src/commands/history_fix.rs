@@ -9,7 +9,10 @@ use crate::state::AppState;
 
 #[tauri::command]
 pub fn list_history_naming_rules(state: State<AppState>) -> Result<Vec<HistoryNamingRule>, String> {
-    state.history_naming_rules_svc.list_rules().map_err(|e| e.to_string())
+    state
+        .history_naming_rules_svc
+        .list_rules()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -17,12 +20,18 @@ pub fn save_history_naming_rule(
     state: State<AppState>,
     rule: HistoryNamingRule,
 ) -> Result<HistoryNamingRule, String> {
-    state.history_naming_rules_svc.save_rule(&rule).map_err(|e| e.to_string())
+    state
+        .history_naming_rules_svc
+        .save_rule(&rule)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_history_naming_rule(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.history_naming_rules_svc.delete_rule(id).map_err(|e| e.to_string())
+    state
+        .history_naming_rules_svc
+        .delete_rule(id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -31,7 +40,10 @@ pub async fn generate_history_fix(
     server_ids: Vec<i64>,
 ) -> Result<Vec<ServerHistoryFixResult>, String> {
     let conns = super::selected_connections(&state.catalog, &server_ids)?;
-    let naming_rules = state.history_naming_rules_svc.list_active_rules().map_err(|e| e.to_string())?;
+    let naming_rules = state
+        .history_naming_rules_svc
+        .list_active_rules()
+        .map_err(|e| e.to_string())?;
     let diff_svc = Arc::clone(&state.diff_svc);
 
     tokio::task::spawn_blocking(move || {

@@ -84,7 +84,10 @@ pub fn execute_script(conn: &ConnectionRecord, script: &str) -> usize {
             .user(&conn.username)
             .password(&conn.password)
             .dbname(&conn.service_name);
-        let (client, connection) = cfg.connect(NoTls).await.expect("raw postgres connection failed");
+        let (client, connection) = cfg
+            .connect(NoTls)
+            .await
+            .expect("raw postgres connection failed");
         tokio::spawn(async move {
             let _ = connection.await;
         });

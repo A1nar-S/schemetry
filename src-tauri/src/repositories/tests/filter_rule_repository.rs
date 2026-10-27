@@ -1,7 +1,19 @@
 use super::*;
 
-fn rule(id: i64, action: FilterAction, match_type: MatchType, pattern: &str, enabled: bool) -> TableFilterRule {
-    TableFilterRule { id, action, match_type, pattern: pattern.to_string(), enabled }
+fn rule(
+    id: i64,
+    action: FilterAction,
+    match_type: MatchType,
+    pattern: &str,
+    enabled: bool,
+) -> TableFilterRule {
+    TableFilterRule {
+        id,
+        action,
+        match_type,
+        pattern: pattern.to_string(),
+        enabled,
+    }
 }
 
 // ── like_pattern ─────────────────────────────────────────────────
@@ -37,7 +49,13 @@ fn build_predicate_empty_rules_yields_empty_fragment() {
 
 #[test]
 fn build_predicate_disabled_rule_is_ignored() {
-    let rules = vec![rule(1, FilterAction::Exclude, MatchType::Prefix, "ARCH_", false)];
+    let rules = vec![rule(
+        1,
+        FilterAction::Exclude,
+        MatchType::Prefix,
+        "ARCH_",
+        false,
+    )];
     let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 2, ParamStyle::Colon);
     assert_eq!(sql, "");
     assert!(binds.is_empty());
@@ -45,7 +63,13 @@ fn build_predicate_disabled_rule_is_ignored() {
 
 #[test]
 fn build_predicate_single_exclude_rule() {
-    let rules = vec![rule(1, FilterAction::Exclude, MatchType::Prefix, "ARCH_", true)];
+    let rules = vec![rule(
+        1,
+        FilterAction::Exclude,
+        MatchType::Prefix,
+        "ARCH_",
+        true,
+    )];
     let (sql, binds) = build_predicate(&rules, "TABLE_NAME", 2, ParamStyle::Colon);
     assert_eq!(sql, " AND UPPER(TABLE_NAME) NOT LIKE :2");
     assert_eq!(binds, vec!["ARCH_%".to_string()]);
@@ -97,13 +121,33 @@ fn build_predicate_combines_exclude_and_include() {
 
 #[test]
 fn action_str_round_trips() {
-    assert_eq!(SqliteFilterRuleRepository::parse_action(SqliteFilterRuleRepository::action_str(FilterAction::Exclude)), FilterAction::Exclude);
-    assert_eq!(SqliteFilterRuleRepository::parse_action(SqliteFilterRuleRepository::action_str(FilterAction::Include)), FilterAction::Include);
+    assert_eq!(
+        SqliteFilterRuleRepository::parse_action(SqliteFilterRuleRepository::action_str(
+            FilterAction::Exclude
+        )),
+        FilterAction::Exclude
+    );
+    assert_eq!(
+        SqliteFilterRuleRepository::parse_action(SqliteFilterRuleRepository::action_str(
+            FilterAction::Include
+        )),
+        FilterAction::Include
+    );
 }
 
 #[test]
 fn match_type_str_round_trips() {
-    for mt in [MatchType::Prefix, MatchType::Suffix, MatchType::Contains, MatchType::Exact] {
-        assert_eq!(SqliteFilterRuleRepository::parse_match_type(SqliteFilterRuleRepository::match_type_str(mt)), mt);
+    for mt in [
+        MatchType::Prefix,
+        MatchType::Suffix,
+        MatchType::Contains,
+        MatchType::Exact,
+    ] {
+        assert_eq!(
+            SqliteFilterRuleRepository::parse_match_type(
+                SqliteFilterRuleRepository::match_type_str(mt)
+            ),
+            mt
+        );
     }
 }

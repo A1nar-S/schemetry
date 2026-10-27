@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use keyring::{Entry, Error as KeyringError};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::models::{ConnectionRecord, DbType};
 
@@ -100,8 +100,14 @@ impl ConnectionRepository for SqliteConnectionRepository {
             )",
             [],
         )?;
-        add_column_if_missing(&conn, "ALTER TABLE connections ADD COLUMN db_type TEXT NOT NULL DEFAULT 'oracle'");
-        add_column_if_missing(&conn, "ALTER TABLE connections ADD COLUMN pg_schema TEXT NOT NULL DEFAULT ''");
+        add_column_if_missing(
+            &conn,
+            "ALTER TABLE connections ADD COLUMN db_type TEXT NOT NULL DEFAULT 'oracle'",
+        );
+        add_column_if_missing(
+            &conn,
+            "ALTER TABLE connections ADD COLUMN pg_schema TEXT NOT NULL DEFAULT ''",
+        );
 
         // Superseded by the per-group index below now that query/fix/ddl/compare dispatch
         // selects connections by id, not name — drop it if an earlier version of the app
@@ -149,15 +155,26 @@ impl ConnectionRepository for SqliteConnectionRepository {
         drop(stmt);
 
         let mut out = Vec::with_capacity(rows.len());
-        for (id, name, host, port, service_name, username, _, group_name, db_type, pg_schema) in rows {
+        for (id, name, host, port, service_name, username, _, group_name, db_type, pg_schema) in
+            rows
+        {
             let key = Self::keyring_key(&group_name, &name);
             let (password, password_broken) = match Self::load_password(&key) {
                 Ok(p) => (p, false),
                 Err(_) => (String::new(), true),
             };
             out.push(ConnectionRecord {
-                id, name, host, port, service_name, username, password, group_name, password_broken,
-                db_type: parse_db_type(&db_type), pg_schema,
+                id,
+                name,
+                host,
+                port,
+                service_name,
+                username,
+                password,
+                group_name,
+                password_broken,
+                db_type: parse_db_type(&db_type),
+                pg_schema,
             });
         }
         Ok(out)
@@ -174,7 +191,8 @@ impl ConnectionRepository for SqliteConnectionRepository {
         if exists > 0 {
             anyhow::bail!(
                 "Connection '{}' already exists in group '{}'.",
-                data.name, data.group_name
+                data.name,
+                data.group_name
             );
         }
 
@@ -223,7 +241,8 @@ impl ConnectionRepository for SqliteConnectionRepository {
             if conflict > 0 {
                 anyhow::bail!(
                     "Connection '{}' already exists in group '{}'.",
-                    data.name, data.group_name
+                    data.name,
+                    data.group_name
                 );
             }
         }
@@ -276,7 +295,10 @@ impl ConnectionRepository for SqliteConnectionRepository {
         let mut stmt = conn.prepare("SELECT name, group_name FROM connections")?;
         let keys = stmt
             .query_map([], |row| {
-                Ok(Self::keyring_key(&row.get::<_, String>(1)?, &row.get::<_, String>(0)?))
+                Ok(Self::keyring_key(
+                    &row.get::<_, String>(1)?,
+                    &row.get::<_, String>(0)?,
+                ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         drop(stmt);
@@ -330,4 +352,3 @@ impl ConnectionRepository for SqliteConnectionRepository {
         Ok(())
     }
 }
-

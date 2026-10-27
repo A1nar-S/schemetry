@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, NoTls};
 
 use crate::models::{
     ColumnInfo, CompletionColumn, CompletionMetadata, CompletionRelation, ConnectionRecord,
-    HistoryFixResult, HistoryNamingRule, HistoryTableIssue,
-    MatchType, SchemaObject, TableDdls, TableFilterRule,
+    HistoryFixResult, HistoryNamingRule, HistoryTableIssue, MatchType, SchemaObject, TableDdls,
+    TableFilterRule,
 };
 use crate::repositories::db_repository::{DbRepository, LobCell, LobSource, QueryOutput};
-use crate::repositories::filter_rule_repository::{build_predicate, ParamStyle};
+use crate::repositories::filter_rule_repository::{ParamStyle, build_predicate};
 use crate::services::cancel::{checkpoint, on_cancel};
 
 /// Cap on materialized LOB-like content (characters of text / bytes decoded), mirroring
@@ -37,7 +37,11 @@ impl DbPostgresRepository {
     /// The schema to introspect/target: `pg_schema` if set, else `public`.
     fn schema_of(conn: &ConnectionRecord) -> String {
         let s = conn.pg_schema.trim();
-        if s.is_empty() { "public".to_string() } else { s.to_string() }
+        if s.is_empty() {
+            "public".to_string()
+        } else {
+            s.to_string()
+        }
     }
 
     /// Opens a session that the busy task's Stop button can interrupt.
@@ -51,7 +55,10 @@ impl DbPostgresRepository {
             .dbname(&conn.service_name)
             .connect_timeout(std::time::Duration::from_secs(15));
 
-        let (client, connection) = cfg.connect(NoTls).await.map_err(|e| anyhow!(e.to_string()))?;
+        let (client, connection) = cfg
+            .connect(NoTls)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))?;
         tokio::spawn(async move {
             let _ = connection.await;
         });
@@ -66,7 +73,12 @@ impl DbPostgresRepository {
         Ok(client)
     }
 
-    async fn build_table_model(&self, client: &Client, schema: &str, table: &str) -> Result<TableModel> {
+    async fn build_table_model(
+        &self,
+        client: &Client,
+        schema: &str,
+        table: &str,
+    ) -> Result<TableModel> {
         let col_rows = client
             .query(
                 "SELECT a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull, \
@@ -89,7 +101,10 @@ impl DbPostgresRepository {
                 name: r.get(0),
                 type_str: r.get(1),
                 not_null: r.get(2),
-                default: r.get::<_, Option<String>>(3).map(|d| d.trim().to_string()).filter(|d| !d.is_empty()),
+                default: r
+                    .get::<_, Option<String>>(3)
+                    .map(|d| d.trim().to_string())
+                    .filter(|d| !d.is_empty()),
             });
         }
         if columns.is_empty() {
@@ -125,13 +140,20 @@ impl DbPostgresRepository {
         let mut comment_map: HashMap<String, String> = HashMap::new();
         for r in &comment_rows {
             let col: String = r.get(0);
-            if let Some(text) = r.get::<_, Option<String>>(1).filter(|s| !s.trim().is_empty()) {
+            if let Some(text) = r
+                .get::<_, Option<String>>(1)
+                .filter(|s| !s.trim().is_empty())
+            {
                 comment_map.insert(col, text.trim().to_string());
             }
         }
         let column_comments: Vec<(String, String)> = columns
             .iter()
-            .filter_map(|c| comment_map.get(&c.name).map(|t| (c.name.clone(), t.clone())))
+            .filter_map(|c| {
+                comment_map
+                    .get(&c.name)
+                    .map(|t| (c.name.clone(), t.clone()))
+            })
             .collect();
 
         // Indexes not backing a constraint. `pg_get_indexdef(indexrelid, col_no, true)`
@@ -172,7 +194,11 @@ impl DbPostgresRepository {
                     }
                 }
             }
-            indexes.push(IndexDef { name, unique, parts });
+            indexes.push(IndexDef {
+                name,
+                unique,
+                parts,
+            });
         }
 
         // Constraints: pg_get_constraintdef already returns a ready-to-use definition
@@ -192,7 +218,10 @@ impl DbPostgresRepository {
             .unwrap_or_default();
         let constraints = cons_rows
             .iter()
-            .map(|r| ConstraintDef { name: r.get(0), def: r.get(1) })
+            .map(|r| ConstraintDef {
+                name: r.get(0),
+                def: r.get(1),
+            })
             .collect();
 
         Ok(TableModel {
@@ -261,7 +290,11 @@ fn render_table(m: &TableModel) -> String {
     out.push_str(");");
 
     if let Some(tc) = &m.table_comment {
-        out.push_str(&format!("\n\ncomment on table {} is '{}';", m.name, escape_sql(tc)));
+        out.push_str(&format!(
+            "\n\ncomment on table {} is '{}';",
+            m.name,
+            escape_sql(tc)
+        ));
     }
     for (col, text) in &m.column_comments {
         out.push_str(&format!(
@@ -273,8 +306,18 @@ fn render_table(m: &TableModel) -> String {
     }
 
     for idx in &m.indexes {
-        let kw = if idx.unique { "create unique index" } else { "create index" };
-        out.push_str(&format!("\n{} {} on {} ({});", kw, idx.name, m.name, idx.parts.join(", ")));
+        let kw = if idx.unique {
+            "create unique index"
+        } else {
+            "create index"
+        };
+        out.push_str(&format!(
+            "\n{} {} on {} ({});",
+            kw,
+            idx.name,
+            m.name,
+            idx.parts.join(", ")
+        ));
     }
 
     for c in &m.constraints {
@@ -348,7 +391,13 @@ fn decode_bytea_hex(text: &str) -> Vec<u8> {
 /// DDL keyword; everything else continues the current statement — reliable here
 /// because `render_table` generates this text itself.
 fn split_statements(raw: &str) -> Vec<String> {
-    const STARTS: &[&str] = &["create table", "create unique index", "create index", "comment on", "alter table"];
+    const STARTS: &[&str] = &[
+        "create table",
+        "create unique index",
+        "create index",
+        "comment on",
+        "alter table",
+    ];
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
     for line in raw.lines() {
@@ -374,7 +423,10 @@ fn split_statements(raw: &str) -> Vec<String> {
 fn token_after(stmt: &str, keyword: &str) -> Option<String> {
     let lower = stmt.to_ascii_lowercase();
     let pos = lower.find(keyword)? + keyword.len();
-    stmt[pos..].split_whitespace().next().map(|t| t.trim_matches('"').to_string())
+    stmt[pos..]
+        .split_whitespace()
+        .next()
+        .map(|t| t.trim_matches('"').to_string())
 }
 
 /// Deploy wrapper for a table: `CREATE TABLE`/`CREATE INDEX` become `IF NOT EXISTS`
@@ -389,7 +441,11 @@ fn build_table_deploy(raw: &str) -> String {
         if lower.starts_with("create table") {
             out.push(stmt.replacen("create table", "create table if not exists", 1));
         } else if lower.starts_with("create unique index") {
-            out.push(stmt.replacen("create unique index", "create unique index if not exists", 1));
+            out.push(stmt.replacen(
+                "create unique index",
+                "create unique index if not exists",
+                1,
+            ));
         } else if lower.starts_with("create index") {
             out.push(stmt.replacen("create index", "create index if not exists", 1));
         } else if lower.starts_with("alter table") {
@@ -415,7 +471,11 @@ pub(crate) fn build_deploy_script(object_type: &str, name: &str, raw_cleaned: &s
         "SEQUENCE" => {
             let upper = raw.to_ascii_uppercase();
             match upper.find("CREATE SEQUENCE") {
-                Some(pos) => format!("{}CREATE SEQUENCE IF NOT EXISTS{}", &raw[..pos], &raw[pos + "CREATE SEQUENCE".len()..]),
+                Some(pos) => format!(
+                    "{}CREATE SEQUENCE IF NOT EXISTS{}",
+                    &raw[..pos],
+                    &raw[pos + "CREATE SEQUENCE".len()..]
+                ),
                 None => raw.to_string(),
             }
         }
@@ -515,7 +575,8 @@ impl DbRepository for DbPostgresRepository {
             let client = self.connect(conn).await?;
             let schema = Self::schema_of(conn);
 
-            let (filter_clause, filter_binds) = build_predicate(filter_rules, "c.relname", 2, ParamStyle::Dollar);
+            let (filter_clause, filter_binds) =
+                build_predicate(filter_rules, "c.relname", 2, ParamStyle::Dollar);
             let sql = format!(
                 "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
                  WHERE n.nspname = $1 AND c.relkind = 'r'{filter_clause} ORDER BY c.relname"
@@ -524,7 +585,10 @@ impl DbRepository for DbPostgresRepository {
             for b in &filter_binds {
                 params.push(b);
             }
-            let rows = client.query(&sql, &params).await.map_err(|e| anyhow!(e.to_string()))?;
+            let rows = client
+                .query(&sql, &params)
+                .await
+                .map_err(|e| anyhow!(e.to_string()))?;
 
             let mut table_ddls: TableDdls = HashMap::new();
             for row in &rows {
@@ -551,7 +615,10 @@ impl DbRepository for DbPostgresRepository {
             let mut table_ddls: TableDdls = HashMap::new();
             for table_name in table_names {
                 checkpoint()?;
-                if let Ok(model) = self.build_table_model(&client, &schema, table_name.trim()).await {
+                if let Ok(model) = self
+                    .build_table_model(&client, &schema, table_name.trim())
+                    .await
+                {
                     table_ddls.insert(table_name.clone(), render_table(&model));
                 }
             }
@@ -614,7 +681,12 @@ impl DbRepository for DbPostgresRepository {
         })
     }
 
-    fn fetch_object_ddl(&self, conn: &ConnectionRecord, name: &str, object_type: &str) -> Result<String> {
+    fn fetch_object_ddl(
+        &self,
+        conn: &ConnectionRecord,
+        name: &str,
+        object_type: &str,
+    ) -> Result<String> {
         self.runtime.block_on(async {
             let client = self.connect(conn).await?;
             let schema = Self::schema_of(conn);
@@ -975,7 +1047,9 @@ impl DbRepository for DbPostgresRepository {
                                 cells.insert((row_idx, i), bytes);
                                 Some(shown)
                             }
-                            (Some(text), CellKind::Text) => Some(cap_chars(text.to_string(), MATERIALIZE_TEXT_CAP)),
+                            (Some(text), CellKind::Text) => {
+                                Some(cap_chars(text.to_string(), MATERIALIZE_TEXT_CAP))
+                            }
                         });
                     }
                     rows.push(values);
@@ -983,11 +1057,20 @@ impl DbRepository for DbPostgresRepository {
             }
 
             // bytea has no locators, so its bytes are kept for the viewer.
-            let binary_cols: Vec<bool> = kinds.iter().map(|k| matches!(k, CellKind::Binary)).collect();
-            let lobs = binary_cols.iter().any(|&b| b).then(|| {
-                Box::new(PgLobSource { cells, binary_cols }) as Box<dyn LobSource>
-            });
-            Ok(QueryOutput { columns, column_types: types, rows, lobs })
+            let binary_cols: Vec<bool> = kinds
+                .iter()
+                .map(|k| matches!(k, CellKind::Binary))
+                .collect();
+            let lobs = binary_cols
+                .iter()
+                .any(|&b| b)
+                .then(|| Box::new(PgLobSource { cells, binary_cols }) as Box<dyn LobSource>);
+            Ok(QueryOutput {
+                columns,
+                column_types: types,
+                rows,
+                lobs,
+            })
         })
     }
 }
@@ -1003,14 +1086,26 @@ impl PgLobSource {
         if !self.binary_cols.get(col).copied().unwrap_or(false) {
             return Err(anyhow!("Column {col} is not a bytea column."));
         }
-        Ok(self.cells.get(&(row, col)).map(Vec::as_slice).unwrap_or_default())
+        Ok(self
+            .cells
+            .get(&(row, col))
+            .map(Vec::as_slice)
+            .unwrap_or_default())
     }
 }
 
 impl LobSource for PgLobSource {
-    fn read(&mut self, row: usize, col: usize, max_bytes: usize, _max_chars: usize) -> Result<LobCell> {
+    fn read(
+        &mut self,
+        row: usize,
+        col: usize,
+        max_bytes: usize,
+        _max_chars: usize,
+    ) -> Result<LobCell> {
         let bytes = self.cell(row, col)?;
-        Ok(LobCell::Binary(bytes[..bytes.len().min(max_bytes)].to_vec()))
+        Ok(LobCell::Binary(
+            bytes[..bytes.len().min(max_bytes)].to_vec(),
+        ))
     }
 
     fn copy_to(&mut self, row: usize, col: usize, out: &mut dyn Write) -> Result<u64> {

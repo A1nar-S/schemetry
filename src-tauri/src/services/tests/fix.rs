@@ -1,11 +1,19 @@
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::models::{ColumnInfo, Discrepancy, TableColumns};
+use std::collections::{HashMap, HashSet};
 
 const REF: i64 = 1;
 const TGT: i64 = 2;
 
-fn disc(difference: &str, element: &str, table: &str, column: &str, server_id: i64, server_name: &str, details: &str) -> Discrepancy {
+fn disc(
+    difference: &str,
+    element: &str,
+    table: &str,
+    column: &str,
+    server_id: i64,
+    server_name: &str,
+    details: &str,
+) -> Discrepancy {
     Discrepancy {
         difference: difference.to_string(),
         element: element.to_string(),
@@ -18,7 +26,10 @@ fn disc(difference: &str, element: &str, table: &str, column: &str, server_id: i
 }
 
 fn col_typed(data_type: &str) -> ColumnInfo {
-    ColumnInfo { data_type: Some(data_type.to_string()), ..Default::default() }
+    ColumnInfo {
+        data_type: Some(data_type.to_string()),
+        ..Default::default()
+    }
 }
 
 fn col_typed_len(data_type: &str, length: &str) -> ColumnInfo {
@@ -94,42 +105,114 @@ fn parse_target_server_no_marker_returns_none() {
 
 #[test]
 fn detect_fix_kind_missing_table() {
-    assert_eq!(detect_fix_kind(&disc("MISSING", "TABLE", "T", "", TGT, "S", "...")), FixKind::MissingTable);
+    assert_eq!(
+        detect_fix_kind(&disc("MISSING", "TABLE", "T", "", TGT, "S", "...")),
+        FixKind::MissingTable
+    );
 }
 
 #[test]
 fn detect_fix_kind_missing_column() {
-    assert_eq!(detect_fix_kind(&disc("MISSING", "COLUMN", "T", "C", TGT, "S", "...")), FixKind::MissingColumn);
+    assert_eq!(
+        detect_fix_kind(&disc("MISSING", "COLUMN", "T", "C", TGT, "S", "...")),
+        FixKind::MissingColumn
+    );
 }
 
 #[test]
 fn detect_fix_kind_data_type() {
-    assert_eq!(detect_fix_kind(&disc("DIFFERENT", "DATA_TYPE", "T", "C", TGT, "S", "DATA_TYPE: NUMBER != VARCHAR2")), FixKind::DataType);
+    assert_eq!(
+        detect_fix_kind(&disc(
+            "DIFFERENT",
+            "DATA_TYPE",
+            "T",
+            "C",
+            TGT,
+            "S",
+            "DATA_TYPE: NUMBER != VARCHAR2"
+        )),
+        FixKind::DataType
+    );
 }
 
 #[test]
 fn detect_fix_kind_data_default() {
-    assert_eq!(detect_fix_kind(&disc("DIFFERENT", "DATA_DEFAULT", "T", "C", TGT, "S", "DATA_DEFAULT: 0 != NULL")), FixKind::DataDefault);
+    assert_eq!(
+        detect_fix_kind(&disc(
+            "DIFFERENT",
+            "DATA_DEFAULT",
+            "T",
+            "C",
+            TGT,
+            "S",
+            "DATA_DEFAULT: 0 != NULL"
+        )),
+        FixKind::DataDefault
+    );
 }
 
 #[test]
 fn detect_fix_kind_comments() {
-    assert_eq!(detect_fix_kind(&disc("DIFFERENT", "COMMENTS", "T", "C", TGT, "S", "COMMENTS: Foo != Bar")), FixKind::Comments);
+    assert_eq!(
+        detect_fix_kind(&disc(
+            "DIFFERENT",
+            "COMMENTS",
+            "T",
+            "C",
+            TGT,
+            "S",
+            "COMMENTS: Foo != Bar"
+        )),
+        FixKind::Comments
+    );
 }
 
 #[test]
 fn detect_fix_kind_index_name() {
-    assert_eq!(detect_fix_kind(&disc("DIFFERENT", "INDEX_NAME", "T", "C", TGT, "S", "INDEX_NAME: IDX_A != IDX_B")), FixKind::IndexName);
+    assert_eq!(
+        detect_fix_kind(&disc(
+            "DIFFERENT",
+            "INDEX_NAME",
+            "T",
+            "C",
+            TGT,
+            "S",
+            "INDEX_NAME: IDX_A != IDX_B"
+        )),
+        FixKind::IndexName
+    );
 }
 
 #[test]
 fn detect_fix_kind_data_length() {
-    assert_eq!(detect_fix_kind(&disc("DIFFERENT", "DATA_LENGTH", "T", "C", TGT, "S", "VARCHAR2(50) != VARCHAR2(100)")), FixKind::DataLength);
+    assert_eq!(
+        detect_fix_kind(&disc(
+            "DIFFERENT",
+            "DATA_LENGTH",
+            "T",
+            "C",
+            TGT,
+            "S",
+            "VARCHAR2(50) != VARCHAR2(100)"
+        )),
+        FixKind::DataLength
+    );
 }
 
 #[test]
 fn detect_fix_kind_unsupported() {
-    assert_eq!(detect_fix_kind(&disc("DIFFERENT", "UNKNOWN", "T", "C", TGT, "S", "something weird")), FixKind::Unsupported);
+    assert_eq!(
+        detect_fix_kind(&disc(
+            "DIFFERENT",
+            "UNKNOWN",
+            "T",
+            "C",
+            TGT,
+            "S",
+            "something weird"
+        )),
+        FixKind::Unsupported
+    );
 }
 
 // ── resolve_target_server ─────────────────────────────────────────
@@ -142,14 +225,29 @@ fn resolve_target_server_non_reference() {
 
 #[test]
 fn resolve_target_server_reference_with_missing() {
-    let d = disc("MISSING", "COLUMN", "T", "C", REF, "REF_SRV",
-        "Column foo found in server TGT but not in reference server REF");
+    let d = disc(
+        "MISSING",
+        "COLUMN",
+        "T",
+        "C",
+        REF,
+        "REF_SRV",
+        "Column foo found in server TGT but not in reference server REF",
+    );
     assert_eq!(resolve_target_server(&d, REF, &names()), Some(TGT));
 }
 
 #[test]
 fn resolve_target_server_reference_with_different_returns_none() {
-    let d = disc("DIFFERENT", "DATA_TYPE", "T", "C", REF, "REF_SRV", "DATA_TYPE: A != B");
+    let d = disc(
+        "DIFFERENT",
+        "DATA_TYPE",
+        "T",
+        "C",
+        REF,
+        "REF_SRV",
+        "DATA_TYPE: A != B",
+    );
     assert_eq!(resolve_target_server(&d, REF, &names()), None);
 }
 
@@ -201,7 +299,10 @@ fn build_create_table_block_produces_idempotent_plsql() {
     let block = build_create_table_block("ORDERS", ddl).unwrap();
     assert!(block.contains("'ORDERS'"), "block: {block}");
     assert!(block.contains("USER_TABLES"), "block: {block}");
-    assert!(block.contains("IF v_table_count = 0 THEN"), "block: {block}");
+    assert!(
+        block.contains("IF v_table_count = 0 THEN"),
+        "block: {block}"
+    );
     assert!(block.contains("EXECUTE IMMEDIATE"), "block: {block}");
 }
 
@@ -236,7 +337,10 @@ fn build_add_column_with_comment_appends_comment_block() {
 
 #[test]
 fn build_add_column_no_data_type_returns_none() {
-    let info = ColumnInfo { data_type: None, ..Default::default() };
+    let info = ColumnInfo {
+        data_type: None,
+        ..Default::default()
+    };
     assert!(build_add_column_block("T", "C", &info).is_none());
 }
 
@@ -255,7 +359,10 @@ fn build_modify_type_block_checks_type_before_modify() {
 
 #[test]
 fn build_default_block_with_default_uses_expr() {
-    let info = ColumnInfo { data_default: Some("SYSDATE".to_string()), ..col_typed("DATE") };
+    let info = ColumnInfo {
+        data_default: Some("SYSDATE".to_string()),
+        ..col_typed("DATE")
+    };
     let block = build_default_block("T", "C", &info).unwrap();
     assert!(block.contains("DEFAULT SYSDATE"), "block: {block}");
 }
@@ -270,7 +377,10 @@ fn build_default_block_without_default_uses_null() {
 
 #[test]
 fn build_comment_block_contains_comment_sql() {
-    let info = ColumnInfo { comments: Some("The primary key".to_string()), ..col_typed("NUMBER") };
+    let info = ColumnInfo {
+        comments: Some("The primary key".to_string()),
+        ..col_typed("NUMBER")
+    };
     let block = build_comment_block("T", "C", &info).unwrap();
     assert!(block.contains("COMMENT ON COLUMN"), "block: {block}");
     assert!(block.contains("The primary key"), "block: {block}");
@@ -281,7 +391,15 @@ fn build_comment_block_contains_comment_sql() {
 #[test]
 fn generate_fix_empty_selection_returns_err() {
     let servers = make_servers(REF, "T", "C", col_typed("NUMBER"));
-    let result = generate_fix_script(&[], &HashSet::new(), &servers, &HashMap::new(), REF, &names(), &HashMap::new());
+    let result = generate_fix_script(
+        &[],
+        &HashSet::new(),
+        &servers,
+        &HashMap::new(),
+        REF,
+        &names(),
+        &HashMap::new(),
+    );
     assert!(result.is_err());
 }
 
@@ -296,11 +414,29 @@ fn generate_fix_missing_column_produces_add_statement() {
     servers.insert(TGT, tgt_tables);
 
     let discs = vec![disc(
-        "MISSING", "COLUMN", "T", "COL1", TGT, "TGT",
+        "MISSING",
+        "COLUMN",
+        "T",
+        "COL1",
+        TGT,
+        "TGT",
         "Column found in reference server REF but not in server TGT",
     )];
-    let result = generate_fix_script(&discs, &ids(&[0]), &servers, &HashMap::new(), REF, &names(), &HashMap::new()).unwrap();
-    assert!(result.script.contains("ALTER TABLE"), "script: {}", result.script);
+    let result = generate_fix_script(
+        &discs,
+        &ids(&[0]),
+        &servers,
+        &HashMap::new(),
+        REF,
+        &names(),
+        &HashMap::new(),
+    )
+    .unwrap();
+    assert!(
+        result.script.contains("ALTER TABLE"),
+        "script: {}",
+        result.script
+    );
     assert!(result.script.contains("ADD"), "script: {}", result.script);
     assert_eq!(result.generated_count, 1);
     assert_eq!(result.skipped_count, 0);
@@ -309,7 +445,10 @@ fn generate_fix_missing_column_produces_add_statement() {
 #[test]
 fn generate_fix_data_type_produces_modify_statement() {
     let ref_col = col_typed("NUMBER");
-    let tgt_col = ColumnInfo { data_type: Some("VARCHAR2".to_string()), ..Default::default() };
+    let tgt_col = ColumnInfo {
+        data_type: Some("VARCHAR2".to_string()),
+        ..Default::default()
+    };
     let mut servers = make_servers(REF, "T", "C", ref_col);
     let mut tgt_cols: TableColumns = HashMap::new();
     tgt_cols.insert("C".to_string(), tgt_col);
@@ -317,9 +456,30 @@ fn generate_fix_data_type_produces_modify_statement() {
     tgt_tables.insert("T".to_string(), tgt_cols);
     servers.insert(TGT, tgt_tables);
 
-    let discs = vec![disc("DIFFERENT", "DATA_TYPE", "T", "C", TGT, "TGT", "DATA_TYPE: NUMBER != VARCHAR2")];
-    let result = generate_fix_script(&discs, &ids(&[0]), &servers, &HashMap::new(), REF, &names(), &HashMap::new()).unwrap();
-    assert!(result.script.contains("MODIFY"), "script: {}", result.script);
+    let discs = vec![disc(
+        "DIFFERENT",
+        "DATA_TYPE",
+        "T",
+        "C",
+        TGT,
+        "TGT",
+        "DATA_TYPE: NUMBER != VARCHAR2",
+    )];
+    let result = generate_fix_script(
+        &discs,
+        &ids(&[0]),
+        &servers,
+        &HashMap::new(),
+        REF,
+        &names(),
+        &HashMap::new(),
+    )
+    .unwrap();
+    assert!(
+        result.script.contains("MODIFY"),
+        "script: {}",
+        result.script
+    );
     assert_eq!(result.generated_count, 1);
 }
 
@@ -328,16 +488,40 @@ fn generate_fix_column_name_discrepancy_is_skipped() {
     let mut servers: ServersData = HashMap::new();
     servers.insert(REF, HashMap::new());
 
-    let discs = vec![disc("DIFFERENT", "COLUMN_NAME", "T", "C", TGT, "TGT", "COLUMN_NAME: OLD != NEW")];
-    let result = generate_fix_script(&discs, &ids(&[0]), &servers, &HashMap::new(), REF, &names(), &HashMap::new()).unwrap();
+    let discs = vec![disc(
+        "DIFFERENT",
+        "COLUMN_NAME",
+        "T",
+        "C",
+        TGT,
+        "TGT",
+        "COLUMN_NAME: OLD != NEW",
+    )];
+    let result = generate_fix_script(
+        &discs,
+        &ids(&[0]),
+        &servers,
+        &HashMap::new(),
+        REF,
+        &names(),
+        &HashMap::new(),
+    )
+    .unwrap();
     assert_eq!(result.skipped_count, 1);
-    assert!(result.script.contains("-- Skipped"), "script: {}", result.script);
+    assert!(
+        result.script.contains("-- Skipped"),
+        "script: {}",
+        result.script
+    );
 }
 
 #[test]
 fn generate_fix_deduplicates_identical_discrepancies() {
     let ref_col = col_typed("NUMBER");
-    let tgt_col = ColumnInfo { data_type: Some("VARCHAR2".to_string()), ..Default::default() };
+    let tgt_col = ColumnInfo {
+        data_type: Some("VARCHAR2".to_string()),
+        ..Default::default()
+    };
     let mut servers = make_servers(REF, "T", "C", ref_col);
     let mut tgt_cols: TableColumns = HashMap::new();
     tgt_cols.insert("C".to_string(), tgt_col);
@@ -346,9 +530,38 @@ fn generate_fix_deduplicates_identical_discrepancies() {
     servers.insert(TGT, tgt_tables);
 
     let discs = vec![
-        disc("DIFFERENT", "DATA_TYPE", "T", "C", TGT, "TGT", "DATA_TYPE: NUMBER != VARCHAR2"),
-        disc("DIFFERENT", "DATA_TYPE", "T", "C", TGT, "TGT", "DATA_TYPE: NUMBER != VARCHAR2"),
+        disc(
+            "DIFFERENT",
+            "DATA_TYPE",
+            "T",
+            "C",
+            TGT,
+            "TGT",
+            "DATA_TYPE: NUMBER != VARCHAR2",
+        ),
+        disc(
+            "DIFFERENT",
+            "DATA_TYPE",
+            "T",
+            "C",
+            TGT,
+            "TGT",
+            "DATA_TYPE: NUMBER != VARCHAR2",
+        ),
     ];
-    let result = generate_fix_script(&discs, &ids(&[0, 1]), &servers, &HashMap::new(), REF, &names(), &HashMap::new()).unwrap();
-    assert_eq!(result.generated_count, 1, "dedup should collapse identical blocks; script: {}", result.script);
+    let result = generate_fix_script(
+        &discs,
+        &ids(&[0, 1]),
+        &servers,
+        &HashMap::new(),
+        REF,
+        &names(),
+        &HashMap::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        result.generated_count, 1,
+        "dedup should collapse identical blocks; script: {}",
+        result.script
+    );
 }

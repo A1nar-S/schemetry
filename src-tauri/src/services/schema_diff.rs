@@ -8,8 +8,8 @@ use crate::models::{
     TableFilterRule,
 };
 use crate::repositories::db_repository::DbRepository;
-use crate::services::cancel;
 use crate::repositories::oracle_repository::configure_client_lib_dir;
+use crate::services::cancel;
 
 pub struct SchemaDiffService {
     repo: Arc<dyn DbRepository>,

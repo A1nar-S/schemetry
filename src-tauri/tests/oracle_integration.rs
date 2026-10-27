@@ -78,8 +78,11 @@ fn multi_server_query_execution() {
     let query_svc = QueryService::new(Arc::new(DbOracleRepository::new()));
     let connections = vec![common::source_connection(), common::target_connection()];
 
-    let results =
-        query_svc.run_query_on_servers(&connections, "SELECT COUNT(*) AS CNT FROM DEPARTMENTS", false);
+    let results = query_svc.run_query_on_servers(
+        &connections,
+        "SELECT COUNT(*) AS CNT FROM DEPARTMENTS",
+        false,
+    );
 
     assert_eq!(results.len(), 2);
     for result in &results {
@@ -90,7 +93,12 @@ fn multi_server_query_execution() {
             result.error
         );
         assert_eq!(result.columns, vec!["CNT".to_string()]);
-        assert_eq!(result.rows.len(), 1, "expected exactly one row from {}", result.server_name);
+        assert_eq!(
+            result.rows.len(),
+            1,
+            "expected exactly one row from {}",
+            result.server_name
+        );
         assert_eq!(
             result.rows[0][0].as_deref(),
             Some("2"),
@@ -127,9 +135,16 @@ fn schema_diff_and_idempotent_fix_execution() {
     let (servers, errors) = diff_svc.fetch_from_connections(&[source.clone(), target.clone()], &[]);
     assert!(errors.is_empty(), "fetch errors: {errors:?}");
 
-    let discrepancies =
-        compare_tables_across_servers(&servers, &server_names, common::SOURCE_ID, true, true, true, true)
-            .expect("compare failed");
+    let discrepancies = compare_tables_across_servers(
+        &servers,
+        &server_names,
+        common::SOURCE_ID,
+        true,
+        true,
+        true,
+        true,
+    )
+    .expect("compare failed");
 
     let has = |diff: &str, element: &str, table: &str, column: &str| {
         discrepancies.iter().any(|d| {
@@ -186,7 +201,10 @@ fn schema_diff_and_idempotent_fix_execution() {
     let target_db = common::raw_connect(&target);
     let executed_first =
         common::execute_script(&target_db, &fix.script).expect("first fix execution failed");
-    assert!(executed_first > 0, "expected at least one statement to execute");
+    assert!(
+        executed_first > 0,
+        "expected at least one statement to execute"
+    );
 
     let expected_resolved = [
         ("MISSING", "TABLE", "AUDIT_LOG", ""),
@@ -196,10 +214,20 @@ fn schema_diff_and_idempotent_fix_execution() {
 
     let (servers_after, errors_after) =
         diff_svc.fetch_from_connections(&[source.clone(), target.clone()], &[]);
-    assert!(errors_after.is_empty(), "fetch errors after fix: {errors_after:?}");
-    let discrepancies_after =
-        compare_tables_across_servers(&servers_after, &server_names, common::SOURCE_ID, true, true, true, true)
-            .expect("compare after fix failed");
+    assert!(
+        errors_after.is_empty(),
+        "fetch errors after fix: {errors_after:?}"
+    );
+    let discrepancies_after = compare_tables_across_servers(
+        &servers_after,
+        &server_names,
+        common::SOURCE_ID,
+        true,
+        true,
+        true,
+        true,
+    )
+    .expect("compare after fix failed");
 
     for (diff, element, table, column) in expected_resolved {
         assert!(
@@ -213,15 +241,25 @@ fn schema_diff_and_idempotent_fix_execution() {
 
     // Idempotency: re-running the identical script must succeed and change nothing -
     // every generated block checks USER_TABLES/USER_TAB_COLUMNS before acting.
-    let executed_second =
-        common::execute_script(&target_db, &fix.script).expect("second (idempotent) fix execution failed");
+    let executed_second = common::execute_script(&target_db, &fix.script)
+        .expect("second (idempotent) fix execution failed");
     assert!(executed_second > 0);
 
     let (servers_final, errors_final) = diff_svc.fetch_from_connections(&[source, target], &[]);
-    assert!(errors_final.is_empty(), "fetch errors after second run: {errors_final:?}");
-    let discrepancies_final =
-        compare_tables_across_servers(&servers_final, &server_names, common::SOURCE_ID, true, true, true, true)
-            .expect("compare after second fix run failed");
+    assert!(
+        errors_final.is_empty(),
+        "fetch errors after second run: {errors_final:?}"
+    );
+    let discrepancies_final = compare_tables_across_servers(
+        &servers_final,
+        &server_names,
+        common::SOURCE_ID,
+        true,
+        true,
+        true,
+        true,
+    )
+    .expect("compare after second fix run failed");
 
     assert_eq!(
         discrepancies_after.len(),
@@ -269,7 +307,10 @@ fn lob_cells_are_read_from_the_kept_result() {
         svc.read_lob_cell(r.result_id, row, col, max_bytes, max_chars)
             .expect("read_lob_cell failed")
     };
-    assert_eq!(lob_text(read(0, 2, usize::MAX, usize::MAX)).as_deref(), Some("Price: 5 € — ✓ done"));
+    assert_eq!(
+        lob_text(read(0, 2, usize::MAX, usize::MAX)).as_deref(),
+        Some("Price: 5 € — ✓ done")
+    );
     assert_eq!(lob_bytes(read(0, 3, usize::MAX, usize::MAX)), PNG_BYTES);
     assert_eq!(lob_text(read(1, 2, usize::MAX, usize::MAX)), None);
     assert!(lob_bytes(read(1, 3, usize::MAX, usize::MAX)).is_empty());
@@ -278,13 +319,21 @@ fn lob_cells_are_read_from_the_kept_result() {
     let expected = common::large_lob_content();
     let capped_text = lob_text(read(2, 2, usize::MAX, 1_500_000)).expect("row 3 body is not NULL");
     assert_eq!(capped_text.as_bytes(), &expected[..1_500_000]);
-    assert_eq!(lob_bytes(read(2, 3, 1_500_000, usize::MAX)), expected[..1_500_000]);
+    assert_eq!(
+        lob_bytes(read(2, 3, 1_500_000, usize::MAX)),
+        expected[..1_500_000]
+    );
 
     for col in [2, 3] {
         let mut full = Vec::new();
-        let size = svc.copy_lob_cell(r.result_id, 2, col, &mut full).expect("copy_lob_cell failed");
+        let size = svc
+            .copy_lob_cell(r.result_id, 2, col, &mut full)
+            .expect("copy_lob_cell failed");
         assert_eq!(size, 3_000_000);
-        assert!(full == expected, "column {col}: copied content differs from the seeded row");
+        assert!(
+            full == expected,
+            "column {col}: copied content differs from the seeded row"
+        );
     }
 }
 
@@ -300,11 +349,18 @@ fn lob_cells_materialize_inline_when_requested() {
     assert_eq!(r.rows[0][2].as_deref(), Some("Price: 5 € — ✓ done"));
     assert_eq!(r.rows[0][3].as_deref(), Some("89504E470D0A1A0A00000000"));
     // Capped at 1,000,000 chars; the all-digit BLOB displays as text.
-    assert_eq!(r.rows[2][2].as_ref().map(|s| s.chars().count()), Some(1_000_000));
-    assert_eq!(r.rows[2][3].as_ref().map(|s| s.chars().count()), Some(1_000_000));
+    assert_eq!(
+        r.rows[2][2].as_ref().map(|s| s.chars().count()),
+        Some(1_000_000)
+    );
+    assert_eq!(
+        r.rows[2][3].as_ref().map(|s| s.chars().count()),
+        Some(1_000_000)
+    );
 
     let mut full = Vec::new();
-    svc.copy_lob_cell(r.result_id, 2, 3, &mut full).expect("copy_lob_cell failed");
+    svc.copy_lob_cell(r.result_id, 2, 3, &mut full)
+        .expect("copy_lob_cell failed");
     assert_eq!(full.len(), 3_000_000);
 }
 
@@ -317,7 +373,8 @@ fn lob_result_is_a_snapshot_released_by_the_next_run() {
     let target = common::target_connection();
     let db = common::raw_connect(&target);
 
-    db.execute("DELETE FROM LOB_DOCUMENTS WHERE DOC_ID = 900", &[]).unwrap();
+    db.execute("DELETE FROM LOB_DOCUMENTS WHERE DOC_ID = 900", &[])
+        .unwrap();
     db.execute(
         "INSERT INTO LOB_DOCUMENTS (DOC_ID, TITLE, BODY, PAYLOAD) \
          VALUES (900, 'snapshot', TO_CLOB('before'), HEXTORAW('0102'))",
@@ -332,7 +389,11 @@ fn lob_result_is_a_snapshot_released_by_the_next_run() {
         false,
     );
     let result_id = results[0].result_id;
-    assert!(results[0].error.is_none(), "unexpected query error: {:?}", results[0].error);
+    assert!(
+        results[0].error.is_none(),
+        "unexpected query error: {:?}",
+        results[0].error
+    );
 
     db.execute(
         "UPDATE LOB_DOCUMENTS SET BODY = TO_CLOB('after'), PAYLOAD = HEXTORAW('0304') WHERE DOC_ID = 900",
@@ -341,18 +402,24 @@ fn lob_result_is_a_snapshot_released_by_the_next_run() {
     .unwrap();
     db.commit().unwrap();
 
-    let body = svc.read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX).unwrap();
-    let payload = svc.read_lob_cell(result_id, 0, 1, usize::MAX, usize::MAX).unwrap();
+    let body = svc
+        .read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX)
+        .unwrap();
+    let payload = svc
+        .read_lob_cell(result_id, 0, 1, usize::MAX, usize::MAX)
+        .unwrap();
     assert_eq!(lob_text(body).as_deref(), Some("before"));
     assert_eq!(lob_bytes(payload), [0x01, 0x02]);
 
     svc.run_query_on_servers(&[target], "SELECT 1 AS ONE FROM dual", false);
     assert!(
-        svc.read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX).is_err(),
+        svc.read_lob_cell(result_id, 0, 0, usize::MAX, usize::MAX)
+            .is_err(),
         "the previous result should be released by the next run"
     );
 
-    db.execute("DELETE FROM LOB_DOCUMENTS WHERE DOC_ID = 900", &[]).unwrap();
+    db.execute("DELETE FROM LOB_DOCUMENTS WHERE DOC_ID = 900", &[])
+        .unwrap();
     db.commit().unwrap();
 }
 
@@ -362,12 +429,21 @@ fn completion_metadata_lists_relations_and_columns() {
     common::init_oracle_client();
     let svc = QueryService::new(Arc::new(DbOracleRepository::new()));
 
-    let meta = svc.completion_metadata(&common::source_connection()).expect("completion_metadata failed");
+    let meta = svc
+        .completion_metadata(&common::source_connection())
+        .expect("completion_metadata failed");
     assert_eq!(meta.schema, "SCHEMETRY");
-    let departments = meta.relations.iter().find(|r| r.name == "DEPARTMENTS").expect("DEPARTMENTS missing");
+    let departments = meta
+        .relations
+        .iter()
+        .find(|r| r.name == "DEPARTMENTS")
+        .expect("DEPARTMENTS missing");
     assert_eq!(departments.kind, "TABLE");
-    let columns: Vec<(&str, &str)> =
-        departments.columns.iter().map(|c| (c.name.as_str(), c.data_type.as_str())).collect();
+    let columns: Vec<(&str, &str)> = departments
+        .columns
+        .iter()
+        .map(|c| (c.name.as_str(), c.data_type.as_str()))
+        .collect();
     assert_eq!(columns, [("DEPT_ID", "NUMBER"), ("DEPT_NAME", "VARCHAR2")]);
     assert!(meta.relations.iter().any(|r| r.name == "LOB_SAMPLES"));
 }
@@ -393,8 +469,15 @@ fn running_query_can_be_cancelled() {
     stop.join().unwrap();
 
     assert_eq!(results[0].error.as_deref(), Some("Cancelled by user."));
-    assert!(started.elapsed().as_secs() < 30, "cancel took {:?}", started.elapsed());
+    assert!(
+        started.elapsed().as_secs() < 30,
+        "cancel took {:?}",
+        started.elapsed()
+    );
     assert!(task.is_cancelled());
     drop(task);
-    assert!(!cancel::cancel_task(), "task should be cleared once its guard drops");
+    assert!(
+        !cancel::cancel_task(),
+        "task should be cleared once its guard drops"
+    );
 }

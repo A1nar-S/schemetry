@@ -13,7 +13,10 @@ pub struct SaveConnectionRequest {
 
 #[tauri::command]
 pub fn get_connections(state: State<AppState>) -> Result<Vec<ConnectionRecord>, String> {
-    state.catalog.get_all_connections().map_err(|e| e.to_string())
+    state
+        .catalog
+        .get_all_connections()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -22,19 +25,31 @@ pub fn save_connection(
     payload: SaveConnectionRequest,
 ) -> Result<(), String> {
     match payload.editing_id {
-        None => state.catalog.insert_connection(&payload.connection).map_err(|e| e.to_string()),
-        Some(id) => state.catalog.update_connection(id, &payload.connection).map_err(|e| e.to_string()),
+        None => state
+            .catalog
+            .insert_connection(&payload.connection)
+            .map_err(|e| e.to_string()),
+        Some(id) => state
+            .catalog
+            .update_connection(id, &payload.connection)
+            .map_err(|e| e.to_string()),
     }
 }
 
 #[tauri::command]
 pub fn delete_connection(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.catalog.delete_connection(id).map_err(|e| e.to_string())
+    state
+        .catalog
+        .delete_connection(id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_all_connections(state: State<AppState>) -> Result<(), String> {
-    state.catalog.delete_all_connections().map_err(|e| e.to_string())
+    state
+        .catalog
+        .delete_all_connections()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -45,7 +60,9 @@ pub async fn test_connection(
     let diff_svc = std::sync::Arc::clone(&state.diff_svc);
     tokio::task::spawn_blocking(move || {
         let task = begin_task();
-        let result = diff_svc.test_connection(&connection).map_err(|e| e.to_string());
+        let result = diff_svc
+            .test_connection(&connection)
+            .map_err(|e| e.to_string());
         task.check()?;
         result
     })
@@ -57,7 +74,10 @@ pub async fn test_connection(
 /// are overwritten. Returns the number of records imported.
 #[tauri::command]
 pub fn import_connections(state: State<AppState>, json: String) -> Result<usize, String> {
-    state.catalog.import_from_json(&json).map_err(|e| e.to_string())
+    state
+        .catalog
+        .import_from_json(&json)
+        .map_err(|e| e.to_string())
 }
 
 /// Export-only view of a connection: mirrors `ConnectionRecord` but omits the local
@@ -78,7 +98,10 @@ struct ExportedConnection<'a> {
 /// Export all connections as a JSON file at the given path (passwords included, `id` omitted).
 #[tauri::command]
 pub fn export_connections(state: State<AppState>, path: String) -> Result<usize, String> {
-    let conns = state.catalog.get_all_connections().map_err(|e| e.to_string())?;
+    let conns = state
+        .catalog
+        .get_all_connections()
+        .map_err(|e| e.to_string())?;
     let exported: Vec<ExportedConnection> = conns
         .iter()
         .map(|c| ExportedConnection {
@@ -106,7 +129,9 @@ pub fn open_in_plsql_developer(connection: ConnectionRecord) -> Result<(), Strin
     use std::path::Path;
 
     if connection.db_type != DbType::Oracle {
-        return Err("PL/SQL Developer integration is only available for Oracle connections.".to_string());
+        return Err(
+            "PL/SQL Developer integration is only available for Oracle connections.".to_string(),
+        );
     }
 
     let exe = crate::services::settings::load_plsql_dev_path()
@@ -194,11 +219,7 @@ fn logon_environment() -> Option<Vec<(String, String)>> {
         }
 
         DestroyEnvironmentBlock(block);
-        if pairs.is_empty() {
-            None
-        } else {
-            Some(pairs)
-        }
+        if pairs.is_empty() { None } else { Some(pairs) }
     }
 }
 
@@ -224,7 +245,12 @@ fn find_plsql_dev_exe() -> Option<String> {
             Err(_) => continue,
         };
         for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().to_lowercase().starts_with("plsql developer") {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .to_lowercase()
+                .starts_with("plsql developer")
+            {
                 let exe = entry.path().join("plsqldev.exe");
                 if exe.is_file() {
                     return Some(exe.to_string_lossy().into_owned());
