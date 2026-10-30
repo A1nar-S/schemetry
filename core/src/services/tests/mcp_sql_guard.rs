@@ -235,8 +235,68 @@ fn functions_that_read_outside_the_allowlist_are_rejected() {
     );
     rejected("SELECT UTL_HTTP.request('http://x') FROM DUAL", ORA);
     rejected("SELECT pg_sleep(100)", PG);
-    // Reading a CLOB is normal.
-    ok("SELECT DBMS_LOB.SUBSTR(body, 100, 1) FROM docs", ORA);
+    // DBMS_LOB can read BFILEs and temporary LOBs outside the table allowlist.
+    rejected("SELECT DBMS_LOB.SUBSTR(body, 100, 1) FROM docs", ORA);
+}
+
+#[test]
+fn quoted_function_names_do_not_bypass_the_blocklist() {
+    rejected(
+        r#"SELECT "query_to_xml"('select * from secret', true, false, '') FROM allowed_t"#,
+        PG,
+    );
+    rejected(r#"SELECT "pg_read_file"('/etc/passwd') FROM allowed_t"#, PG);
+    rejected(
+        r#"SELECT pg_catalog."pg_read_file"('/etc/passwd') FROM allowed_t"#,
+        PG,
+    );
+    rejected(r#"SELECT "PG_Read_File"('/etc/passwd') FROM allowed_t"#, PG);
+    rejected(
+        r#"SELECT "DBMS_XMLGEN".getxml('select * from hr.salaries') FROM allowed_t"#,
+        ORA,
+    );
+    rejected(
+        r#"SELECT sys."DBMS_XMLGEN".getxml('x') FROM allowed_t"#,
+        ORA,
+    );
+}
+
+#[test]
+fn oracle_uri_xml_lob_metadata_and_context_functions_are_rejected() {
+    for sql in [
+        "SELECT DBURITYPE('/HR/SALARIES').getclob() FROM allowed_t",
+        "SELECT HTTPURITYPE('http://x').getclob() FROM allowed_t",
+        "SELECT XDBURITYPE('/x').getclob() FROM allowed_t",
+        "SELECT XMLTYPE('<a/>') FROM allowed_t",
+        "SELECT DBMS_XMLQUERY.getxml('select 1') FROM allowed_t",
+        "SELECT DBMS_METADATA.get_ddl('TABLE', 'T') FROM allowed_t",
+        "SELECT SYS_CONTEXT('USERENV', 'SESSION_USER') FROM allowed_t",
+        r#"SELECT "DBURITYPE"('/HR/SALARIES').getclob() FROM allowed_t"#,
+        r#"SELECT "dburitype"('/HR/SALARIES').getclob() FROM allowed_t"#,
+    ] {
+        rejected(sql, ORA);
+    }
+}
+
+#[test]
+fn unicode_escaped_identifiers_are_rejected() {
+    // U&"\0071uery_to_xml" is "query_to_xml" once the engine decodes it.
+    rejected(
+        r#"SELECT U&"\0071uery_to_xml"('select * from secret', true, false, '') FROM allowed_t"#,
+        PG,
+    );
+    rejected(
+        r#"SELECT u&"\0071uery_to_xml"('x', true, false, '') FROM t"#,
+        PG,
+    );
+    rejected("SELECT U&'\\0041' FROM allowed_t", PG);
+}
+
+#[test]
+fn quoted_names_that_are_not_forbidden_still_pass() {
+    ok(r#"SELECT "Name", "order" FROM "Orders""#, PG);
+    // A quoted keyword is just an identifier.
+    ok(r#"SELECT "INSERT" FROM orders"#, ORA);
 }
 
 #[test]
