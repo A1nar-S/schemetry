@@ -246,13 +246,19 @@ fn quoted_function_names_do_not_bypass_the_blocklist() {
         PG,
     );
     rejected(r#"SELECT "pg_read_file"('/etc/passwd') FROM allowed_t"#, PG);
-    rejected(r#"SELECT pg_catalog."pg_read_file"('/etc/passwd') FROM allowed_t"#, PG);
+    rejected(
+        r#"SELECT pg_catalog."pg_read_file"('/etc/passwd') FROM allowed_t"#,
+        PG,
+    );
     rejected(r#"SELECT "PG_Read_File"('/etc/passwd') FROM allowed_t"#, PG);
     rejected(
         r#"SELECT "DBMS_XMLGEN".getxml('select * from hr.salaries') FROM allowed_t"#,
         ORA,
     );
-    rejected(r#"SELECT sys."DBMS_XMLGEN".getxml('x') FROM allowed_t"#, ORA);
+    rejected(
+        r#"SELECT sys."DBMS_XMLGEN".getxml('x') FROM allowed_t"#,
+        ORA,
+    );
 }
 
 #[test]
@@ -279,7 +285,10 @@ fn unicode_escaped_identifiers_are_rejected() {
         r#"SELECT U&"\0071uery_to_xml"('select * from secret', true, false, '') FROM allowed_t"#,
         PG,
     );
-    rejected(r#"SELECT u&"\0071uery_to_xml"('x', true, false, '') FROM t"#, PG);
+    rejected(
+        r#"SELECT u&"\0071uery_to_xml"('x', true, false, '') FROM t"#,
+        PG,
+    );
     rejected("SELECT U&'\\0041' FROM allowed_t", PG);
 }
 
