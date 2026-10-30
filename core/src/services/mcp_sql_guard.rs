@@ -33,6 +33,14 @@ const FORBIDDEN_FUNCTIONS: &[&str] = &[
     "SCHEMA_TO_XML",
     "DATABASE_TO_XML",
     "DBMS_XMLGEN",
+    "DBMS_XMLQUERY",
+    "XMLTYPE",
+    "DBURITYPE",
+    "HTTPURITYPE",
+    "XDBURITYPE",
+    "DBMS_LOB",
+    "DBMS_METADATA",
+    "SYS_CONTEXT",
     "DBMS_SQL",
     "DBMS_SCHEDULER",
     "DBMS_JOB",
@@ -188,6 +196,14 @@ fn tokenize(sql: &str, db_type: DbType) -> Result<Vec<Token>, String> {
             {
                 return Err("Escape/alternative-quoted string literals are not allowed.".into());
             }
+            // Postgres U&"…" identifiers decode \XXXX escapes, which would hide a function
+            // name from the blocklist.
+            if word.eq_ignore_ascii_case("U")
+                && chars.get(i) == Some(&'&')
+                && matches!(chars.get(i + 1), Some('"') | Some('\''))
+            {
+                return Err("Unicode-escape (U&) literals and identifiers are not allowed.".into());
+            }
             tokens.push(Token::Word(word));
         } else if c.is_ascii_digit() {
             while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '.') {
@@ -250,6 +266,12 @@ fn cte_names(tokens: &[Token], db_type: DbType) -> Vec<String> {
     names
 }
 
+fn is_forbidden_function(name: &str) -> bool {
+    FORBIDDEN_FUNCTIONS
+        .iter()
+        .any(|f| name.eq_ignore_ascii_case(f))
+}
+
 /// Validates `raw` as a single read-only SELECT and lists the tables it reads.
 pub fn analyze(raw: &str, db_type: DbType) -> Result<AnalyzedSql, String> {
     if raw.len() > MAX_SQL_LEN {
@@ -274,19 +296,25 @@ pub fn analyze(raw: &str, db_type: DbType) -> Result<AnalyzedSql, String> {
     }
 
     for token in body {
-        if let Token::Word(word) = token {
-            if FORBIDDEN_WORDS.iter().any(|w| word.eq_ignore_ascii_case(w)) {
-                return Err(format!(
-                    "The keyword {} is not allowed.",
-                    word.to_uppercase()
-                ));
+        match token {
+            Token::Word(word) => {
+                if FORBIDDEN_WORDS.iter().any(|w| word.eq_ignore_ascii_case(w)) {
+                    return Err(format!(
+                        "The keyword {} is not allowed.",
+                        word.to_uppercase()
+                    ));
+                }
+                if is_forbidden_function(word) {
+                    return Err(format!("{} is not allowed.", word.to_uppercase()));
+                }
             }
-            if FORBIDDEN_FUNCTIONS
-                .iter()
-                .any(|w| word.eq_ignore_ascii_case(w))
-            {
-                return Err(format!("{} is not allowed.", word.to_uppercase()));
+            // Quoted names resolve to the same functions as unquoted ones ("pg_read_file"(…),
+            // "DBMS_XMLGEN".getxml(…)), so they are checked too, in any case. Quoted
+            // identifiers stay exempt from FORBIDDEN_WORDS: those only matter as keywords.
+            Token::Quoted(name) if is_forbidden_function(name) => {
+                return Err(format!("{} is not allowed.", name.to_uppercase()));
             }
+            _ => {}
         }
     }
 
