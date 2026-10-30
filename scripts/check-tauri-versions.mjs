@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
-const cargoLock = readFileSync("src-tauri/Cargo.lock", "utf8");
+const cargoLock = readFileSync("Cargo.lock", "utf8");
 const npmLock = JSON.parse(readFileSync("package-lock.json", "utf8"));
 
 const crates = new Map();
@@ -37,7 +37,7 @@ if (failed) {
   console.error(
     "\nTauri Rust crates and npm packages must share major.minor versions " +
       "(tauri build refuses otherwise). Update the npm package, or run " +
-      "`cargo update -p <crate>` in src-tauri.",
+      "`cargo update -p <crate>` in the repo root.",
   );
   process.exit(1);
 }

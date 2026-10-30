@@ -4,6 +4,7 @@ pub mod ddl;
 pub mod filter_rules;
 pub mod folder_schema_overrides;
 pub mod history_fix;
+pub mod mcp;
 pub mod query;
 pub mod settings;
 

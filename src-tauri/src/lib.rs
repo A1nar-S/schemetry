@@ -1,53 +1,12 @@
 pub mod commands;
-pub mod logging;
-pub mod models;
-pub mod repositories;
-pub mod services;
 pub mod state;
-pub mod utils;
 
-use anyhow::{Context, Result};
+// The GUI crate reuses the shared modules under their old paths.
+pub use schemetry_core::{init, logging, models, repositories, services, utils};
+
 use std::ffi::OsString;
 
-use crate::repositories::oracle_repository::{configure_client_lib_dir, set_client_lib_dir_hint};
-use crate::state::{AppServices, AppState};
-
-pub fn init(db_override: Option<OsString>) -> Result<AppServices> {
-    utils::paths::configure_db_path(db_override)
-        .context("Failed to configure SQLite database path")?;
-
-    services::settings::init_db().context("Failed to initialize settings table")?;
-    let services = AppServices::new();
-    services
-        .catalog
-        .init_db()
-        .context("Failed to initialize connections table")?;
-    services
-        .query_history_svc
-        .init_db()
-        .context("Failed to initialize query history table")?;
-    services
-        .filter_rules_svc
-        .init_db()
-        .context("Failed to initialize table filter rules")?;
-    services
-        .history_naming_rules_svc
-        .init_db()
-        .context("Failed to initialize history naming rules")?;
-    services
-        .folder_schema_overrides_svc
-        .init_db()
-        .context("Failed to initialize schema folder overrides")?;
-
-    if let Some(dir) = services::settings::load_client_lib_dir() {
-        set_client_lib_dir_hint(&dir);
-        if let Err(err) = configure_client_lib_dir(&dir) {
-            eprintln!("Oracle client init warning ({dir}): {err}");
-        }
-    }
-
-    Ok(services)
-}
+use crate::state::AppState;
 
 pub fn run(db_override: Option<OsString>) -> anyhow::Result<()> {
     logging::install_panic_hook();
@@ -103,11 +62,17 @@ pub fn run(db_override: Option<OsString>) -> anyhow::Result<()> {
             commands::folder_schema_overrides::list_folder_schema_overrides,
             commands::folder_schema_overrides::save_folder_schema_override,
             commands::folder_schema_overrides::delete_folder_schema_override,
+            commands::mcp::list_mcp_policies,
+            commands::mcp::get_mcp_policy,
+            commands::mcp::save_mcp_policy,
+            commands::mcp::mcp_preview,
+            commands::mcp::get_mcp_settings,
+            commands::mcp::save_mcp_settings,
+            commands::mcp::test_mcp_audit_sink,
+            commands::mcp::mcp_audit_list,
+            commands::mcp::mcp_audit_verify,
+            commands::mcp::mcp_audit_export_csv,
         ])
         .run(tauri::generate_context!())?;
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "tests/bootstrap.rs"]
-mod tests;

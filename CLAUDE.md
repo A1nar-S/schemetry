@@ -24,22 +24,26 @@ npm run check
 # ESLint (TypeScript + Svelte); `npm run lint:fix` applies autofixes
 npm run lint
 
-# Run all Rust unit tests
-cd src-tauri && cargo test
+# Run all Rust unit tests (core + mcp + src-tauri, from the repo root)
+cargo test --workspace
 
 # Run a single test by name (substring match)
-cd src-tauri && cargo test test_name_here
+cargo test --workspace test_name_here
+
+# Build only the headless MCP server (no WebView/GTK needed)
+cargo build --release -p schemetry-mcp
 ```
 
-**After any change to Rust backend code, run `cargo test` and confirm all tests pass before considering the task complete.**
+**After any change to Rust backend code, run `cargo test --workspace` and confirm all tests pass before considering the task complete.**
 
 ## Tests
 
 Rust unit tests cover the core business logic. Tests live in separate files alongside their source modules using `#[path = "tests/..."]`:
 
-- `src-tauri/src/services/tests/compare.rs` — tests for `services/compare.rs` (schema comparison, `equal_ci`, `skip_index_diff`)
-- `src-tauri/src/services/tests/fix.rs` — tests for `services/fix.rs` (fix-script generation, SQL builders, `generate_fix_script`)
-- `src-tauri/src/repositories/tests/oracle_repository.rs` — tests for `repositories/oracle_repository.rs` (`clean_opt`, `fmt_type`, `make_idempotent`, `clean_sequence_ddl`)
+- `core/src/services/tests/compare.rs` — tests for `services/compare.rs` (schema comparison, `equal_ci`, `skip_index_diff`)
+- `core/src/services/tests/fix.rs` — tests for `services/fix.rs` (fix-script generation, SQL builders, `generate_fix_script`)
+- `core/src/repositories/tests/oracle_repository.rs` — tests for `repositories/oracle_repository.rs` (`clean_opt`, `fmt_type`, `make_idempotent`, `clean_sequence_ddl`)
+- `core/src/services/tests/mcp_*.rs` — MCP policy rules, SQL guard, query builder, audit hash chain (incl. real-SQLite tamper tests), audit sinks, and the gateway (policy/audit invariants) against in-memory fakes from `core/src/test_support.rs`.
 
 `repositories/postgres_repository.rs` has no dedicated unit-test file yet — its catalog-introspection/DDL-rendering logic is exercised by the Postgres integration suite below instead.
 
@@ -47,7 +51,7 @@ Private functions are accessible in test files because each `mod tests` is decla
 
 ### Integration tests (real Oracle, via Docker + Flyway)
 
-`src-tauri/tests/oracle_integration.rs` exercises compare/fix/DDL/query logic against two **real** Oracle instances instead of in-memory fixtures. `docker/docker-compose.yml` starts two `gvenzl/oracle-free` containers (`oracle-source`, `oracle-target` — host ports 1521/1522) and migrates each with Flyway from `docker/migrations/{source,target}/V1__init.sql`. The two migrations are intentionally divergent (target is missing a table, missing a column, and has a shorter `VARCHAR2`) so schema-compare has real discrepancies to find, and the generated fix script can be executed against TARGET and re-run to prove it's idempotent. `V2__lob_documents.sql` (identical on both sides) seeds a `LOB_DOCUMENTS` table for the query-view LOB tests, and `V3__lob_samples.sql` a `LOB_SAMPLES` table with one row per format the LOB viewer renders (PNG, SVG, PDF, DOCX, HTML, JSON, XML, text, binary) for checking previews by hand, e.g. `SELECT * FROM LOB_SAMPLES`. The fix test mutates TARGET, so run `docker compose down -v` before re-running the suites.
+`core/tests/oracle_integration.rs` exercises compare/fix/DDL/query logic against two **real** Oracle instances instead of in-memory fixtures. `docker/docker-compose.yml` starts two `gvenzl/oracle-free` containers (`oracle-source`, `oracle-target` — host ports 1521/1522) and migrates each with Flyway from `docker/migrations/{source,target}/V1__init.sql`. The two migrations are intentionally divergent (target is missing a table, missing a column, and has a shorter `VARCHAR2`) so schema-compare has real discrepancies to find, and the generated fix script can be executed against TARGET and re-run to prove it's idempotent. `V2__lob_documents.sql` (identical on both sides) seeds a `LOB_DOCUMENTS` table for the query-view LOB tests, and `V3__lob_samples.sql` a `LOB_SAMPLES` table with one row per format the LOB viewer renders (PNG, SVG, PDF, DOCX, HTML, JSON, XML, text, binary) for checking previews by hand, e.g. `SELECT * FROM LOB_SAMPLES`. The fix test mutates TARGET, so run `docker compose down -v` before re-running the suites.
 
 ```bash
 # Start + migrate both databases (needs Docker Desktop running)
@@ -55,7 +59,7 @@ cd docker && docker compose up -d --build
 docker compose ps   # wait for both oracle-* services to report "healthy"
 
 # Run the integration tests (separate from `cargo test` — see below)
-cd ../src-tauri && cargo test --test oracle_integration -- --ignored
+cd .. && cargo test -p schemetry-core --test oracle_integration -- --ignored
 
 # Tear down (drops the seeded data too)
 cd ../docker && docker compose down -v
@@ -65,14 +69,15 @@ These tests are `#[ignore]`d so plain `cargo test` (and CI) never depends on Doc
 
 ### Integration tests (real Postgres, via Docker + Flyway)
 
-`src-tauri/tests/postgres_integration.rs` mirrors the Oracle suite above against two real `postgres:16-alpine` containers (`postgres-source`, `postgres-target` — host ports 5432/5433), migrated by Flyway from `docker/migrations/{pg-source,pg-target}/V1__init.sql` (same three intentional discrepancies, translated to Postgres types). No native client library setup is needed here — `tokio-postgres` is a pure-Rust wire-protocol client.
+`core/tests/postgres_integration.rs` mirrors the Oracle suite above against two real `postgres:16-alpine` containers (`postgres-source`, `postgres-target` — host ports 5432/5433), migrated by Flyway from `docker/migrations/{pg-source,pg-target}/V1__init.sql` (same three intentional discrepancies, translated to Postgres types). No native client library setup is needed here — `tokio-postgres` is a pure-Rust wire-protocol client.
 
 ```bash
 # Same docker-compose file as the Oracle suite — this also starts the Postgres containers
 cd docker && docker compose up -d --build
 docker compose ps   # wait for both postgres-* services to report "healthy"
 
-cd ../src-tauri && cargo test --test postgres_integration -- --ignored
+cd .. && cargo test -p schemetry-core --test postgres_integration -- --ignored
+cargo test -p schemetry-core --test mcp_integration -- --ignored   # MCP gateway against the same Postgres containers
 ```
 
 Connection details default to the docker-compose file's ports/credentials and can be overridden with `SCHEMETRY_TEST_PG_HOST`, `SCHEMETRY_TEST_PG_SOURCE_PORT`, `SCHEMETRY_TEST_PG_TARGET_PORT`, `SCHEMETRY_TEST_PG_DATABASE`, `SCHEMETRY_TEST_PG_USER`, `SCHEMETRY_TEST_PG_PASSWORD`.
@@ -83,21 +88,31 @@ Connection details default to the docker-compose file's ports/credentials and ca
 
 ### Frontend → Backend boundary
 
-All backend calls go through `src/api.ts`, which wraps `invoke()` from `@tauri-apps/api/core`. The Rust side is in `src-tauri/src/`:
+All backend calls go through `src/api.ts`, which wraps `invoke()` from `@tauri-apps/api/core`. The Rust side is a Cargo workspace:
 
 ```
-commands/   ← thin Tauri command handlers, delegate immediately to services
-services/   ← business logic (compare, fix, query, DDL, connections, settings)
-repositories/ ← data access: Oracle/Postgres queries (dispatched by `db_type`) + SQLite CRUD
+core/        ← schemetry-core: no GUI deps; shared by the app and the MCP server
+  models.rs, state.rs (AppServices), lib.rs (init: SQLite bootstrap)
+  services/      ← business logic (compare, fix, query, DDL, connections, settings, MCP policy/audit/gateway)
+  repositories/  ← data access: Oracle/Postgres queries (dispatched by `db_type`) + SQLite CRUD
+src-tauri/   ← schemetry: the desktop app
+  commands/      ← thin Tauri command handlers, delegate immediately to services
+mcp/         ← schemetry-mcp: stdio MCP server; thin rmcp wrapper over services::mcp_gateway
 ```
 
-`AppState` (in `state.rs`) is a shared `Arc<Mutex<FetchSnapshot>>` that caches schema metadata fetched from Oracle/Postgres servers, so compare and fix operations can reuse it without re-querying.
+`src-tauri/src/lib.rs` re-exports the core modules (`crate::services::…`, `crate::models::…`), so command code uses the same paths as before.
+
+`AppState` (in `src-tauri/src/state.rs`) is a shared `Arc<Mutex<FetchSnapshot>>` plus the services; the snapshot caches schema metadata fetched from Oracle/Postgres servers, so compare and fix operations can reuse it without re-querying.
+
+### MCP server
+
+Agents connect to the separate `schemetry-mcp` process. Every tool lives in `core/src/services/mcp_gateway.rs` and follows policy check (`mcp_policy.rs`, per-connection, default deny) → work → exactly one audit entry (`mcp_audit.rs`, append-only hash chain; no update/delete path may ever be added). Raw SQL goes through `mcp_sql_guard.rs` and runs via `DbRepository::run_readonly_query` (read-only transaction, row cap, timeout); `query_table` builds SQL in `mcp_query_builder.rs`. The GUI edits policies/settings and reads the audit log through `src-tauri/src/commands/mcp.rs`. New MCP tools must go through `McpGateway::audited` and have a matching `McpTool` policy capability.
 
 Passwords are stored in the OS keychain via the `keyring` crate; connection metadata goes to SQLite.
 
 ### Frontend routing
 
-There is **no SvelteKit and no URL routing**. `App.svelte` holds an `activeView` string and renders one of six views: `QueryView`, `FixView`, `DdlView`, `HistoryFixView`, `ConnectionsView`, `SettingsView`.
+There is **no SvelteKit and no URL routing**. `App.svelte` holds an `activeView` string and renders one of seven views: `QueryView`, `FixView`, `DdlView`, `HistoryFixView`, `ConnectionsView`, `McpAuditView`, `SettingsView`.
 
 Each view has a matching store in `src/stores/` (e.g. `fixViewState.ts`) that holds all reactive state for that view. Stores use plain Svelte `writable()`.
 

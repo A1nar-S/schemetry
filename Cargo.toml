@@ -1,0 +1,12 @@
+[workspace]
+resolver = "3"
+# core: schemas, policy, audit and database access shared by both front ends (no Tauri).
+# src-tauri: the desktop app.  mcp: the headless stdio MCP server for agents.
+members = ["core", "mcp", "src-tauri"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

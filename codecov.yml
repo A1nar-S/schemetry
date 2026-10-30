@@ -14,8 +14,10 @@ flag_management:
     carryforward: true
 
 ignore:
-  - "src-tauri/tests/**"
-  - "src-tauri/src/**/tests/**"
+  - "core/tests/**"
+  - "core/src/**/tests/**"
+  - "core/src/test_support.rs"
+  - "mcp/src/tests/**"
 
 comment:
   layout: "condensed_header, diff, flags"

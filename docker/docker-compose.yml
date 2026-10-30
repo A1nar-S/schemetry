@@ -1,5 +1,5 @@
 # Two independent Oracle instances plus two independent Postgres instances, used by
-# the integration tests in `src-tauri/tests/`. Within each engine, "source" is the
+# the integration tests in `core/tests/`. Within each engine, "source" is the
 # reference schema; "target" is migrated with an intentionally divergent schema so
 # compare/fix logic has real discrepancies to find.
 #

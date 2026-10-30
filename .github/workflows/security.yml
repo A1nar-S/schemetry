@@ -22,7 +22,6 @@ jobs:
           tool: cargo-audit
       # Fails on known vulnerabilities; "unmaintained"/"unsound" advisories are reported as warnings.
       - run: cargo audit
-        working-directory: src-tauri
 
   npm-audit:
     name: npm audit

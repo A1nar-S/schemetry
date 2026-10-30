@@ -1,13 +1,34 @@
 <script lang="ts">
   import Icon from '../components/Icon.svelte';
-  import type { ConnectionRecord, DbType } from '../types';
-  import { deleteAllConnections, deleteConnection, exportConnections, importConnections, openInPlsqlDeveloper, saveConnection, testConnection } from '../api';
+  import type { ConnectionRecord, DbType, McpPolicy } from '../types';
+  import { deleteAllConnections, deleteConnection, exportConnections, importConnections, listMcpPolicies, openInPlsqlDeveloper, saveConnection, testConnection } from '../api';
   import { save } from '@tauri-apps/plugin-dialog';
   import { busy, setBusy, notify } from '../stores/notification';
   import Modal from '../components/Modal.svelte';
+  import McpPolicyModal from '../components/McpPolicyModal.svelte';
 
   export let connections: ConnectionRecord[];
   export let onReload: () => Promise<void>;
+
+  // ── MCP policies (badge per connection + editor modal) ─────────────
+  let mcpPolicies = new Map<number, McpPolicy>();
+  let mcpConn: ConnectionRecord | null = null;
+
+  async function loadMcpPolicies() {
+    try {
+      mcpPolicies = new Map((await listMcpPolicies()).map(p => [p.connection_id, p]));
+    } catch (e) {
+      notify(`Failed to load MCP policies: ${String(e)}`, 'error');
+    }
+  }
+
+  // Also re-runs after saves/deletes/imports, which all reload `connections`.
+  $: if (connections) void loadMcpPolicies();
+
+  function mcpTitle(p: McpPolicy | undefined): string {
+    if (!p?.mcp_enabled) return 'MCP access (off) — configure agent access';
+    return `MCP enabled — table data: ${p.data_access === 'allowlist' ? 'allowlist' : 'none'}${p.allow_raw_sql && p.data_access === 'allowlist' ? ', raw SQL' : ''}`;
+  }
 
   const DEFAULT_PORT: Record<DbType, number> = { oracle: 1521, postgres: 5432 };
 
@@ -343,9 +364,19 @@
               </span>
               {conn.name}
               {#if conn.password_broken}<span class="conn-item-broken-badge"><Icon name="alert-triangle" size={11} /> password missing</span>{/if}
+              {#if mcpPolicies.get(conn.id)?.mcp_enabled}<span class="mcp-badge mcp-badge-ok" style="margin-left:6px;font-size:10px;line-height:15px;" title={mcpTitle(mcpPolicies.get(conn.id))}>MCP</span>{/if}
             </div>
             <div class="conn-item-meta">{conn.host}:{conn.port} / {conn.service_name}</div>
           </div>
+          <button
+            class="conn-item-launch"
+            class:mcp-on={mcpPolicies.get(conn.id)?.mcp_enabled}
+            title={mcpTitle(mcpPolicies.get(conn.id))}
+            aria-label="MCP access for {conn.name}"
+            disabled={$busy}
+            on:click|stopPropagation={() => (mcpConn = conn)}
+            on:keydown|stopPropagation
+          ><Icon name="bot" size={15} /></button>
           {#if conn.db_type === 'oracle'}
             <button
               class="conn-item-launch"
@@ -504,6 +535,11 @@
       </div>
     </div>
   </div>
+{/if}
+
+<!-- ── MCP policy modal ── -->
+{#if mcpConn}
+  <McpPolicyModal connection={mcpConn} onClose={() => (mcpConn = null)} onSaved={loadMcpPolicies} />
 {/if}
 
 <!-- ── Delete-all confirmation modal ── -->

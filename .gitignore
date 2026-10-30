@@ -1,6 +1,7 @@
 # Rust
 /target/
 /src-tauri/target/
+/src-tauri/binaries/
 **/*.rs.bk
 
 # Node / frontend

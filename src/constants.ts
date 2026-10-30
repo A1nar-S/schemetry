@@ -5,7 +5,7 @@ export const DDL_FILE_ENCODINGS: { value: string; label: string }[] = [
 ];
 
 // Object types the DDL view groups by, and the default file extension used for each
-// when saving to the schema folder. Must mirror DEFAULT_DDL_EXTENSIONS in src-tauri/src/services/settings.rs.
+// when saving to the schema folder. Must mirror DEFAULT_DDL_EXTENSIONS in core/src/services/settings.rs.
 export const DDL_OBJECT_TYPES: string[] = [
   'TABLE', 'VIEW', 'MATERIALIZED VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE',
   'PACKAGE BODY', 'TRIGGER', 'SEQUENCE', 'SYNONYM', 'TYPE', 'JOB',
