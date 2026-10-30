@@ -2,32 +2,42 @@
   import Icon from './components/Icon.svelte';
   import { onMount } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
-  import { getConnections } from './api';
+  import { getConnections, mcpAuditVerify } from './api';
   import type { ConnectionRecord } from './types';
   import { theme } from './hooks/useTheme';
   import { notify } from './stores/notification';
+  import { auditVerification } from './stores/mcpAuditViewState';
   import BusyOverlay from './components/BusyOverlay.svelte';
   import Toast from './components/Toast.svelte';
   import QueryView from './views/QueryView.svelte';
   import FixView from './views/FixView.svelte';
   import DdlView from './views/DdlView.svelte';
   import HistoryFixView from './views/HistoryFixView.svelte';
+  import McpAuditView from './views/McpAuditView.svelte';
   import ConnectionsView from './views/ConnectionsView.svelte';
   import SettingsView from './views/SettingsView.svelte';
 
-  type View = 'query' | 'compare' | 'ddl' | 'historyfix' | 'connections' | 'settings';
+  type View = 'query' | 'compare' | 'ddl' | 'historyfix' | 'mcpaudit' | 'connections' | 'settings';
 
   const VIEW_TITLES: Record<View, string> = {
     query:       'Query',
     compare:     'Fix Discrepancies',
     ddl:         'Generate DDL',
     historyfix:  'Fix History Tables',
+    mcpaudit:    'MCP Audit',
     connections: 'Connections',
     settings:    'Settings',
   };
 
   let activeView: View = 'query';
   let connections: ConnectionRecord[] = [];
+
+  // The integrity banner can be dismissed for this session; a different problem shows it again.
+  let dismissedProblem: string | null = null;
+  $: problemKey = $auditVerification && !$auditVerification.ok
+    ? `${$auditVerification.problem ?? ''}|${$auditVerification.first_bad_id ?? ''}`
+    : null;
+  $: showAuditBanner = problemKey !== null && problemKey !== dismissedProblem;
   const COLLAPSE_BREAKPOINT = 900;
   const SIDEBAR_KEY = 'schemetry-sidebar-collapsed';
 
@@ -56,6 +66,8 @@
     window.addEventListener('resize', handleResize);
     loadConnections();
     getVersion().then(v => (appVersion = v)).catch(() => {});
+    // Fire-and-forget: a failing check must never hold up or break startup.
+    mcpAuditVerify().then(r => auditVerification.set(r)).catch(() => {});
     return () => window.removeEventListener('resize', handleResize);
   });
 
@@ -75,6 +87,18 @@
 </script>
 
 <div class="app-shell">
+{#if showAuditBanner}
+  <div class="mcp-notice mcp-notice-danger audit-banner" role="alert">
+    <Icon name="alert-triangle" size={15} />
+    <span class="audit-banner-text">
+      <strong>MCP audit log integrity problem:</strong> {$auditVerification?.problem ?? 'the hash chain does not verify.'}
+    </span>
+    <button class="btn-secondary" style="font-size:12px;padding:2px 10px;" on:click={() => (activeView = 'mcpaudit')}>Open MCP audit</button>
+    <button class="btn-secondary" style="font-size:12px;padding:2px 8px;" title="Dismiss for this session" aria-label="Dismiss" on:click={() => (dismissedProblem = problemKey)}>
+      <Icon name="x" size={12} />
+    </button>
+  </div>
+{/if}
 <div class="layout" class:sidebar-collapsed={sidebarCollapsed}>
   <!-- Sidebar -->
   <aside class="sidebar">
@@ -116,6 +140,14 @@
         on:click={() => (activeView = 'historyfix')}
       >
         <Icon name="history" size={16} /><span class="nav-label">Fix History Tables</span>
+      </button>
+      <button
+        class="nav-btn"
+        class:active={activeView === 'mcpaudit'}
+        title="MCP Audit"
+        on:click={() => (activeView = 'mcpaudit')}
+      >
+        <Icon name="shield-check" size={16} /><span class="nav-label">MCP Audit</span>
       </button>
 
       <div class="nav-divider"></div>
@@ -164,6 +196,8 @@
         <DdlView {connections} />
       {:else if activeView === 'historyfix'}
         <HistoryFixView {connections} />
+      {:else if activeView === 'mcpaudit'}
+        <McpAuditView {connections} />
       {:else if activeView === 'connections'}
         <ConnectionsView {connections} onReload={loadConnections} />
       {:else}

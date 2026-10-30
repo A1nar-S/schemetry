@@ -46,40 +46,96 @@ npm install
 npm run tauri dev
 ```
 
+## Repository layout
+
+Cargo workspace at the repo root:
+
+| Crate | Path | Purpose |
+|---|---|---|
+| `schemetry-core` | [core/](core) | Models, repositories, services, SQLite bootstrap, MCP policy/audit/gateway. No GUI dependencies. |
+| `schemetry` | [src-tauri/](src-tauri) | The Tauri desktop app (commands + shell). |
+| `schemetry-mcp` | [mcp/](mcp) | The headless stdio MCP server (protocol wrapper over the core gateway). |
+
 ## Build
 
 ```powershell
-npm run tauri build
+npm run tauri build          # desktop app
+cargo build --release -p schemetry-mcp   # headless MCP server only
 ```
 
 ## Tests
 
 ```powershell
-# Rust unit tests
-cd src-tauri
-cargo test
+# Rust unit tests (all crates)
+cargo test --workspace
 
 # Integration tests (real Oracle via Docker + Flyway)
 cd docker
 docker compose up -d --build
 docker compose ps   # wait for both oracle-* services to report "healthy"
 
-cd ../src-tauri
+cd ..
 $env:ORACLE_CLIENT_LIB_DIR = "<path to instantclient>"  # if not already on PATH
-cargo test --test oracle_integration -- --ignored
+cargo test -p schemetry-core --test oracle_integration -- --ignored
 
 # Integration tests (real PostgreSQL via Docker + Flyway)
 # Same docker-compose file also starts the postgres-* containers
-cd ../docker
+cd docker
 docker compose ps   # wait for both postgres-* services to report "healthy"
 
-cd ../src-tauri
-cargo test --test postgres_integration -- --ignored
+cd ..
+cargo test -p schemetry-core --test postgres_integration -- --ignored
+cargo test -p schemetry-core --test mcp_integration -- --ignored   # MCP gateway end to end
 
 # Teardown
-cd ../docker
+cd docker
 docker compose down -v
 ```
+
+## MCP server (`schemetry-mcp`)
+
+A stdio [MCP](https://modelcontextprotocol.io) server that lets AI agents (Claude Code, VS Code, …) list schema objects, read DDL, save migration scripts, compare schemas, generate fix scripts and (if you allow it) read table data — using the same connections, keychain passwords and folder rules as the GUI. It works without the GUI running, on Windows and Linux. **Agents get nothing by default:** every connection is opted in explicitly, per capability, in the connection's *MCP* policy.
+
+### Install and configure
+
+- The Windows installer puts `schemetry-mcp.exe` next to `Schemetry.exe`; releases also attach a standalone Windows `.exe` and a Linux x64 binary.
+- Build it yourself (no WebView/GTK libraries needed, so it works on a bare Ubuntu server):
+
+  ```bash
+  cargo build --release -p schemetry-mcp
+  # -> target/release/schemetry-mcp   (schemetry-mcp.exe on Windows)
+  ```
+
+- Database location: `--db <path>`, else `SCHEMETRY_DB`, else the OS app-data dir (the file the GUI uses). Connection passwords come from the OS keychain: Windows Credential Manager, or the Secret Service (gnome-keyring / KeePassXC) over D-Bus on Linux — a headless Linux box needs a running, unlocked Secret Service for passwords to resolve.
+- Client configuration:
+
+  ```json
+  { "mcpServers": { "schemetry": { "command": "/path/to/schemetry-mcp", "args": ["--db", "/path/to/schemetry.db"] } } }
+  ```
+
+  On Windows use e.g. `"command": "C:\\path\\to\\schemetry-mcp.exe"`. stdout is reserved for the protocol; logs go to stderr.
+
+### Tools
+
+| Tool | Needs (in the connection's policy) | Notes |
+|---|---|---|
+| `list_connections` | connection has MCP enabled | id, name, engine, schema and the effective policy. Never passwords or hosts. |
+| `list_schema_objects` | `allow_schema_list` | Active compare filter rules and the policy's hidden objects are applied. |
+| `get_object_ddl` | `allow_ddl_read` | DDL only, never data. Hidden objects are refused. |
+| `save_migration_script` | `allow_save_scripts` | Uses the app's folder/naming rules; confined to the schema folder; `dry_run` previews. Names are restricted to letters, digits and `_ - $ #`. The schema is derived from the connection. |
+| `compare_schemas`, `generate_fix_script` | `allow_compare_fix` on **every** involved connection | Fix scripts are returned, never executed. |
+| `query_table` | `data_access = allowlist` | Structured columns / filters / ordering — no SQL text. Table and column rules are enforced exactly. |
+| `run_query` | `data_access = allowlist` **and** `allow_raw_sql` | One read-only `SELECT`, see the caveat below. |
+
+Policy options (edit them in **Connections → MCP**): per-capability toggles, a table/column allow/deny list with `*`/`?` wildcards (deny wins; Oracle matches case-insensitively, Postgres allow-rules are case-sensitive), hidden objects, `max_rows` (default 200), `query_timeout_secs` (default 30), and an optional dedicated database account. **Test as MCP** shows what an agent would see. A global kill switch in **Settings** disables all data tools regardless of policy.
+
+**Table data and raw SQL.** `query_table` builds the SQL itself, so its allowlist is exact. `run_query` is best-effort: statements are checked against the allowlist (every referenced table must exist in the connection's own schema, so catalog views are out of reach), and run in a read-only transaction with a row cap and timeout, but views, synonyms, functions that read tables internally and dynamic SQL can't be seen statically — this is *not* a hard guarantee. The hard boundary is a **dedicated database account** (set it per connection; its password lives in the OS keychain and is used only for table-data reads) that the DBA grants `SELECT` on the allowed tables only.
+
+### Audit log
+
+Every tool call — allowed, denied or failed — appends one entry (time, tool, connection, arguments, outcome and reason, rows/bytes returned, duration, MCP client name) to `mcp_audit_log`. Entries are hash-chained (`hash = sha256(prev_hash ‖ entry)`), SQLite triggers reject `UPDATE`/`DELETE`, and nothing in Schemetry can edit or purge the log. Schemetry verifies the chain on startup and shows a warning banner if it is broken or truncated; the **MCP Audit** view filters by connection / tool / outcome / date and exports CSV.
+
+On a machine you own no local file is truly immutable: the guarantee is *no cleanup path in the app* plus *tampering is detectable*. For a copy outside your control, forward each entry to an external sink in **Settings** (syslog over UDP or `/dev/log`, Windows Event Log, or an HTTP endpoint). If the audit log can't be written, the call's result is withheld.
 
 ## Views
 
@@ -89,8 +145,9 @@ docker compose down -v
 | **Generate DDL** | Fetch and display DDL for selected schema objects, and save it to disk as source and/or versioned migration files (timestamped or Flyway-style naming, configurable per schema). |
 | **Fix Discrepancies** | Compare schema metadata across servers of the same database engine against a reference. Filter and select discrepancies, then generate idempotent SQL fix scripts. |
 | **Fix History Tables** | Generate fix scripts specifically for history tables if they differ from main tables. |
-| **Connections** | Manage named Oracle and PostgreSQL connections, grouped and organized per tenant. Passwords stored securely in the OS keychain. |
-| **Settings** | Configure Oracle Instant Client path (Oracle connections only). |
+| **Connections** | Manage named Oracle and PostgreSQL connections, grouped and organized per tenant. Passwords stored securely in the OS keychain. Edit each connection's MCP policy. |
+| **MCP Audit** | Read-only, tamper-evident log of everything AI agents did through the MCP server. |
+| **Settings** | Configure Oracle Instant Client path (Oracle connections only), the MCP kill switch and the external audit sink. |
 
 ## License
 

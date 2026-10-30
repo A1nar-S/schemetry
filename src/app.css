@@ -935,6 +935,44 @@
 
   .vt-cell-missing   { background: rgba(220, 38, 38, 0.25); color: #fca5a5; font-weight: 700; }
   .vt-cell-different { background: rgba(234, 88, 12, 0.25);  color: #fb923c; font-weight: 700; }
+
+  .vt-cell-ok     { background: color-mix(in srgb, var(--text-ok) 18%, transparent);     color: var(--text-ok);     font-weight: 600; }
+  .vt-cell-warn   { background: color-mix(in srgb, var(--text-warn) 18%, transparent);   color: var(--text-warn);   font-weight: 600; }
+  .vt-cell-danger { background: color-mix(in srgb, var(--text-danger) 18%, transparent); color: var(--text-danger); font-weight: 600; }
+  .vt-cell-muted  { color: var(--text-muted); }
+
+  /* MCP (agent access) */
+  .mcp-badge {
+    display: inline-block; padding: 0 7px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; line-height: 18px; white-space: nowrap;
+    background: var(--chip-bg); color: var(--text-muted);
+  }
+  .mcp-badge-ok     { background: color-mix(in srgb, var(--text-ok) 18%, transparent);     color: var(--text-ok); }
+  .mcp-badge-warn   { background: color-mix(in srgb, var(--text-warn) 18%, transparent);   color: var(--text-warn); }
+  .mcp-badge-danger { background: color-mix(in srgb, var(--text-danger) 18%, transparent); color: var(--text-danger); }
+  .mcp-notice {
+    display: flex; gap: 8px; align-items: flex-start;
+    border: 1px solid var(--border-input); border-radius: 6px; padding: 8px 12px;
+    font-size: 13px; color: var(--text-primary); background: var(--bg-panel);
+  }
+  .mcp-notice > .icon { margin-top: 3px; }
+  .mcp-notice-warn {
+    border-color: var(--text-warn); color: var(--text-warn);
+    background: color-mix(in srgb, var(--text-warn) 10%, transparent);
+  }
+  .mcp-notice-danger {
+    border-color: var(--error-border); color: var(--error-color); background: var(--error-bg);
+  }
+  .mcp-notice-ok {
+    border-color: var(--text-ok); color: var(--text-ok);
+    background: color-mix(in srgb, var(--text-ok) 10%, transparent);
+  }
+  .conn-item-launch.mcp-on { opacity: 1; color: var(--text-ok); }
+  .audit-banner {
+    flex-shrink: 0; align-items: center; border-radius: 0;
+    border-width: 0 0 1px; padding: 6px 16px;
+  }
+  .audit-banner-text { flex: 1; min-width: 0; }
 }
 
 [data-theme="light"] .vt-cell-missing   { background: rgba(220, 38, 38, 0.15); color: #b91c1c; }

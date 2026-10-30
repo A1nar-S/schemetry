@@ -9,6 +9,13 @@ import type {
   HistoryNamingRule,
   CompletionMetadata,
   LobContent,
+  McpAuditFilter,
+  McpAuditPage,
+  McpAuditSinkKind,
+  McpAuditVerification,
+  McpPolicy,
+  McpPreview,
+  McpSettings,
   QueryHistoryEntry,
   QueryServerResult,
   SaveDdlResult,
@@ -290,5 +297,53 @@ export async function openSchemaInVscode(schema: string): Promise<void> {
 
 export async function openInPlsqlDeveloper(connection: ConnectionRecord): Promise<void> {
   return invoke('open_in_plsql_developer', { connection });
+}
+
+export async function listMcpPolicies(): Promise<McpPolicy[]> {
+  return invoke('list_mcp_policies');
+}
+
+export async function getMcpPolicy(connectionId: number): Promise<McpPolicy> {
+  return invoke('get_mcp_policy', { connectionId });
+}
+
+export async function saveMcpPolicy(args: {
+  policy: McpPolicy;
+  account_password?: string | null;
+  clear_account_password: boolean;
+}): Promise<McpPolicy> {
+  return invoke('save_mcp_policy', {
+    policy: args.policy,
+    accountPassword: args.account_password ?? null,
+    clearAccountPassword: args.clear_account_password,
+  });
+}
+
+export async function mcpPreview(connectionId: number): Promise<McpPreview> {
+  return invoke('mcp_preview', { connectionId });
+}
+
+export async function getMcpSettings(): Promise<McpSettings> {
+  return invoke('get_mcp_settings');
+}
+
+export async function saveMcpSettings(payload: McpSettings): Promise<void> {
+  return invoke('save_mcp_settings', { payload });
+}
+
+export async function testMcpAuditSink(kind: McpAuditSinkKind, target: string): Promise<void> {
+  return invoke('test_mcp_audit_sink', { kind, target });
+}
+
+export async function mcpAuditList(filter: McpAuditFilter): Promise<McpAuditPage> {
+  return invoke('mcp_audit_list', { filter });
+}
+
+export async function mcpAuditVerify(): Promise<McpAuditVerification> {
+  return invoke('mcp_audit_verify');
+}
+
+export async function mcpAuditExportCsv(filter: McpAuditFilter, outputFolder: string): Promise<string> {
+  return invoke('mcp_audit_export_csv', { filter, outputFolder });
 }
 

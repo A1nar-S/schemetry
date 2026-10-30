@@ -42,6 +42,8 @@
     'arrow-right':    '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
     'arrow-up':       '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
     'arrow-down':     '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
+    'bot':            '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
+    'shield-check':   '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
     'arrow-up-down':  '<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>',
   } as const;
 

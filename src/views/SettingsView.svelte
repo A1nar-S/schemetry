@@ -12,8 +12,11 @@
   import { getSettings, saveSettings } from '../api';
   import { busy, setBusy, notify } from '../stores/notification';
   import SchemaFolderOverridesCard from '../components/SchemaFolderOverridesCard.svelte';
+  import McpSettingsCard from '../components/McpSettingsCard.svelte';
 
   export let connections: ConnectionRecord[] = [];
+
+  let mcpCard: McpSettingsCard | undefined;
 
   let clientLibDir = '';
   let schemaRootFolder = '';
@@ -79,6 +82,7 @@
         storageModesToSave, namingConvention, codeFolderName, migrationFolderName,
         migrationFolderMode, migrationVersionLabel, plsqlDevPath,
       );
+      await mcpCard?.saveIfDirty();
       notify(
         res.oracle_client_initialized
           ? 'Settings saved. Oracle client initialized.'
@@ -231,6 +235,8 @@
   </div>
 
   <SchemaFolderOverridesCard {connections} />
+
+  <McpSettingsCard bind:this={mcpCard} />
 
   <div class="row">
     <button class="btn-primary" on:click={() => void onSave()} disabled={$busy}>

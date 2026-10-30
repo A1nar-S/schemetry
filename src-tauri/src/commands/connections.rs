@@ -41,7 +41,9 @@ pub fn delete_connection(state: State<AppState>, id: i64) -> Result<(), String> 
     state
         .catalog
         .delete_connection(id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // A deleted connection's MCP policy (and dedicated-account password) goes with it.
+    state.mcp_policy_svc.delete(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -49,7 +51,8 @@ pub fn delete_all_connections(state: State<AppState>) -> Result<(), String> {
     state
         .catalog
         .delete_all_connections()
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state.mcp_policy_svc.delete_all().map_err(|e| e.to_string())
 }
 
 #[tauri::command]

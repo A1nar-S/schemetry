@@ -5,7 +5,7 @@ use tokio;
 
 use crate::models::SchemaObject;
 use crate::services::cancel::begin_task;
-use crate::services::ddl_save::{self, DdlSaveArgs, DdlSaveOptions, SaveDdlResult};
+use crate::services::ddl_save::{self, DdlSaveArgs, SaveDdlResult};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -61,25 +61,8 @@ pub fn save_ddl_to_folder(
     description: String,
     db_type: String,
 ) -> Result<SaveDdlResult, String> {
-    let schema_root = crate::services::settings::load_schema_root_folder()
-        .ok_or("Schema folder not configured. Please set it in Settings.")?;
-
-    let options = DdlSaveOptions {
-        code_folder: crate::services::settings::load_code_folder_name()
-            .unwrap_or_else(|| "code".to_string()),
-        migration_folder: crate::services::settings::load_migration_folder_name()
-            .unwrap_or_else(|| "migration".to_string()),
-        storage_mode: crate::services::settings::resolve_storage_mode(&object_type),
-        naming_convention: crate::services::settings::load_naming_convention()
-            .unwrap_or_else(|| "timestamp".to_string()),
-        folder_mode: crate::services::settings::load_migration_folder_mode()
-            .unwrap_or_else(|| "year".to_string()),
-        version_label: crate::services::settings::load_migration_version_label()
-            .unwrap_or_default(),
-        extension: crate::services::settings::resolve_ddl_extension(&object_type),
-        encoding: crate::services::settings::load_ddl_file_encoding()
-            .unwrap_or_else(|| "utf8".to_string()),
-    };
+    let schema_root = ddl_save::schema_root_from_settings()?;
+    let options = ddl_save::options_from_settings(&object_type);
 
     ddl_save::save_ddl_to_folder(
         &state.folder_schema_overrides_svc,

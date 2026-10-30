@@ -159,3 +159,110 @@ export type SaveDdlResult = {
   code_path: string | null;
   migration_path: string | null;
 };
+
+export type McpDataAccess = 'none' | 'allowlist';
+
+export type McpTableRule = {
+  action: 'allow' | 'deny';
+  table: string;
+  /** Empty means the whole table (all columns). */
+  column: string;
+};
+
+export type McpObjectDenyRule = {
+  /** `*` or an object type such as TABLE or PACKAGE. */
+  object_type: string;
+  name: string;
+};
+
+export type McpPolicy = {
+  connection_id: number;
+  mcp_enabled: boolean;
+  allow_schema_list: boolean;
+  allow_ddl_read: boolean;
+  allow_save_scripts: boolean;
+  allow_compare_fix: boolean;
+  data_access: McpDataAccess;
+  allow_raw_sql: boolean;
+  table_rules: McpTableRule[];
+  object_deny: McpObjectDenyRule[];
+  max_rows: number;
+  query_timeout_secs: number;
+  mcp_username: string;
+  /** Output only: whether a password is stored for the dedicated MCP account. */
+  mcp_password_set: boolean;
+};
+
+export type McpToolStatus = {
+  tool: string;
+  allowed: boolean;
+  reason: string;
+};
+
+export type McpPreviewObject = {
+  name: string;
+  object_type: string;
+  data_access: 'allowed' | 'restricted' | 'denied' | 'n/a';
+};
+
+export type McpPreview = {
+  tools: McpToolStatus[];
+  objects: McpPreviewObject[];
+  hidden_objects: number;
+  data_tools_disabled: boolean;
+  objects_error: string | null;
+};
+
+export type McpAuditSinkKind = '' | 'syslog' | 'eventlog' | 'http';
+
+export type McpSettings = {
+  data_tools_disabled: boolean;
+  audit_sink_kind: McpAuditSinkKind;
+  audit_sink_target: string;
+};
+
+export type McpAuditOutcome = 'allowed' | 'denied' | 'error';
+
+export type McpAuditEntry = {
+  id: number;
+  /** UTC, RFC 3339. */
+  timestamp: string;
+  tool: string;
+  connection_id: number | null;
+  connection_name: string;
+  /** JSON text. */
+  arguments: string;
+  outcome: McpAuditOutcome;
+  reason: string;
+  row_count: number | null;
+  bytes: number;
+  duration_ms: number;
+  client_name: string;
+  prev_hash: string;
+  hash: string;
+};
+
+export type McpAuditFilter = {
+  connection_id?: number | null;
+  tool?: string | null;
+  outcome?: McpAuditOutcome | null;
+  /** `YYYY-MM-DD` or RFC 3339. */
+  from?: string | null;
+  /** `YYYY-MM-DD` covers the whole day. */
+  to?: string | null;
+  limit?: number | null;
+  offset?: number | null;
+};
+
+export type McpAuditPage = {
+  /** Newest first. */
+  entries: McpAuditEntry[];
+  total: number;
+};
+
+export type McpAuditVerification = {
+  ok: boolean;
+  entries: number;
+  problem: string | null;
+  first_bad_id: number | null;
+};

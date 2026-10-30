@@ -39,9 +39,6 @@ jobs:
   rust-lint:
     name: Rust (fmt + clippy)
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: src-tauri
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -50,25 +47,21 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: src-tauri
+          workspaces: .
       # tauri::generate_context! embeds `../dist` at compile time.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci && npm run build
-        working-directory: .
       - name: rustfmt
         run: cargo fmt --all --check
       - name: clippy
-        run: cargo clippy --all-targets --locked
+        run: cargo clippy --workspace --all-targets --locked
 
   rust-test:
     name: Rust unit tests
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: src-tauri
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -76,15 +69,34 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: src-tauri
+          workspaces: .
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci && npm run build
-        working-directory: .
-      - run: cargo test --locked
+      - run: cargo test --workspace --locked
 
+  mcp-headless-linux:
+    name: MCP server (Ubuntu, headless build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: .
+          key: headless
+      # Deliberately no WebKit/GTK packages and no frontend build: these crates must not need them.
+      - run: cargo test --locked -p schemetry-core -p schemetry-mcp
+      - run: cargo build --locked -p schemetry-mcp
+      - name: Handshake smoke test
+        run: |
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            | SCHEMETRY_DB="$RUNNER_TEMP/mcp.db" ./target/debug/schemetry-mcp \
+            | grep -q '"name":"schemetry"'
   postgres-integration:
     name: Integration tests (Postgres) + coverage
     runs-on: ubuntu-latest
@@ -93,17 +105,13 @@ jobs:
       id-token: write # Codecov OIDC upload
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install Tauri Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: src-tauri
+          workspaces: .
           key: coverage
       - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
@@ -112,7 +120,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci && npm run build
       - name: Start and migrate Postgres containers
         working-directory: docker
         run: |
@@ -120,15 +127,15 @@ jobs:
           docker compose run --rm flyway-pg-source
           docker compose run --rm flyway-pg-target
       - name: Run unit tests + Postgres integration suite (with coverage)
-        working-directory: src-tauri
         run: |
-          cargo llvm-cov --locked --no-report --lib
-          cargo llvm-cov --locked --no-report --test postgres_integration -- --ignored
+          cargo llvm-cov --locked --no-report -p schemetry-core --lib
+          cargo llvm-cov --locked --no-report -p schemetry-core --test postgres_integration -- --ignored
+          cargo llvm-cov --locked --no-report -p schemetry-core --test mcp_integration -- --ignored
           cargo llvm-cov report --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
-          files: src-tauri/lcov.info
+          files: lcov.info
           flags: unit,postgres
           use_oidc: true
           fail_ci_if_error: false
@@ -152,10 +159,10 @@ jobs:
       LD_LIBRARY_PATH: ${{ github.workspace }}/instantclient
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install Tauri Linux build dependencies + libaio
+      - name: Install libaio
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev libaio1t64
+          sudo apt-get install -y libaio1t64
           # Instant Client links against libaio.so.1; Ubuntu 24.04 ships it as libaio.so.1t64.
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
       - name: Install Oracle Instant Client (Basic Light)
@@ -170,7 +177,7 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: src-tauri
+          workspaces: .
           key: coverage
       - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
@@ -179,7 +186,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci && npm run build
       - name: Start and migrate Oracle containers
         working-directory: docker
         run: |
@@ -188,12 +194,11 @@ jobs:
           docker compose run --rm flyway-source
           docker compose run --rm flyway-target
       - name: Run Oracle integration suite (with coverage)
-        working-directory: src-tauri
-        run: cargo llvm-cov --locked --lcov --output-path lcov.info --test oracle_integration -- --ignored
+        run: cargo llvm-cov --locked --lcov --output-path lcov.info -p schemetry-core --test oracle_integration -- --ignored
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
-          files: src-tauri/lcov.info
+          files: lcov.info
           flags: oracle
           use_oidc: true
           fail_ci_if_error: false

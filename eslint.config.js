@@ -6,7 +6,7 @@ import svelteConfig from './svelte.config.js';
 
 export default ts.config(
   {
-    ignores: ['dist/', 'node_modules/', 'src-tauri/', 'docker/'],
+    ignores: ['dist/', 'node_modules/', 'target/', 'src-tauri/', 'core/', 'mcp/', 'docker/'],
   },
   js.configs.recommended,
   ...ts.configs.recommended,
