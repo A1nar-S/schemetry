@@ -4,7 +4,7 @@ use anyhow::Result;
 use rusqlite::{Connection, params};
 
 fn db_path() -> PathBuf {
-    PathBuf::from("schemetry.db")
+    crate::utils::paths::db_path()
 }
 
 pub fn init_db() -> Result<()> {

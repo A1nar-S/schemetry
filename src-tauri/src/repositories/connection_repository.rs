@@ -53,7 +53,7 @@ impl SqliteConnectionRepository {
     }
 
     fn db_path() -> PathBuf {
-        PathBuf::from("schemetry.db")
+        crate::utils::paths::db_path()
     }
 
     /// Keyring username: "group:name" — unique within group, disambiguates from other groups.

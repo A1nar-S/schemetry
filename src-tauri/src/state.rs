@@ -22,7 +22,7 @@ pub struct FetchSnapshot {
     pub server_table_ddls: ServerTableDdls,
 }
 
-pub struct AppState {
+pub struct AppServices {
     pub catalog: Arc<ConnectionCatalogService>,
     pub diff_svc: Arc<SchemaDiffService>,
     pub query_svc: Arc<QueryService>,
@@ -30,10 +30,9 @@ pub struct AppState {
     pub filter_rules_svc: Arc<FilterRuleService>,
     pub history_naming_rules_svc: Arc<HistoryNamingRuleService>,
     pub folder_schema_overrides_svc: Arc<SchemaFolderOverrideService>,
-    pub snapshot: Arc<Mutex<FetchSnapshot>>,
 }
 
-impl AppState {
+impl AppServices {
     pub fn new() -> Self {
         let db_repo: Arc<dyn DbRepository> = Arc::new(DispatchRepository::new());
         Self {
@@ -54,6 +53,31 @@ impl AppState {
             folder_schema_overrides_svc: Arc::new(SchemaFolderOverrideService::new(Arc::new(
                 SqliteSchemaFolderOverrideRepository::new(),
             ))),
+        }
+    }
+}
+
+pub struct AppState {
+    pub catalog: Arc<ConnectionCatalogService>,
+    pub diff_svc: Arc<SchemaDiffService>,
+    pub query_svc: Arc<QueryService>,
+    pub query_history_svc: Arc<QueryHistoryService>,
+    pub filter_rules_svc: Arc<FilterRuleService>,
+    pub history_naming_rules_svc: Arc<HistoryNamingRuleService>,
+    pub folder_schema_overrides_svc: Arc<SchemaFolderOverrideService>,
+    pub snapshot: Arc<Mutex<FetchSnapshot>>,
+}
+
+impl AppState {
+    pub fn from_services(services: AppServices) -> Self {
+        Self {
+            catalog: services.catalog,
+            diff_svc: services.diff_svc,
+            query_svc: services.query_svc,
+            query_history_svc: services.query_history_svc,
+            filter_rules_svc: services.filter_rules_svc,
+            history_naming_rules_svc: services.history_naming_rules_svc,
+            folder_schema_overrides_svc: services.folder_schema_overrides_svc,
             snapshot: Arc::new(Mutex::new(FetchSnapshot::default())),
         }
     }

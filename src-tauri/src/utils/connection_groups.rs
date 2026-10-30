@@ -15,7 +15,11 @@ pub fn group_by_schema(connections: &[ConnectionRecord]) -> Vec<(String, Vec<Con
     }
 
     for items in groups.values_mut() {
-        items.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+        items.sort_by(|a, b| {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+        });
     }
 
     groups.into_iter().collect()

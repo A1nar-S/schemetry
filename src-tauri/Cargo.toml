@@ -14,6 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 anyhow = { version = "1.0", default-features = false }
 base64 = "0.23"
+dirs = "6"
 encoding_rs = "0.8"
 regex = { version = "1", default-features = false, features = ["std"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -29,6 +30,9 @@ tokio = { version = "1.44", default-features = false, features = ["rt", "rt-mult
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [

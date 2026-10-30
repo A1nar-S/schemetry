@@ -41,7 +41,7 @@ impl SqliteFilterRuleRepository {
     }
 
     fn db_path() -> PathBuf {
-        PathBuf::from("schemetry.db")
+        crate::utils::paths::db_path()
     }
 
     fn action_str(action: FilterAction) -> &'static str {
