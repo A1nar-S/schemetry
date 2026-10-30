@@ -351,7 +351,10 @@ fn default_policy_denies_table_data_and_writes_a_denied_entry() {
     set(&env, base(ID()));
 
     let result = env.gateway.query_table(CLIENT, query("employees"));
-    assert!(matches!(result, Err(ToolError::Denied(_))), "{result:?}");
+    assert!(
+        matches!(result, Err(ToolError::Denied(_))),
+        "expected a denial"
+    );
 
     let entries = env.audit.list(&McpAuditFilter::default()).unwrap();
     assert_eq!(entries.len(), 1);
@@ -545,7 +548,7 @@ fn the_database_layer_itself_refuses_writes_and_enforces_the_timeout() {
     let slow = run("SELECT pg_sleep(5)", 1).err().expect("should time out");
     assert!(
         slow.to_string().to_lowercase().contains("timed out"),
-        "{slow:#}"
+        "the query should have timed out"
     );
 
     let plain = run("SELECT count(*) FROM employees", 5).unwrap();
@@ -599,8 +602,8 @@ fn compare_and_fix_scripts_work_across_connections_when_both_allow_it() {
     );
     let out = env.gateway.compare_schemas(CLIENT, args()).unwrap();
     let text = out.to_string();
-    assert!(text.contains("audit_log"), "{text}");
-    assert!(text.contains("email"), "{text}");
+    assert!(text.contains("audit_log"));
+    assert!(text.contains("email"));
 
     let fix = env
         .gateway
@@ -620,7 +623,7 @@ fn compare_and_fix_scripts_work_across_connections_when_both_allow_it() {
     let script = fix["script"].as_str().unwrap().to_lowercase();
     assert!(
         script.contains("audit_log") && script.contains("email"),
-        "{script}"
+        "the fix script should mention the missing table and column"
     );
 
     // Hiding a table removes it from compare output and from the generated script.

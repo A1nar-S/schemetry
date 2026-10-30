@@ -80,21 +80,21 @@ fn prepare_orders(h: &Harness) {
 fn denied_message(result: ToolResult) -> String {
     match result {
         Err(ToolError::Denied(message)) => message,
-        other => panic!("expected a denial, got {other:?}"),
+        _ => panic!("expected a denial"),
     }
 }
 
 fn failed_message(result: ToolResult) -> String {
     match result {
         Err(ToolError::Failed(message)) => message,
-        other => panic!("expected a failure, got {other:?}"),
+        _ => panic!("expected a failure"),
     }
 }
 
 /// Asserts the last audit entry's outcome and that exactly `count` entries exist.
 fn assert_audit(h: &Harness, count: usize, outcome: McpOutcome) {
     let entries = h.entries();
-    assert_eq!(entries.len(), count, "{entries:#?}");
+    assert_eq!(entries.len(), count, "unexpected number of audit entries");
     assert_eq!(entries.last().unwrap().outcome, outcome);
 }
 
@@ -121,7 +121,7 @@ fn list_connections_shows_only_enabled_connections_and_never_credentials() {
     assert_eq!(connections[0]["schema"], "APP");
     assert_eq!(connections[0]["policy"]["data_access"], "allowlist");
     for secret in [PASSWORD, "db.example", "svc_mcp", "Hidden"] {
-        assert!(!text.contains(secret), "leaked {secret}");
+        assert!(!text.contains(secret), "a sensitive value leaked");
     }
     assert_audit(&h, 1, McpOutcome::Allowed);
     assert_eq!(h.entries()[0].tool, "list_connections");
@@ -162,9 +162,9 @@ fn default_policy_denies_all_data_access() {
     prepare_orders(&h);
 
     let message = denied_message(h.gateway.query_table(CLIENT, query("ORDERS")));
-    assert!(message.contains("data_access"), "{message}");
+    assert!(message.contains("data_access"));
     let message = denied_message(h.gateway.run_query(CLIENT, raw("SELECT 1 FROM DUAL")));
-    assert!(message.contains("not permitted"), "{message}");
+    assert!(message.contains("not permitted"));
 
     assert_eq!(h.db_calls(), 0);
     assert!(h.db.seen.lock().unwrap().is_empty());
@@ -215,8 +215,8 @@ fn the_global_kill_switch_disables_data_tools_but_not_schema_tools() {
 
     let q = denied_message(h.gateway.query_table(CLIENT, query("ORDERS")));
     let r = denied_message(h.gateway.run_query(CLIENT, raw("SELECT * FROM orders")));
-    assert!(q.contains("switched off globally"), "{q}");
-    assert!(r.contains("switched off globally"), "{r}");
+    assert!(q.contains("switched off globally"));
+    assert!(r.contains("switched off globally"));
     assert_eq!(h.db_calls(), 0);
 
     *h.db.objects.lock().unwrap() = vec![SchemaObject {
@@ -418,7 +418,7 @@ fn requesting_a_denied_column_is_an_error_not_a_silent_omission() {
     let mut args = query("ORDERS");
     args.columns = Some(vec!["id".into(), "password_hash".into()]);
     let message = denied_message(h.gateway.query_table(CLIENT, args));
-    assert!(message.contains("PASSWORD_HASH"), "{message}");
+    assert!(message.contains("PASSWORD_HASH"));
     assert!(h.db.seen.lock().unwrap().is_empty());
 }
 
@@ -604,7 +604,7 @@ fn raw_sql_is_off_unless_explicitly_enabled() {
     let h = oracle();
     h.set_policy(data_policy(1, vec![allow("*", "")]));
     let message = denied_message(h.gateway.run_query(CLIENT, raw("SELECT * FROM orders")));
-    assert!(message.contains("allow_raw_sql"), "{message}");
+    assert!(message.contains("allow_raw_sql"));
 }
 
 #[test]
@@ -723,7 +723,7 @@ fn raw_sql_cannot_read_system_catalogs_even_with_a_broad_allow_rule() {
         "SELECT * FROM orders o JOIN all_tab_columns c ON 1=1",
     ] {
         let message = denied_message(h.gateway.run_query(CLIENT, raw(sql)));
-        assert!(message.contains("not a table or view"), "{sql}: {message}");
+        assert!(message.contains("not a table or view"), "query: {sql}");
     }
     assert!(h.db.seen.lock().unwrap().is_empty());
 }
@@ -919,7 +919,7 @@ fn path_traversal_in_names_and_descriptions_is_rejected() {
             .save_migration_script(CLIENT, save_args(name, description));
         assert!(
             matches!(result, Err(ToolError::Denied(_))),
-            "{name:?}/{description:?}: {result:?}"
+            "expected a denial for name {name:?} / description {description:?}"
         );
     }
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
@@ -1057,7 +1057,7 @@ fn compare_needs_the_permission_on_every_involved_connection() {
     let h = compare_harness();
     h.set_policy(enabled_policy(2));
     let message = denied_message(h.gateway.compare_schemas(CLIENT, compare_args()));
-    assert!(message.contains("allow_compare_fix"), "{message}");
+    assert!(message.contains("allow_compare_fix"));
     assert_eq!(h.db_calls(), 0);
     assert!(matches!(
         h.gateway.generate_fix_script(
@@ -1128,8 +1128,8 @@ fn fix_scripts_are_generated_never_executed_and_respect_hidden_objects() {
         )
         .unwrap();
     let script = out["script"].as_str().unwrap();
-    assert!(script.contains("AUDIT_LOG"), "{script}");
-    assert!(script.to_uppercase().contains("STATUS"), "{script}");
+    assert!(script.contains("AUDIT_LOG"));
+    assert!(script.to_uppercase().contains("STATUS"));
     assert!(out["generated_count"].as_u64().unwrap() >= 2);
 
     // Restrict to one table.
@@ -1286,7 +1286,7 @@ fn credentials_never_reach_the_audit_trail_or_results() {
     for entry in h.entries() {
         let text = format!("{entry:?}");
         for secret in [PASSWORD, "reader-pw"] {
-            assert!(!text.contains(secret), "{text}");
+            assert!(!text.contains(secret), "a sensitive value leaked");
         }
     }
 }

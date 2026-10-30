@@ -351,3 +351,26 @@ fn deleting_a_policy_removes_its_password_too() {
     assert!(repo.policies.lock().unwrap().is_empty());
     assert!(repo.passwords.lock().unwrap().is_empty());
 }
+
+#[test]
+fn policy_housekeeping_does_not_need_a_keychain() {
+    let (svc, repo) = service();
+    repo.keychain_unavailable
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    // No dedicated account: saving, deleting and clearing everything must still work
+    // on a machine without a Secret Service / credential manager.
+    svc.save(enabled_policy(5), AccountPassword::Keep).unwrap();
+    assert!(svc.get(5).unwrap().mcp_enabled);
+    svc.delete(5).unwrap();
+    svc.save(enabled_policy(6), AccountPassword::Keep).unwrap();
+    svc.delete_all().unwrap();
+    assert!(repo.policies.lock().unwrap().is_empty());
+
+    // Explicitly setting a password does need it, and says so.
+    let with_account = McpPolicy {
+        mcp_username: "reader".into(),
+        ..enabled_policy(7)
+    };
+    assert!(svc.save(with_account, AccountPassword::Clear).is_err());
+}

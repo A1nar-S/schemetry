@@ -341,17 +341,20 @@ impl McpPolicyService {
                 self.repo.delete_account_password(policy.connection_id)?;
             }
         }
-        // A policy without a dedicated account has no use for a stored password.
+        // A policy without a dedicated account has no use for a stored password. This is
+        // housekeeping, so it must not fail saves on machines without a keychain
+        // (e.g. a headless Linux box without a Secret Service).
         if policy.mcp_username.is_empty() {
-            self.repo.delete_account_password(policy.connection_id)?;
+            let _ = self.repo.delete_account_password(policy.connection_id);
         }
         self.get(policy.connection_id)
     }
 
-    /// Removes a deleted connection's policy and keychain entry.
+    /// Removes a deleted connection's policy and, best effort, its keychain entry.
     pub fn delete(&self, connection_id: i64) -> Result<()> {
         self.repo.delete(connection_id)?;
-        self.repo.delete_account_password(connection_id)
+        let _ = self.repo.delete_account_password(connection_id);
+        Ok(())
     }
 
     pub fn delete_all(&self) -> Result<()> {

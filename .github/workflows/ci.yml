@@ -129,6 +129,7 @@ jobs:
       - name: Run unit tests + Postgres integration suite (with coverage)
         run: |
           cargo llvm-cov --locked --no-report -p schemetry-core --lib
+          cargo llvm-cov --locked --no-report -p schemetry-mcp --lib
           cargo llvm-cov --locked --no-report -p schemetry-core --test postgres_integration -- --ignored
           cargo llvm-cov --locked --no-report -p schemetry-core --test mcp_integration -- --ignored
           cargo llvm-cov report --lcov --output-path lcov.info

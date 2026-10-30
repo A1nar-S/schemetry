@@ -283,6 +283,8 @@ impl SchemaFolderOverrideRepository for NoOverrides {
 pub struct MemoryPolicies {
     pub policies: Mutex<HashMap<i64, McpPolicy>>,
     pub passwords: Mutex<HashMap<i64, String>>,
+    /// Simulates a machine without a keychain: password deletion fails.
+    pub keychain_unavailable: AtomicBool,
 }
 
 impl McpPolicyRepository for MemoryPolicies {
@@ -330,6 +332,9 @@ impl McpPolicyRepository for MemoryPolicies {
         Ok(self.passwords.lock().unwrap().get(&id).cloned())
     }
     fn delete_account_password(&self, id: i64) -> Result<()> {
+        if self.keychain_unavailable.load(Ordering::SeqCst) {
+            return Err(anyhow!("No default store has been set"));
+        }
         self.passwords.lock().unwrap().remove(&id);
         Ok(())
     }
