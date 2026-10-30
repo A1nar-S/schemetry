@@ -4,53 +4,40 @@ pub mod models;
 pub mod repositories;
 pub mod services;
 pub mod state;
+pub mod utils;
 
-use std::sync::Arc;
+use anyhow::{Context, Result};
+use std::ffi::OsString;
 
-use crate::repositories::connection_repository::SqliteConnectionRepository;
-use crate::repositories::filter_rule_repository::SqliteFilterRuleRepository;
-use crate::repositories::folder_schema_override_repository::SqliteSchemaFolderOverrideRepository;
-use crate::repositories::history_naming_rule_repository::SqliteHistoryNamingRuleRepository;
 use crate::repositories::oracle_repository::{configure_client_lib_dir, set_client_lib_dir_hint};
-use crate::repositories::query_history_repository::SqliteQueryHistoryRepository;
-use crate::services::connection_catalog::ConnectionCatalogService;
-use crate::services::filter_rules::FilterRuleService;
-use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
-use crate::services::history_naming_rules::HistoryNamingRuleService;
-use crate::services::query_history::QueryHistoryService;
-use crate::state::AppState;
+use crate::state::{AppServices, AppState};
 
-fn bootstrap() {
-    if let Err(err) = services::settings::init_db() {
-        eprintln!("Failed to initialize settings table: {err}");
-    }
+pub fn init(db_override: Option<OsString>) -> Result<AppServices> {
+    utils::paths::configure_db_path(db_override)
+        .context("Failed to configure SQLite database path")?;
 
-    let catalog = ConnectionCatalogService::new(Arc::new(SqliteConnectionRepository::new()));
-    if let Err(err) = catalog.init_db() {
-        eprintln!("Failed to initialize sqlite: {err}");
-    }
-
-    let query_history_svc = QueryHistoryService::new(Arc::new(SqliteQueryHistoryRepository::new()));
-    if let Err(err) = query_history_svc.init_db() {
-        eprintln!("Failed to initialize query history sqlite table: {err}");
-    }
-
-    let filter_rules_svc = FilterRuleService::new(Arc::new(SqliteFilterRuleRepository::new()));
-    if let Err(err) = filter_rules_svc.init_db() {
-        eprintln!("Failed to initialize table filter rules sqlite table: {err}");
-    }
-
-    let history_naming_rules_svc =
-        HistoryNamingRuleService::new(Arc::new(SqliteHistoryNamingRuleRepository::new()));
-    if let Err(err) = history_naming_rules_svc.init_db() {
-        eprintln!("Failed to initialize history naming rules sqlite table: {err}");
-    }
-
-    let folder_schema_overrides_svc =
-        SchemaFolderOverrideService::new(Arc::new(SqliteSchemaFolderOverrideRepository::new()));
-    if let Err(err) = folder_schema_overrides_svc.init_db() {
-        eprintln!("Failed to initialize schema folder overrides sqlite table: {err}");
-    }
+    services::settings::init_db().context("Failed to initialize settings table")?;
+    let services = AppServices::new();
+    services
+        .catalog
+        .init_db()
+        .context("Failed to initialize connections table")?;
+    services
+        .query_history_svc
+        .init_db()
+        .context("Failed to initialize query history table")?;
+    services
+        .filter_rules_svc
+        .init_db()
+        .context("Failed to initialize table filter rules")?;
+    services
+        .history_naming_rules_svc
+        .init_db()
+        .context("Failed to initialize history naming rules")?;
+    services
+        .folder_schema_overrides_svc
+        .init_db()
+        .context("Failed to initialize schema folder overrides")?;
 
     if let Some(dir) = services::settings::load_client_lib_dir() {
         set_client_lib_dir_hint(&dir);
@@ -58,16 +45,18 @@ fn bootstrap() {
             eprintln!("Oracle client init warning ({dir}): {err}");
         }
     }
+
+    Ok(services)
 }
 
-pub fn run() {
+pub fn run(db_override: Option<OsString>) -> anyhow::Result<()> {
     logging::install_panic_hook();
-    bootstrap();
+    let services = init(db_override)?;
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
-        .manage(AppState::new())
+        .manage(AppState::from_services(services))
         .invoke_handler(tauri::generate_handler![
             commands::connections::get_connections,
             commands::connections::save_connection,
@@ -115,6 +104,10 @@ pub fn run() {
             commands::folder_schema_overrides::save_folder_schema_override,
             commands::folder_schema_overrides::delete_folder_schema_override,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(tauri::generate_context!())?;
+    Ok(())
 }
+
+#[cfg(test)]
+#[path = "tests/bootstrap.rs"]
+mod tests;

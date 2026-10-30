@@ -24,7 +24,7 @@ impl SqliteQueryHistoryRepository {
     }
 
     fn db_path() -> PathBuf {
-        PathBuf::from("schemetry.db")
+        crate::utils::paths::db_path()
     }
 }
 
