@@ -9,6 +9,7 @@
   import { auditVerification } from './stores/mcpAuditViewState';
   import BusyOverlay from './components/BusyOverlay.svelte';
   import Toast from './components/Toast.svelte';
+  import TitleBar from './components/TitleBar.svelte';
   import QueryView from './views/QueryView.svelte';
   import FixView from './views/FixView.svelte';
   import DdlView from './views/DdlView.svelte';
@@ -87,6 +88,7 @@
 </script>
 
 <div class="app-shell">
+<TitleBar title={VIEW_TITLES[activeView]} {sidebarCollapsed} onToggleSidebar={toggleSidebar} />
 {#if showAuditBanner}
   <div class="mcp-notice mcp-notice-danger audit-banner" role="alert">
     <Icon name="alert-triangle" size={15} />
@@ -102,12 +104,6 @@
 <div class="layout" class:sidebar-collapsed={sidebarCollapsed}>
   <!-- Sidebar -->
   <aside class="sidebar">
-    <div class="brand">
-      {#if !sidebarCollapsed}Schemetry{/if}
-      <button class="collapse-btn" on:click={toggleSidebar} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-        <Icon name={sidebarCollapsed ? 'chevron-right' : 'chevron-left'} size={16} />
-      </button>
-    </div>
     <nav class="nav-links">
       <button
         class="nav-btn"
@@ -184,9 +180,6 @@
 
   <!-- Content -->
   <div class="content-area">
-    <div class="view-header">
-      <span class="view-title">{VIEW_TITLES[activeView]}</span>
-    </div>
     <div class="view-body">
       {#if activeView === 'query'}
         <QueryView {connections} />

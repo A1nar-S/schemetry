@@ -233,6 +233,7 @@
 @layer components {
 
   /* App layout */
+  :root { --titlebar-h: 38px; --sidebar-w: 220px; --sidebar-w-collapsed: 48px; }
   .app-shell {
     display: flex;
     flex-direction: column;
@@ -241,7 +242,7 @@
   }
   .layout {
     display: grid;
-    grid-template-columns: 220px 1fr;
+    grid-template-columns: var(--sidebar-w) 1fr;
     flex: 1;
     min-height: 0;
     overflow: hidden;
@@ -263,8 +264,71 @@
     opacity: 0.85;
   }
   .layout.sidebar-collapsed {
-    grid-template-columns: 48px 1fr;
+    grid-template-columns: var(--sidebar-w-collapsed) 1fr;
   }
+
+  /* Title bar — replaces the native window frame. Its columns line up with
+     the sidebar and content below so it reads as part of the app. */
+  .titlebar {
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: var(--sidebar-w) 1fr auto;
+    height: var(--titlebar-h);
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+    position: relative;
+    transition: grid-template-columns 0.2s ease;
+  }
+  .titlebar.sidebar-collapsed { grid-template-columns: var(--sidebar-w-collapsed) 1fr auto; }
+  .titlebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px 0 16px;
+    border-right: 1px solid var(--border);
+    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-accent);
+    letter-spacing: -0.01em;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .titlebar.sidebar-collapsed .titlebar-brand { padding: 0; justify-content: center; }
+  .titlebar.sidebar-collapsed .collapse-btn { margin-left: 0; }
+  .titlebar-title {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    padding: 0 16px;
+    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .window-controls { display: flex; height: 100%; }
+  .window-btn {
+    width: 46px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--text-muted);
+    transition: background 0.1s, color 0.1s;
+  }
+  .window-btn svg { fill: none; stroke: currentColor; stroke-width: 1; shape-rendering: crispEdges; }
+  .window-btn:hover { background: var(--nav-btn-hover-bg); color: var(--text-primary); }
+  .window-btn-close:hover { background: #c42b1c; color: #fff; }
+  .window-btn-close:active { background: #b22a1b; color: #fff; }
 
   /* Sidebar */
   .sidebar {
@@ -273,21 +337,6 @@
     background: var(--bg-panel);
     border-right: 1px solid var(--border);
     overflow-y: auto;
-  }
-  .brand {
-    padding: 16px 16px 12px;
-    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
-    font-size: 16px;
-    font-weight: 700;
-    color: var(--text-accent);
-    letter-spacing: -0.01em;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    overflow: hidden;
-    white-space: nowrap;
   }
   .collapse-btn {
     margin-left: auto;
@@ -306,7 +355,6 @@
   .sidebar-collapsed .nav-label { display: none; }
   .sidebar-collapsed .theme-toggle { justify-content: center; padding: 10px 0; }
   .sidebar-collapsed .nav-btn { justify-content: center; padding: 9px 0; }
-  .sidebar-collapsed .brand { padding: 16px 0 12px; justify-content: center; }
   .nav-links {
     display: flex;
     flex-direction: column;
@@ -370,22 +418,6 @@
     overflow: hidden;
     background: var(--bg-base);
   }
-  .view-header {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    padding: 0 16px;
-    height: 38px;
-    background: var(--bg-panel);
-    border-bottom: 1px solid var(--border);
-  }
-  .view-title {
-    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--text-primary);
-    letter-spacing: -0.01em;
-  }
   .view-body {
     flex: 1;
     overflow: hidden;
@@ -418,7 +450,7 @@
   /* Busy overlay */
   .busy-overlay {
     position: fixed;
-    inset: 0;
+    inset: var(--titlebar-h) 0 0 0;
     z-index: 50;
     display: flex;
     align-items: center;
@@ -485,7 +517,7 @@
 
   /* Modal */
   .modal-overlay {
-    position: fixed; inset: 0; z-index: 40;
+    position: fixed; inset: var(--titlebar-h) 0 0 0; z-index: 40;
     display: flex; align-items: center; justify-content: center;
     background: rgba(0,0,0,0.5);
   }
