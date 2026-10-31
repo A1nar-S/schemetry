@@ -5,6 +5,10 @@
 //! a hard guarantee — views, synonyms, functions that read tables internally and dynamic
 //! SQL cannot be seen statically. The hard boundary is a read-only transaction plus,
 //! ideally, a dedicated database account that can only `SELECT` the allowed tables.
+//!
+//! Function calls are handled with an **allowlist**: every call-like token (`name(`,
+//! `pkg.name(`, constructors, member calls) must be a known-safe scalar, aggregate or window
+//! function for the connection's engine. A small blocklist stays on top as a second barrier.
 
 use crate::models::DbType;
 
@@ -19,8 +23,30 @@ const FORBIDDEN_WORDS: &[&str] = &[
     "TABLE",
 ];
 
-/// Functions/packages that read or write outside the allowlist or the database.
+/// Defence in depth, checked *before* the function allowlist: functions/packages that read
+/// or write outside the table allowlist or the database. The allowlist
+/// ([`COMMON_FUNCTIONS`] & co.) is the primary control; this list only guarantees a clear
+/// "blocked" message and a second barrier should an allowlist entry ever be added by mistake.
 const FORBIDDEN_FUNCTIONS: &[&str] = &[
+    "NEXTVAL",
+    "CURRVAL",
+    "SETVAL",
+    "LASTVAL",
+    "XMLQUERY",
+    "XMLTABLE",
+    "EXTRACTVALUE",
+    "EXISTSNODE",
+    "XMLSEQUENCE",
+    "UPDATEXML",
+    "PG_ADVISORY_LOCK",
+    "PG_ADVISORY_XACT_LOCK",
+    "PG_RELOAD_CONF",
+    "LO_CREATE",
+    "LO_FROM_BYTEA",
+    "LO_PUT",
+    "LO_UNLINK",
+    "HTP",
+    "HTF",
     "DBLINK",
     "DBLINK_EXEC",
     "DBLINK_CONNECT",
@@ -60,6 +86,79 @@ const FORBIDDEN_FUNCTIONS: &[&str] = &[
     "SET_CONFIG",
     "PG_TERMINATE_BACKEND",
     "PG_CANCEL_BACKEND",
+];
+
+/// Oracle package families that never belong in a read-only query (DBMS_*, UTL_*, …). Checked
+/// on every name, called or not, because Oracle lets parameterless package functions be used
+/// without parentheses (`UTL_INADDR.GET_HOST_NAME`).
+const ORACLE_FORBIDDEN_PREFIXES: &[&str] = &["DBMS_", "UTL_", "OWA_", "CTX_", "SDO_", "APEX_"];
+
+/// Functions allowed on both engines (SQL standard or identical in Oracle and Postgres).
+/// Names are upper-case; unquoted calls are matched case-insensitively.
+#[rustfmt::skip]
+const COMMON_FUNCTIONS: &[&str] = &[
+    // aggregates
+    "COUNT", "SUM", "AVG", "MIN", "MAX", "STDDEV", "STDDEV_POP", "STDDEV_SAMP", "VARIANCE",
+    "VAR_POP", "VAR_SAMP", "CORR", "COVAR_POP", "COVAR_SAMP", "PERCENTILE_CONT",
+    "PERCENTILE_DISC", "ROLLUP", "CUBE", "GROUPING",
+    // window / ranking
+    "ROW_NUMBER", "RANK", "DENSE_RANK", "PERCENT_RANK", "CUME_DIST", "NTILE", "LAG", "LEAD",
+    "FIRST_VALUE", "LAST_VALUE", "NTH_VALUE",
+    // conditional / conversion
+    "COALESCE", "NULLIF", "GREATEST", "LEAST", "CAST", "TO_CHAR", "TO_DATE", "TO_NUMBER",
+    "TO_TIMESTAMP",
+    // strings
+    "UPPER", "LOWER", "INITCAP", "TRIM", "LTRIM", "RTRIM", "LPAD", "RPAD", "SUBSTR", "LENGTH",
+    "REPLACE", "TRANSLATE", "CONCAT", "POSITION", "OVERLAY", "ASCII", "CHR", "REGEXP_REPLACE",
+    // numbers
+    "ABS", "CEIL", "FLOOR", "ROUND", "TRUNC", "MOD", "POWER", "SQRT", "EXP", "LN", "LOG", "SIGN",
+    "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN", "ATAN2", "SINH", "COSH", "TANH", "WIDTH_BUCKET",
+    // dates
+    "EXTRACT", "CURRENT_DATE", "CURRENT_TIMESTAMP", "LOCALTIMESTAMP",
+    // types that take a precision/length: `CAST(x AS NUMBER(10, 2))`, `INTERVAL DAY(3) TO SECOND`
+    "NUMERIC", "DECIMAL", "DEC", "CHAR", "VARCHAR", "FLOAT", "TIMESTAMP", "TIME", "DATE",
+    "INTERVAL", "YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND",
+];
+
+#[rustfmt::skip]
+const ORACLE_FUNCTIONS: &[&str] = &[
+    "MEDIAN", "LISTAGG", "APPROX_COUNT_DISTINCT", "RATIO_TO_REPORT", "GROUPING_ID", "NVL", "NVL2",
+    "DECODE", "NANVL", "SYSDATE", "SYSTIMESTAMP", "INSTR", "SOUNDEX", "NLS_UPPER", "NLS_LOWER",
+    "NLS_INITCAP", "LENGTHB", "REGEXP_SUBSTR", "REGEXP_INSTR", "REGEXP_COUNT", "REGEXP_LIKE",
+    "REMAINDER", "BITAND", "ADD_MONTHS", "MONTHS_BETWEEN", "LAST_DAY", "NEXT_DAY", "FROM_TZ",
+    "SYS_EXTRACT_UTC", "NUMTODSINTERVAL", "NUMTOYMINTERVAL", "TO_DSINTERVAL", "TO_YMINTERVAL",
+    "TO_TIMESTAMP_TZ", "TO_NCHAR", "TO_CLOB", "TO_BINARY_FLOAT", "TO_BINARY_DOUBLE", "RAWTOHEX",
+    "HEXTORAW", "JSON_VALUE", "JSON_QUERY", "JSON_EXISTS", "JSON_OBJECT", "JSON_ARRAY",
+    "JSON_ARRAYAGG", "JSON_OBJECTAGG", "VARCHAR2", "NVARCHAR2", "NCHAR", "NUMBER", "RAW",
+    "UROWID",
+];
+
+#[rustfmt::skip]
+const POSTGRES_FUNCTIONS: &[&str] = &[
+    "STRING_AGG", "ARRAY_AGG", "BOOL_AND", "BOOL_OR", "EVERY", "BIT_AND", "BIT_OR", "MODE",
+    "ANY_VALUE", "SUBSTRING", "LEFT", "RIGHT", "BTRIM", "SPLIT_PART", "STRPOS", "CONCAT_WS",
+    "FORMAT", "REVERSE", "MD5", "TO_HEX", "STARTS_WITH", "CHAR_LENGTH", "CHARACTER_LENGTH",
+    "OCTET_LENGTH", "BIT_LENGTH", "REGEXP_MATCH", "CEILING", "DIV", "CBRT", "DEGREES", "RADIANS",
+    "PI", "SCALE", "NOW", "DATE_TRUNC", "DATE_PART", "DATE_BIN", "AGE", "MAKE_DATE",
+    "MAKE_TIMESTAMP", "MAKE_INTERVAL", "ISFINITE", "CURRENT_TIME", "LOCALTIME", "ARRAY_LENGTH",
+    "ARRAY_TO_STRING", "ARRAY_POSITION", "STRING_TO_ARRAY", "ARRAY_APPEND", "CARDINALITY",
+    "NUM_NULLS", "NUM_NONNULLS", "TO_JSON", "TO_JSONB", "ROW_TO_JSON", "JSON_BUILD_OBJECT",
+    "JSONB_BUILD_OBJECT", "JSON_BUILD_ARRAY", "JSONB_BUILD_ARRAY", "JSON_AGG", "JSONB_AGG",
+    "JSON_OBJECT_AGG", "JSONB_OBJECT_AGG", "JSON_TYPEOF", "JSONB_TYPEOF", "JSON_ARRAY_LENGTH",
+    "JSONB_ARRAY_LENGTH", "JSONB_PRETTY", "JSON_EXTRACT_PATH", "JSON_EXTRACT_PATH_TEXT",
+    "JSONB_EXTRACT_PATH", "JSONB_EXTRACT_PATH_TEXT", "JSONB_STRIP_NULLS", "VARYING", "BIT",
+];
+
+/// Reserved or purely syntactic words that legitimately sit directly before a `(` without
+/// being a function call (`IN (…)`, `OVER (…)`, `EXISTS (…)`). None of them can name a
+/// function unquoted in either engine, so they are never mistaken for one.
+#[rustfmt::skip]
+const NON_FUNCTION_KEYWORDS: &[&str] = &[
+    "IN", "AND", "OR", "NOT", "EXISTS", "ON", "WHERE", "SELECT", "FROM", "AS", "WHEN", "THEN",
+    "ELSE", "CASE", "VALUES", "OVER", "BY", "UNION", "INTERSECT", "EXCEPT", "MINUS", "ALL", "ANY",
+    "SOME", "DISTINCT", "USING", "BETWEEN", "LIKE", "ILIKE", "IS", "JOIN", "WITH", "HAVING", "TO",
+    "OF", "FILTER", "GROUP", "SETS", "LIMIT", "OFFSET", "ROWS", "RANGE", "GROUPS", "ESCAPE",
+    "PRIOR", "START", "CONNECT", "ARRAY", "ROW", "KEEP", "RECURSIVE", "MATERIALIZED", "LATERAL",
 ];
 
 /// Keywords that end an alias position when scanning FROM lists.
@@ -242,11 +341,183 @@ fn name_of(token: &Token, db_type: DbType) -> Option<String> {
     }
 }
 
+/// Blocklist (defence in depth). Quoted names are compared case-insensitively on purpose:
+/// this layer errs on the side of rejecting.
+fn is_forbidden_function(name: &str, db_type: DbType) -> bool {
+    FORBIDDEN_FUNCTIONS
+        .iter()
+        .any(|f| name.eq_ignore_ascii_case(f))
+        || (db_type == DbType::Oracle
+            && ORACLE_FORBIDDEN_PREFIXES.iter().any(|p| {
+                name.len() >= p.len()
+                    && name.is_char_boundary(p.len())
+                    && name[..p.len()].eq_ignore_ascii_case(p)
+            }))
+}
+
+fn on_allowlist(name: &str, db_type: DbType) -> bool {
+    let engine_specific = match db_type {
+        DbType::Oracle => ORACLE_FUNCTIONS,
+        DbType::Postgres => POSTGRES_FUNCTIONS,
+    };
+    [COMMON_FUNCTIONS, engine_specific]
+        .iter()
+        .any(|list| list.iter().any(|f| name.eq_ignore_ascii_case(f)))
+}
+
+fn is_name(token: Option<&Token>) -> bool {
+    matches!(token, Some(Token::Word(_) | Token::Quoted(_)))
+}
+
+/// How a call is written in the error message: unquoted names as typed, quoted ones quoted.
+fn display_name(token: &Token) -> String {
+    match token {
+        Token::Word(w) => w.clone(),
+        Token::Quoted(q) => format!("\"{q}\""),
+        _ => String::new(),
+    }
+}
+
+/// Whether the engine would resolve this name to the allowlisted built-in of that name.
+/// Unquoted names fold to the engine's case, so any case matches; a quoted name is
+/// case-sensitive, so it only matches when it is already spelled in the engine's folded
+/// case. Non-ASCII names never match (engines fold them differently than Rust does).
+fn name_on_allowlist(token: &Token, db_type: DbType) -> bool {
+    match token {
+        Token::Word(w) => w.is_ascii() && on_allowlist(w, db_type),
+        Token::Quoted(q) => {
+            let folded = match db_type {
+                DbType::Oracle => q.to_ascii_uppercase(),
+                DbType::Postgres => q.to_ascii_lowercase(),
+            };
+            q.is_ascii() && *q == folded && on_allowlist(q, db_type)
+        }
+        _ => false,
+    }
+}
+
+fn not_on_allowlist(display: &str, db_type: DbType) -> String {
+    let engine = match db_type {
+        DbType::Oracle => "Oracle",
+        DbType::Postgres => "Postgres",
+    };
+    format!(
+        "Function {display} is not on the run_query function allowlist for {engine}; \
+         only listed scalar, aggregate and window functions may be called."
+    )
+}
+
+/// Indices of the names in `WITH name(col, …) AS (` CTE headers, which look like calls.
+/// Only recognised before the main SELECT at the top level, so a call can't pose as one.
+fn cte_column_list_headers(tokens: &[Token]) -> Vec<usize> {
+    let mut headers = Vec::new();
+    let mut depth = 0usize;
+    for (i, token) in tokens.iter().enumerate() {
+        match token {
+            Token::Symbol('(') => depth += 1,
+            Token::Symbol(')') => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == 0 && word_is(Some(token), "SELECT") {
+            break;
+        }
+        let after_with_or_comma = i > 0
+            && (word_in(tokens.get(i - 1), &["WITH", "RECURSIVE"])
+                || matches!(tokens.get(i - 1), Some(Token::Symbol(','))));
+        if depth == 0
+            && is_name(Some(token))
+            && after_with_or_comma
+            && matches!(tokens.get(i + 1), Some(Token::Symbol('(')))
+        {
+            let mut j = i + 2;
+            while is_name(tokens.get(j)) && matches!(tokens.get(j + 1), Some(Token::Symbol(','))) {
+                j += 2;
+            }
+            if is_name(tokens.get(j))
+                && matches!(tokens.get(j + 1), Some(Token::Symbol(')')))
+                && word_is(tokens.get(j + 2), "AS")
+            {
+                headers.push(i);
+            }
+        }
+    }
+    headers
+}
+
+/// The function allowlist: every name directly followed by `(` — plain, schema/package
+/// qualified or a member call — must be a known-safe built-in. This also catches Oracle
+/// object-type constructors (`DBURITYPE('…')`) and type methods (`….getclob()`), since
+/// none of them is on the list.
+fn check_function_calls(
+    tokens: &[Token],
+    cte_headers: &[usize],
+    db_type: DbType,
+) -> Result<(), String> {
+    for (i, token) in tokens.iter().enumerate() {
+        if !is_name(Some(token))
+            || !matches!(tokens.get(i + 1), Some(Token::Symbol('(')))
+            || cte_headers.contains(&i)
+        {
+            continue;
+        }
+
+        // Walk back over `a.b.` qualifiers.
+        let mut start = i;
+        while start >= 2
+            && matches!(tokens[start - 1], Token::Symbol('.'))
+            && is_name(tokens.get(start - 2))
+        {
+            start -= 2;
+        }
+        let chain: Vec<String> = tokens[start..=i]
+            .iter()
+            .filter(|t| is_name(Some(t)))
+            .map(display_name)
+            .collect();
+        let display = chain.join(".");
+
+        if start >= 1 && matches!(tokens[start - 1], Token::Symbol('.')) {
+            return Err(format!(
+                "Member call .{}(…) on an expression: {}",
+                chain.last().cloned().unwrap_or_default(),
+                not_on_allowlist(&display, db_type)
+            ));
+        }
+
+        if start == i {
+            if let Token::Word(w) = token
+                && NON_FUNCTION_KEYWORDS
+                    .iter()
+                    .any(|k| w.eq_ignore_ascii_case(k))
+            {
+                continue;
+            }
+        } else {
+            // Only the Postgres catalog schema is a known home for built-ins.
+            let pg_catalog_call = db_type == DbType::Postgres
+                && start + 2 == i
+                && match &tokens[start] {
+                    Token::Word(w) => w.eq_ignore_ascii_case("pg_catalog"),
+                    Token::Quoted(q) => q == "pg_catalog",
+                    _ => false,
+                };
+            if !pg_catalog_call {
+                return Err(not_on_allowlist(&display, db_type));
+            }
+        }
+
+        if !name_on_allowlist(token, db_type) {
+            return Err(not_on_allowlist(&display, db_type));
+        }
+    }
+    Ok(())
+}
+
 /// Names defined as `name AS (` at the top level of the statement — its common table
 /// expressions. A `WITH` nested inside a subquery is not recognised on purpose: its names
 /// are only in scope there, so treating them as global could hide a real table of the
 /// same name elsewhere. (Its inner references then fail the allowlist, which is safe.)
-fn cte_names(tokens: &[Token], db_type: DbType) -> Vec<String> {
+fn cte_names(tokens: &[Token], cte_headers: &[usize], db_type: DbType) -> Vec<String> {
     let mut names = Vec::new();
     let mut depth = 0usize;
     for (i, token) in tokens.iter().enumerate() {
@@ -256,20 +527,15 @@ fn cte_names(tokens: &[Token], db_type: DbType) -> Vec<String> {
             _ => {}
         }
         if depth == 0
-            && word_is(tokens.get(i + 1), "AS")
-            && matches!(tokens.get(i + 2), Some(Token::Symbol('(')))
+            && (cte_headers.contains(&i)
+                || (word_is(tokens.get(i + 1), "AS")
+                    && matches!(tokens.get(i + 2), Some(Token::Symbol('(')))))
             && let Some(name) = name_of(token, db_type)
         {
             names.push(name);
         }
     }
     names
-}
-
-fn is_forbidden_function(name: &str) -> bool {
-    FORBIDDEN_FUNCTIONS
-        .iter()
-        .any(|f| name.eq_ignore_ascii_case(f))
 }
 
 /// Validates `raw` as a single read-only SELECT and lists the tables it reads.
@@ -304,21 +570,29 @@ pub fn analyze(raw: &str, db_type: DbType) -> Result<AnalyzedSql, String> {
                         word.to_uppercase()
                     ));
                 }
-                if is_forbidden_function(word) {
-                    return Err(format!("{} is not allowed.", word.to_uppercase()));
+                if is_forbidden_function(word, db_type) {
+                    return Err(format!(
+                        "{} is blocked and not on the run_query function allowlist.",
+                        word.to_uppercase()
+                    ));
                 }
             }
             // Quoted names resolve to the same functions as unquoted ones ("pg_read_file"(…),
             // "DBMS_XMLGEN".getxml(…)), so they are checked too, in any case. Quoted
             // identifiers stay exempt from FORBIDDEN_WORDS: those only matter as keywords.
-            Token::Quoted(name) if is_forbidden_function(name) => {
-                return Err(format!("{} is not allowed.", name.to_uppercase()));
+            Token::Quoted(name) if is_forbidden_function(name, db_type) => {
+                return Err(format!(
+                    "\"{name}\" is blocked and not on the run_query function allowlist."
+                ));
             }
             _ => {}
         }
     }
 
-    let ctes = cte_names(body, db_type);
+    let cte_headers = cte_column_list_headers(body);
+    check_function_calls(body, &cte_headers, db_type)?;
+
+    let ctes = cte_names(body, &cte_headers, db_type);
     let tables = extract_tables(body, &ctes, db_type)?;
 
     // The text is run as given minus the trailing semicolon, so what was analysed is

@@ -508,6 +508,9 @@ fn raw_sql_is_checked_and_runs_read_only() {
         "DELETE FROM employees",
         "WITH d AS (DELETE FROM employees RETURNING *) SELECT * FROM d",
         "SELECT pg_read_file('/etc/passwd')",
+        r#"SELECT "pg_read_file"('/etc/passwd')"#,
+        "SELECT query_to_xml('select * from audit_log', true, true, '')",
+        "SELECT my_unlisted_function(1) FROM employees",
     ] {
         assert!(
             matches!(run(sql), Err(ToolError::Denied(_))),
