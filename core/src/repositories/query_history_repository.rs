@@ -63,7 +63,7 @@ impl QueryHistoryRepository for SqliteQueryHistoryRepository {
     fn load_history(&self) -> Result<Vec<QueryHistoryEntry>> {
         let conn = Connection::open(Self::db_path())?;
         let mut stmt = conn.prepare(
-            "SELECT id, sql_text, pinned, favorite, description FROM query_history ORDER BY favorite DESC, sort_order ASC, pinned DESC, id DESC",
+            "SELECT id, sql_text, pinned, favorite, description, created_at FROM query_history ORDER BY favorite DESC, sort_order ASC, pinned DESC, id DESC",
         )?;
 
         let history = stmt
@@ -74,6 +74,7 @@ impl QueryHistoryRepository for SqliteQueryHistoryRepository {
                     pinned: row.get::<_, i64>(2)? != 0,
                     favorite: row.get::<_, i64>(3)? != 0,
                     description: row.get::<_, String>(4)?,
+                    created_at: row.get::<_, String>(5)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

@@ -54,6 +54,7 @@ export type QueryHistoryEntry = {
   pinned: boolean;
   favorite: boolean;
   description: string;
+  created_at: string; // UTC, "YYYY-MM-DD HH:MM:SS"
 };
 
 export type Discrepancy = {
