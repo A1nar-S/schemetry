@@ -27,6 +27,7 @@
   import LobViewer from '../components/LobViewer.svelte';
   import { toCompletionSchema } from '../sqlCompletion';
   import type { QueryHistoryEntry, QueryServerResult } from '../types';
+  import type { HistoryFilter } from '../stores/queryViewState';
   import {
     selectedServers,
     sql,
@@ -34,6 +35,8 @@
     activeServer,
     history,
     historyOpen,
+    historyFilter,
+    EMPTY_HISTORY_FILTER,
     lastExportDir,
     exportMode,
     exportFormat,
@@ -259,6 +262,50 @@
     await pinQueryHistoryItem(id, pinned).catch(() => {});
     history.set(await getQueryHistory().catch(() => []));
   }
+
+  // ── History filters ────────────────────────────────────────────────
+  function statementKind(sqlText: string): 'select' | 'dml' | 'ddl' | 'other' {
+    // Skip leading whitespace and comments to reach the first keyword.
+    const body = sqlText.replace(/^(\s+|--[^\n]*(\n|$)|\/\*[\s\S]*?\*\/)*/, '');
+    const word = (/^[a-z]+/i.exec(body)?.[0] ?? '').toUpperCase();
+    if (word === 'SELECT' || word === 'WITH') return 'select';
+    if (['INSERT', 'UPDATE', 'DELETE', 'MERGE'].includes(word)) return 'dml';
+    if (['CREATE', 'ALTER', 'DROP', 'TRUNCATE', 'RENAME', 'COMMENT', 'GRANT', 'REVOKE'].includes(word)) return 'ddl';
+    return 'other';
+  }
+
+  // created_at is UTC from SQLite; NaN if it can't be parsed.
+  function historyTime(entry: QueryHistoryEntry): number {
+    return Date.parse(entry.created_at.replace(' ', 'T') + 'Z');
+  }
+
+  function periodStart(period: HistoryFilter['period']): number {
+    const now = new Date();
+    if (period === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    if (period === 'week') return now.getTime() - 7 * 86_400_000;
+    if (period === 'month') return now.getTime() - 30 * 86_400_000;
+    return -Infinity;
+  }
+
+  function historyTooltip(entry: QueryHistoryEntry): string {
+    const t = historyTime(entry);
+    return Number.isNaN(t) ? entry.sql_text : `${entry.sql_text}\n\nRun ${new Date(t).toLocaleString()}`;
+  }
+
+  function filterHistory(entries: QueryHistoryEntry[], f: HistoryFilter): QueryHistoryEntry[] {
+    const needle = f.text.trim().toLowerCase();
+    const since = periodStart(f.period);
+    return entries.filter(h =>
+      (!f.favoritesOnly || h.favorite) &&
+      (f.kind === 'all' || statementKind(h.sql_text) === f.kind) &&
+      (f.period === 'all' || historyTime(h) >= since) &&
+      (!needle || h.sql_text.toLowerCase().includes(needle) || h.description.toLowerCase().includes(needle)),
+    );
+  }
+
+  $: historyFiltering =
+    !!$historyFilter.text.trim() || $historyFilter.favoritesOnly || $historyFilter.kind !== 'all' || $historyFilter.period !== 'all';
+  $: filteredHistory = historyFiltering ? filterHistory($history, $historyFilter) : $history;
 
   // Clearing keeps pinned and favorite queries.
   let showClearHistoryModal = false;
@@ -625,13 +672,52 @@
               on:click={() => (showClearHistoryModal = true)}
             >Clear</button>
           </div>
-          {#each $history as entry}
+          <div class="history-filters">
+            <div class="history-search">
+              <span class="history-search-icon"><Icon name="search" size={12} /></span>
+              <input type="text" placeholder="Search queries…" bind:value={$historyFilter.text} />
+              {#if $historyFilter.text}
+                <button type="button" class="history-search-clear" title="Clear search" on:click={() => ($historyFilter.text = '')}>
+                  <Icon name="x" size={11} />
+                </button>
+              {/if}
+            </div>
+            <div class="history-filter-row">
+              <button
+                type="button"
+                class="btn-secondary history-fav-toggle"
+                class:active={$historyFilter.favoritesOnly}
+                title={$historyFilter.favoritesOnly ? 'Show all queries' : 'Show favorites only'}
+                on:click={() => ($historyFilter.favoritesOnly = !$historyFilter.favoritesOnly)}
+              ><Icon name="star" size={12} filled={$historyFilter.favoritesOnly} /></button>
+              <select bind:value={$historyFilter.kind} title="Statement type">
+                <option value="all">Any type</option>
+                <option value="select">SELECT</option>
+                <option value="dml">DML</option>
+                <option value="ddl">DDL</option>
+                <option value="other">Other</option>
+              </select>
+              <select bind:value={$historyFilter.period} title="When the query was run">
+                <option value="all">Any time</option>
+                <option value="today">Today</option>
+                <option value="week">Last 7 days</option>
+                <option value="month">Last 30 days</option>
+              </select>
+            </div>
+            {#if historyFiltering}
+              <div class="history-filter-summary">
+                <span>{filteredHistory.length} of {$history.length}</span>
+                <button type="button" class="btn-xs" on:click={() => historyFilter.set({ ...EMPTY_HISTORY_FILTER })}>Reset</button>
+              </div>
+            {/if}
+          </div>
+          {#each filteredHistory as entry}
             <div
               class="history-item"
               class:history-item-pinned={entry.pinned && !entry.favorite}
               class:history-item-favorite={entry.favorite}
               class:history-item-drag-over={dragOverId === entry.id}
-              title={entry.sql_text}
+              title={historyTooltip(entry)}
               role="button"
               tabindex="0"
               on:click={() => recallQuery(entry.sql_text)}
@@ -677,7 +763,7 @@
               </div>
             </div>
           {:else}
-            <div class="empty-state">No history</div>
+            <div class="empty-state">{historyFiltering && $history.length ? 'No matching queries' : 'No history'}</div>
           {/each}
         </div>
       {/if}

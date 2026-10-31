@@ -9,6 +9,17 @@ export const lastRunSql = writable('');
 export const activeServer = writable<number | null>(null);
 export const history = writable<QueryHistoryEntry[]>([]);
 export const historyOpen = writable(false);
+// Filters for the history panel; kept for the session like the rest of this view's state.
+export type HistoryKind = 'all' | 'select' | 'dml' | 'ddl' | 'other';
+export type HistoryPeriod = 'all' | 'today' | 'week' | 'month';
+export type HistoryFilter = {
+  text: string;
+  favoritesOnly: boolean;
+  kind: HistoryKind;
+  period: HistoryPeriod;
+};
+export const EMPTY_HISTORY_FILTER: HistoryFilter = { text: '', favoritesOnly: false, kind: 'all', period: 'all' };
+export const historyFilter = writable<HistoryFilter>({ ...EMPTY_HISTORY_FILTER });
 // Autocomplete metadata per server id, fetched once per session (or on refresh).
 export const completionCache = writable<Record<number, CompletionMetadata>>({});
 // Server picked for autocomplete (and the editor dialect); null = follow the active tab.

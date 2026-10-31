@@ -120,6 +120,8 @@ pub struct QueryHistoryEntry {
     pub pinned: bool,
     pub favorite: bool,
     pub description: String,
+    /// UTC, as SQLite's `CURRENT_TIMESTAMP` writes it: `YYYY-MM-DD HH:MM:SS`.
+    pub created_at: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
