@@ -27,10 +27,16 @@
   export let onCellActivate: ((row: Record<string, unknown>, colKey: string) => void) | undefined = undefined;
   // Case-insensitive substring match, applied in memory.
   export let filterable = false;
+  // SQL-IDE style row selection: click selects a row, Ctrl/Shift+click extend it,
+  // arrow keys move it, Ctrl+C copies the selected rows as tab-separated text.
+  export let rowSelect = false;
+  // Show a row-number column that stays pinned while scrolling sideways.
+  export let rowNumbers = false;
 
   const ROW_H = 32;
   const MIN_COL_W = 40;
   const CHECK_W = 36;
+  const ROWNUM_W = 52;
 
   // ─── Column widths (all pixel-based so resize works) ──────────────
   // flex columns start wide; plain width columns use their specified size.
@@ -50,10 +56,11 @@
   }
 
   $: totalContentWidth =
-    (selectable ? CHECK_W : 0) + colWidths.reduce((sum, w) => sum + w, 0);
+    (selectable ? CHECK_W : 0) + (rowNumbers ? ROWNUM_W : 0) + colWidths.reduce((sum, w) => sum + w, 0);
 
   $: gridTemplate = [
     ...(selectable ? [`${CHECK_W}px`] : []),
+    ...(rowNumbers ? [`${ROWNUM_W}px`] : []),
     ...columns.map((col, i) => col.flex ? `minmax(${colWidths[i]}px, 1fr)` : `${colWidths[i]}px`),
   ].join(' ');
 
@@ -104,6 +111,88 @@
   }
 
   export function clearSelection() { onSelectionChange?.(new Set()); }
+
+  // ─── Row selection (rowSelect) ────────────────────────────────────
+  // Tracked by row object so it survives sorting and filtering.
+  let picked = new Set<Record<string, unknown>>();
+  let anchor: Record<string, unknown> | null = null; // start of a Shift range
+  let cursor: Record<string, unknown> | null = null; // row moved by the arrow keys
+
+  // A new result set clears the selection.
+  $: { rows; picked = new Set(); anchor = null; cursor = null; }
+
+  function pickRow(e: MouseEvent, row: Record<string, unknown>) {
+    if (!rowSelect) return;
+    scrollEl?.focus({ preventScroll: true });
+    if (e.shiftKey && anchor) {
+      selectRange(anchor, row, e.ctrlKey || e.metaKey);
+    } else if (e.ctrlKey || e.metaKey) {
+      const next = new Set(picked);
+      if (next.has(row)) next.delete(row);
+      else next.add(row);
+      picked = next;
+      anchor = row;
+    } else {
+      picked = new Set([row]);
+      anchor = row;
+    }
+    cursor = row;
+  }
+
+  function selectRange(from: Record<string, unknown>, to: Record<string, unknown>, keep: boolean) {
+    const a = sortedRows.indexOf(from);
+    const b = sortedRows.indexOf(to);
+    if (a < 0 || b < 0) { picked = new Set([to]); anchor = to; return; }
+    const next = keep ? new Set(picked) : new Set<Record<string, unknown>>();
+    for (let i = Math.min(a, b); i <= Math.max(a, b); i++) next.add(sortedRows[i]);
+    picked = next;
+  }
+
+  // Shift+click would otherwise select the cell text between the two clicks.
+  function onRowMouseDown(e: MouseEvent) {
+    if (rowSelect && e.shiftKey) e.preventDefault();
+  }
+
+  function onGridKeydown(e: KeyboardEvent) {
+    if (!rowSelect || !sortedRows.length) return;
+    if (e.target instanceof HTMLInputElement) return; // typing in a filter box
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      picked = new Set(sortedRows);
+      return;
+    }
+    if (mod && e.key.toLowerCase() === 'c') {
+      if (!picked.size || window.getSelection()?.toString()) return; // let normal text copy win
+      e.preventDefault();
+      void navigator.clipboard?.writeText(selectedRowsAsText()).catch(() => {});
+      return;
+    }
+    if (e.key === 'Escape') {
+      picked = new Set(); anchor = null; cursor = null;
+      return;
+    }
+    const step = { ArrowDown: 1, ArrowUp: -1, PageDown: 20, PageUp: -20 }[e.key];
+    if (step === undefined && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const cur = cursor ? sortedRows.indexOf(cursor) : -1;
+    let idx = e.key === 'Home' ? 0 : e.key === 'End' ? sortedRows.length - 1 : cur < 0 ? 0 : cur + (step ?? 0);
+    idx = Math.max(0, Math.min(sortedRows.length - 1, idx));
+    const row = sortedRows[idx];
+    if (e.shiftKey && anchor) selectRange(anchor, row, false);
+    else { picked = new Set([row]); anchor = row; }
+    cursor = row;
+    $virt.scrollToIndex(idx, { align: 'auto' });
+  }
+
+  // Selected rows in on-screen order, one line per row, tab between values.
+  function selectedRowsAsText(): string {
+    const clean = (v: unknown) => String(v ?? '').replace(/[\t\r\n]+/g, ' ');
+    return sortedRows
+      .filter(r => picked.has(r))
+      .map(r => columns.map(c => clean(r[c.key])).join('\t'))
+      .join('\n');
+  }
 
   // ─── Virtualizer ─────────────────────────────────────────────────
   // Track rowCount (not row reference) so sorting (same length) never
@@ -163,7 +252,14 @@
     • sticks at the top on vertical scroll
     • moves with the content on horizontal scroll
   -->
-  <div class="vt-scroll" bind:this={scrollEl}>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_static_element_interactions -->
+  <div
+    class="vt-scroll"
+    class:vt-row-select={rowSelect}
+    bind:this={scrollEl}
+    tabindex={rowSelect ? 0 : undefined}
+    on:keydown={onGridKeydown}
+  >
     <div class="vt-inner" style="min-width:{totalContentWidth}px;">
       <!-- Sticky header -->
       <div class="vt-header" style="grid-template-columns:{gridTemplate};">
@@ -176,6 +272,9 @@
               on:change={toggleAll}
             />
           </div>
+        {/if}
+        {#if rowNumbers}
+          <div class="vt-hcell vt-rownum" title="Row number">#</div>
         {/if}
         {#each columns as col, i}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -203,6 +302,9 @@
         <div class="vt-filter-row" style="grid-template-columns:{gridTemplate};">
           {#if selectable}
             <div class="vt-fcell vt-check-cell"></div>
+          {/if}
+          {#if rowNumbers}
+            <div class="vt-fcell vt-rownum"></div>
           {/if}
           {#each columns as col}
             <div class="vt-fcell">
@@ -235,9 +337,11 @@
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div
             class="vt-row"
-            class:vt-row-selected={selectedIds.has(rowId)}
+            class:vt-row-selected={selectable ? selectedIds.has(rowId) : picked.has(row)}
+            class:vt-row-cursor={rowSelect && cursor === row}
             style="position:absolute;top:0;height:{ROW_H}px;transform:translateY({item.start}px);width:100%;display:grid;grid-template-columns:{gridTemplate};"
-            on:click={selectable ? () => toggleRow(rowId) : undefined}
+            on:click={selectable ? () => toggleRow(rowId) : rowSelect ? (e) => pickRow(e, row) : undefined}
+            on:mousedown={onRowMouseDown}
           >
             {#if selectable}
               <div class="vt-cell vt-check-cell">
@@ -248,6 +352,9 @@
                   on:click|stopPropagation
                 />
               </div>
+            {/if}
+            {#if rowNumbers}
+              <div class="vt-cell vt-rownum">{item.index + 1}</div>
             {/if}
             {#each columns as col}
               <!-- svelte-ignore a11y_no_static_element_interactions -->

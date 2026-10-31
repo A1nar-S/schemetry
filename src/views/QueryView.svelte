@@ -599,7 +599,7 @@
         {:else if activeResult?.error}
           <div class="error-box" style="margin-bottom:8px;flex-shrink:0;">{activeResult.error}</div>
         {/if}
-        <VirtualTable columns={vtCols} rows={gridRows} {onCellActivate} getCellClass={cellClass} filterable />
+        <VirtualTable columns={vtCols} rows={gridRows} {onCellActivate} getCellClass={cellClass} filterable rowSelect rowNumbers />
         {#if singleView}
           {#if $results.length}
             <div style="flex-shrink:0;padding:3px 2px 0;font-size:11px;color:var(--text-muted,#888);">

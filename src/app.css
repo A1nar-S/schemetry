@@ -936,6 +936,7 @@
   .vt-cell-missing   { background: rgba(220, 38, 38, 0.25); color: #fca5a5; font-weight: 700; }
   .vt-cell-different { background: rgba(234, 88, 12, 0.25);  color: #fb923c; font-weight: 700; }
 
+<<<<<<< HEAD
   .vt-cell-ok     { background: color-mix(in srgb, var(--text-ok) 18%, transparent);     color: var(--text-ok);     font-weight: 600; }
   .vt-cell-warn   { background: color-mix(in srgb, var(--text-warn) 18%, transparent);   color: var(--text-warn);   font-weight: 600; }
   .vt-cell-danger { background: color-mix(in srgb, var(--text-danger) 18%, transparent); color: var(--text-danger); font-weight: 600; }
@@ -973,6 +974,30 @@
     border-width: 0 0 1px; padding: 6px 16px;
   }
   .audit-banner-text { flex: 1; min-width: 0; }
+=======
+  /* Row selection (VirtualTable rowSelect) */
+  .vt-row-select:focus  { outline: none; }
+  .vt-row-select .vt-row { cursor: default; }
+  /* Keyboard cursor row: a left accent so it's visible inside a multi-row selection. */
+  .vt-row-select:focus .vt-row-cursor .vt-rownum { box-shadow: inset 2px 0 0 var(--text-link); }
+
+  /* Row numbers stay pinned on the left during horizontal scroll. */
+  .vt-rownum {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    justify-content: flex-end;
+    padding: 0 8px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    background: var(--vt-header-bg);
+    border-right: 1px solid var(--vt-header-border);
+    cursor: default;
+  }
+  .vt-hcell.vt-rownum:hover { background: var(--vt-header-bg); }
+  .vt-row-selected .vt-rownum { color: var(--text-primary); background: color-mix(in srgb, var(--vt-row-selected) 60%, var(--vt-header-bg)); }
+>>>>>>> d63537d (Add row selection and row numbers to result grid)
 }
 
 [data-theme="light"] .vt-cell-missing   { background: rgba(220, 38, 38, 0.15); color: #b91c1c; }
