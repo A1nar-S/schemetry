@@ -629,7 +629,6 @@
     flex-shrink: 0; position: relative;
   }
   .history-item:hover { background: var(--history-hover); }
-  .history-item-pinned { border-left: 2px solid var(--text-link); }
   .history-item-favorite { border-left: 2px solid gold; user-select: none; }
   .drag-handle {
     position: absolute; left: 4px; top: 50%; transform: translateY(-50%);

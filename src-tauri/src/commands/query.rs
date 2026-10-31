@@ -213,14 +213,6 @@ pub fn delete_query_history_item(state: State<AppState>, id: i64) -> Result<(), 
 }
 
 #[tauri::command]
-pub fn pin_query_history_item(state: State<AppState>, id: i64, pinned: bool) -> Result<(), String> {
-    state
-        .query_history_svc
-        .pin_query(id, pinned)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn set_query_favorite(
     state: State<AppState>,
     id: i64,

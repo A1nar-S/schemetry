@@ -147,10 +147,6 @@ export async function deleteQueryHistoryItem(id: number): Promise<void> {
   return invoke('delete_query_history_item', { id });
 }
 
-export async function pinQueryHistoryItem(id: number, pinned: boolean): Promise<void> {
-  return invoke('pin_query_history_item', { id, pinned });
-}
-
 export async function setQueryFavorite(id: number, favorite: boolean, description: string): Promise<void> {
   return invoke('set_query_favorite', { id, favorite, description });
 }

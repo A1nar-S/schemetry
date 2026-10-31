@@ -117,7 +117,6 @@ pub struct QueryServerResult {
 pub struct QueryHistoryEntry {
     pub id: i64,
     pub sql_text: String,
-    pub pinned: bool,
     pub favorite: bool,
     pub description: String,
 }

@@ -17,7 +17,6 @@
     saveBlobToFile,
     getQueryHistory,
     getSettings,
-    pinQueryHistoryItem,
     setQueryFavorite,
     reorderFavorites,
     runQuery,
@@ -255,14 +254,9 @@
     history.set(await getQueryHistory().catch(() => []));
   }
 
-  async function onPinHistory(id: number, pinned: boolean) {
-    await pinQueryHistoryItem(id, pinned).catch(() => {});
-    history.set(await getQueryHistory().catch(() => []));
-  }
-
-  // Clearing keeps pinned and favorite queries.
+  // Clearing keeps favorite queries.
   let showClearHistoryModal = false;
-  $: clearableCount = $history.filter(h => !h.pinned && !h.favorite).length;
+  $: clearableCount = $history.filter(h => !h.favorite).length;
 
   async function onClearHistory() {
     showClearHistoryModal = false;
@@ -621,14 +615,13 @@
               class="btn-danger"
               style="font-size:11px;padding:2px 6px;"
               disabled={!clearableCount}
-              title={clearableCount ? 'Clear history (pinned and favorite queries are kept)' : 'Nothing to clear'}
+              title={clearableCount ? 'Clear history (favorite queries are kept)' : 'Nothing to clear'}
               on:click={() => (showClearHistoryModal = true)}
             >Clear</button>
           </div>
           {#each $history as entry}
             <div
               class="history-item"
-              class:history-item-pinned={entry.pinned && !entry.favorite}
               class:history-item-favorite={entry.favorite}
               class:history-item-drag-over={dragOverId === entry.id}
               title={entry.sql_text}
@@ -663,15 +656,8 @@
                   on:click|stopPropagation={() => onFavoriteClick(entry)}
                 ><Icon name="star" size={12} filled={entry.favorite} /></button>
                 <button
-                  class="btn-secondary"
-                  title={entry.favorite ? 'Pin unavailable for favorites' : entry.pinned ? 'Unpin' : 'Pin'}
-                  disabled={entry.favorite}
-                  style="font-size:11px;padding:1px 5px;{entry.pinned && !entry.favorite ? '' : 'opacity:0.45;'}"
-                  on:click|stopPropagation={() => void onPinHistory(entry.id, !entry.pinned)}
-                ><Icon name={entry.pinned ? 'pin-off' : 'pin'} size={12} /></button>
-                <button
                   class="btn-danger"
-                  style="font-size:10px;padding:1px 5px;{entry.pinned || entry.favorite ? 'visibility:hidden;' : ''}"
+                  style="font-size:10px;padding:1px 5px;{entry.favorite ? 'visibility:hidden;' : ''}"
                   on:click|stopPropagation={() => void onDeleteHistory(entry.id)}
                 ><Icon name="x" size={11} /></button>
               </div>
@@ -693,7 +679,7 @@
     </div>
     <p style="margin:12px 0 0;font-size:13px;color:var(--text-primary);">
       This permanently deletes {clearableCount} {clearableCount === 1 ? 'query' : 'queries'} from history.
-      Pinned and favorite queries are kept.
+      Favorite queries are kept.
     </p>
     <div class="modal-footer">
       <button class="btn-secondary" on:click={() => (showClearHistoryModal = false)}>Cancel</button>

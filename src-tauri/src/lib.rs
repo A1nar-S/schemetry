@@ -43,7 +43,6 @@ pub fn run(db_override: Option<OsString>) -> anyhow::Result<()> {
             commands::query::save_blob_to_file,
             commands::query::get_query_history,
             commands::query::delete_query_history_item,
-            commands::query::pin_query_history_item,
             commands::query::set_query_favorite,
             commands::query::reorder_favorites,
             commands::query::clear_query_history,

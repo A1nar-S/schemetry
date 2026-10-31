@@ -30,10 +30,6 @@ impl QueryHistoryService {
         self.repo.delete_query(id)
     }
 
-    pub fn pin_query(&self, id: i64, pinned: bool) -> Result<()> {
-        self.repo.pin_query(id, pinned)
-    }
-
     pub fn set_favorite(&self, id: i64, favorite: bool, description: &str) -> Result<()> {
         self.repo.set_favorite(id, favorite, description)
     }

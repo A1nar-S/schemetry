@@ -51,7 +51,6 @@ export type LobContent = {
 export type QueryHistoryEntry = {
   id: number;
   sql_text: string;
-  pinned: boolean;
   favorite: boolean;
   description: string;
 };
