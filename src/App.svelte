@@ -88,7 +88,7 @@
 </script>
 
 <div class="app-shell">
-<<<<<<< HEAD
+<TitleBar title={VIEW_TITLES[activeView]} {sidebarCollapsed} onToggleSidebar={toggleSidebar} />
 {#if showAuditBanner}
   <div class="mcp-notice mcp-notice-danger audit-banner" role="alert">
     <Icon name="alert-triangle" size={15} />
@@ -101,9 +101,6 @@
     </button>
   </div>
 {/if}
-=======
-<TitleBar title={VIEW_TITLES[activeView]} {sidebarCollapsed} onToggleSidebar={toggleSidebar} />
->>>>>>> 0d98d71 (Add custom title bar with window controls)
 <div class="layout" class:sidebar-collapsed={sidebarCollapsed}>
   <!-- Sidebar -->
   <aside class="sidebar">
