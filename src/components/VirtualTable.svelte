@@ -55,12 +55,14 @@
     }
   }
 
+  $: showRowNums = rowNumbers && columns.length > 0;
+
   $: totalContentWidth =
-    (selectable ? CHECK_W : 0) + (rowNumbers ? ROWNUM_W : 0) + colWidths.reduce((sum, w) => sum + w, 0);
+    (selectable ? CHECK_W : 0) + (showRowNums ? ROWNUM_W : 0) + colWidths.reduce((sum, w) => sum + w, 0);
 
   $: gridTemplate = [
     ...(selectable ? [`${CHECK_W}px`] : []),
-    ...(rowNumbers ? [`${ROWNUM_W}px`] : []),
+    ...(showRowNums ? [`${ROWNUM_W}px`] : []),
     ...columns.map((col, i) => col.flex ? `minmax(${colWidths[i]}px, 1fr)` : `${colWidths[i]}px`),
   ].join(' ');
 
@@ -273,7 +275,7 @@
             />
           </div>
         {/if}
-        {#if rowNumbers}
+        {#if showRowNums}
           <div class="vt-hcell vt-rownum" title="Row number">#</div>
         {/if}
         {#each columns as col, i}
@@ -303,7 +305,7 @@
           {#if selectable}
             <div class="vt-fcell vt-check-cell"></div>
           {/if}
-          {#if rowNumbers}
+          {#if showRowNums}
             <div class="vt-fcell vt-rownum"></div>
           {/if}
           {#each columns as col}
@@ -353,7 +355,7 @@
                 />
               </div>
             {/if}
-            {#if rowNumbers}
+            {#if showRowNums}
               <div class="vt-cell vt-rownum">{item.index + 1}</div>
             {/if}
             {#each columns as col}

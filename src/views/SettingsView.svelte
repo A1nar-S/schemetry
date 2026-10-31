@@ -18,6 +18,14 @@
 
   let mcpCard: McpSettingsCard | undefined;
 
+  type Tab = 'general' | 'oracle' | 'mcp';
+  const TABS: { id: Tab; label: string }[] = [
+    { id: 'general', label: 'General' },
+    { id: 'oracle', label: 'Oracle' },
+    { id: 'mcp', label: 'MCP Server' },
+  ];
+  let tab: Tab = 'general';
+
   let clientLibDir = '';
   let schemaRootFolder = '';
   let ddlFileEncoding = 'utf8';
@@ -97,13 +105,23 @@
   }
 </script>
 
+<div class="settings-scroll">
 <div class="settings-view">
+  <div class="tabs" role="tablist">
+    {#each TABS as t}
+      <button
+        class="tab"
+        class:active={tab === t.id}
+        role="tab"
+        aria-selected={tab === t.id}
+        on:click={() => (tab = t.id)}
+      >{t.label}</button>
+    {/each}
+  </div>
 
-  <div class="settings-grid">
-    <!-- Left column: database-engine-specific config (Oracle today; Postgres etc. later) -->
+  <!-- Panels stay mounted so unsaved edits survive switching tabs. -->
+  <div class="panel" class:active={tab === 'oracle'}>
     <div class="settings-col">
-      <div class="engine-heading">Oracle</div>
-
       <div class="card stack">
         <div class="section-title">Oracle Instant Client</div>
         <p class="hint">
@@ -134,11 +152,10 @@
         </div>
       </div>
     </div>
+  </div>
 
-    <!-- Right column: generic config, independent of database engine -->
+  <div class="panel" class:active={tab === 'general'}>
     <div class="settings-col">
-      <div class="engine-heading">General</div>
-
       <div class="card stack">
         <div class="section-title">Schema Root Folder</div>
         <p class="hint">
@@ -231,12 +248,14 @@
           </div>
         </div>
       </div>
+
+      <SchemaFolderOverridesCard {connections} />
     </div>
   </div>
 
-  <SchemaFolderOverridesCard {connections} />
-
-  <McpSettingsCard bind:this={mcpCard} />
+  <div class="panel" class:active={tab === 'mcp'}>
+    <McpSettingsCard bind:this={mcpCard} />
+  </div>
 
   <div class="row">
     <button class="btn-primary" on:click={() => void onSave()} disabled={$busy}>
@@ -244,29 +263,42 @@
     </button>
   </div>
 </div>
+</div>
 
 <style>
+  /* Scrolls at the window edge; content is capped inside it. */
+  .settings-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
   .settings-view {
     padding: 24px;
     display: flex;
     flex-direction: column;
     gap: 16px;
     max-width: 1180px;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
   }
-  .settings-grid {
-    display: grid;
-    grid-template-columns: minmax(280px, 400px) 1fr;
-    gap: 16px 24px;
-    align-items: start;
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border-input);
   }
-  @media (max-width: 860px) {
-    .settings-grid {
-      grid-template-columns: 1fr;
-    }
+  .tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 8px 16px;
+    margin-bottom: -1px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
   }
+  .tab:hover { color: var(--text-primary); }
+  .tab.active { color: var(--text-link); border-bottom-color: var(--text-link); }
+  .panel { display: none; max-width: 760px; }
+  .panel.active { display: block; }
   .settings-col {
     display: flex;
     flex-direction: column;

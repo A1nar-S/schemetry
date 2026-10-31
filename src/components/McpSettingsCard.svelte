@@ -105,7 +105,7 @@
 
   <label class="check-row">
     <input type="checkbox" bind:checked={dataToolsDisabled} />
-    Disable all MCP data tools (<code>query_table</code>, <code>run_query</code>) regardless of per-connection policy
+    <span>Disable all MCP data tools (<code>query_table</code>, <code>run_query</code>) regardless of per-connection policy</span>
   </label>
 
   <div class="field-row">
