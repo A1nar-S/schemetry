@@ -72,6 +72,8 @@ pub fn run(db_override: Option<OsString>) -> anyhow::Result<()> {
             commands::mcp::mcp_audit_list,
             commands::mcp::mcp_audit_verify,
             commands::mcp::mcp_audit_export_csv,
+            commands::mcp::list_mcp_apply_requests,
+            commands::mcp::decide_mcp_apply_request,
         ])
         .run(tauri::generate_context!())?;
     Ok(())

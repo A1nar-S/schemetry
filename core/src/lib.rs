@@ -51,6 +51,10 @@ pub fn init(db_override: Option<OsString>) -> Result<AppServices> {
         .mcp_audit_svc
         .init_db()
         .context("Failed to initialize the MCP audit log")?;
+    services
+        .mcp_approval_svc
+        .init_db()
+        .context("Failed to initialize the MCP deploy approvals")?;
 
     if let Some(dir) = services::settings::load_client_lib_dir() {
         set_client_lib_dir_hint(&dir);

@@ -6,6 +6,7 @@ use crate::repositories::dispatch_repository::DispatchRepository;
 use crate::repositories::filter_rule_repository::SqliteFilterRuleRepository;
 use crate::repositories::folder_schema_override_repository::SqliteSchemaFolderOverrideRepository;
 use crate::repositories::history_naming_rule_repository::SqliteHistoryNamingRuleRepository;
+use crate::repositories::mcp_apply_approval_repository::SqliteMcpApprovalRepository;
 use crate::repositories::mcp_audit_repository::SqliteMcpAuditRepository;
 use crate::repositories::mcp_policy_repository::SqliteMcpPolicyRepository;
 use crate::repositories::query_history_repository::SqliteQueryHistoryRepository;
@@ -13,6 +14,7 @@ use crate::services::connection_catalog::ConnectionCatalogService;
 use crate::services::filter_rules::FilterRuleService;
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
 use crate::services::history_naming_rules::HistoryNamingRuleService;
+use crate::services::mcp_apply_approval::McpApprovalService;
 use crate::services::mcp_audit::McpAuditService;
 use crate::services::mcp_policy::McpPolicyService;
 use crate::services::query::QueryService;
@@ -30,6 +32,7 @@ pub struct AppServices {
     pub folder_schema_overrides_svc: Arc<SchemaFolderOverrideService>,
     pub mcp_policy_svc: Arc<McpPolicyService>,
     pub mcp_audit_svc: Arc<McpAuditService>,
+    pub mcp_approval_svc: Arc<McpApprovalService>,
 }
 
 impl AppServices {
@@ -58,6 +61,9 @@ impl AppServices {
             ))),
             mcp_audit_svc: Arc::new(McpAuditService::new(Arc::new(
                 SqliteMcpAuditRepository::new(),
+            ))),
+            mcp_approval_svc: Arc::new(McpApprovalService::new(Arc::new(
+                SqliteMcpApprovalRepository::new(),
             ))),
         }
     }

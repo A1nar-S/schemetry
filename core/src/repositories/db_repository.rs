@@ -87,6 +87,45 @@ pub trait DbRepository: Send + Sync {
         object_type: &str,
         max_rows: usize,
     ) -> Result<ObjectErrorList>;
+    /// Executes already-validated `CREATE` statements in the connection's own schema —
+    /// the execution path behind the MCP `apply_ddl` tool. Oracle also reports the
+    /// object's compile errors.
+    fn apply_ddl(
+        &self,
+        conn: &ConnectionRecord,
+        request: &ApplyDdlRequest,
+    ) -> Result<ApplyDdlResult>;
+}
+
+/// One validated statement, ready to send to the database as is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DdlStatement {
+    pub sql: String,
+    /// Upper-case, e.g. `PACKAGE BODY`.
+    pub object_type: String,
+}
+
+pub struct ApplyDdlRequest {
+    /// Normalised object name (upper-case for Oracle).
+    pub object_name: String,
+    pub statements: Vec<DdlStatement>,
+    pub timeout_secs: u32,
+}
+
+/// An `ALL_ERRORS` row left behind by compiling a stored program unit.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct DdlCompileError {
+    pub object_type: String,
+    /// `ERROR` or `WARNING`.
+    pub severity: String,
+    pub line: i64,
+    pub position: i64,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ApplyDdlResult {
+    pub compile_errors: Vec<DdlCompileError>,
 }
 
 /// A bounded, read-only query. `binds` are Oracle `:1`, `:2`, … values; Postgres queries

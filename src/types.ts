@@ -194,6 +194,29 @@ export type McpPolicy = {
   mcp_username: string;
   /** Output only: whether a password is stored for the dedicated MCP account. */
   mcp_password_set: boolean;
+  /** `apply_ddl` may deploy code objects to this connection (dev/test only). */
+  allow_apply_ddl: boolean;
+  /** Each deploy must first be approved by the user in the app. */
+  apply_ddl_requires_approval: boolean;
+};
+
+/** A deploy an agent asked for through `apply_ddl`, waiting for (or holding) approval. */
+export type McpApplyRequest = {
+  id: number;
+  connection_id: number;
+  connection_name: string;
+  object_type: string;
+  object_name: string;
+  sha256: string;
+  bytes: number;
+  /** e.g. `CREATE PACKAGE + PACKAGE BODY`. */
+  summary: string;
+  ddl: string;
+  status: 'pending' | 'approved' | 'rejected' | 'consumed';
+  /** Unix seconds. */
+  created_at: number;
+  /** Unix seconds. */
+  expires_at: number;
 };
 
 export type McpToolStatus = {

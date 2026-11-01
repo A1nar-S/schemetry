@@ -4,6 +4,7 @@ pub mod dispatch_repository;
 pub mod filter_rule_repository;
 pub mod folder_schema_override_repository;
 pub mod history_naming_rule_repository;
+pub mod mcp_apply_approval_repository;
 pub mod mcp_audit_repository;
 pub mod mcp_policy_repository;
 pub mod oracle_repository;

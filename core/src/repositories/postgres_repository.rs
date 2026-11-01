@@ -11,7 +11,8 @@ use crate::models::{
     ObjectErrorList, SchemaObject, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::{
-    DbRepository, LobCell, LobSource, QueryOutput, ReadOnlyQuery, ReadOnlyResult,
+    ApplyDdlRequest, ApplyDdlResult, DbRepository, LobCell, LobSource, QueryOutput, ReadOnlyQuery,
+    ReadOnlyResult,
 };
 use crate::repositories::filter_rule_repository::{ParamStyle, build_predicate};
 use crate::services::cancel::{checkpoint, on_cancel};
@@ -708,7 +709,7 @@ impl DbRepository for DbPostgresRepository {
                         .query_opt(
                             "SELECT pg_get_viewdef(c.oid, true) FROM pg_class c \
                              JOIN pg_namespace n ON n.oid = c.relnamespace \
-                             WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = $3",
+                             WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind::text = $3",
                             &[&schema, &name, &relkind],
                         )
                         .await
@@ -1188,6 +1189,47 @@ impl DbRepository for DbPostgresRepository {
         _max_rows: usize,
     ) -> Result<ObjectErrorList> {
         Ok(ObjectErrorList::not_applicable(NO_INVALID_OBJECTS_MESSAGE))
+    }
+
+    fn apply_ddl(
+        &self,
+        conn: &ConnectionRecord,
+        request: &ApplyDdlRequest,
+    ) -> Result<ApplyDdlResult> {
+        let timeout_secs = request.timeout_secs;
+        self.runtime.block_on(async {
+            let client = self.connect(conn).await?;
+            let schema = Self::schema_of(conn);
+            let timeout_ms = u64::from(timeout_secs.max(1)) * 1000;
+            // Unqualified names land in the connection's schema (first search_path entry).
+            client
+                .batch_execute(&format!(
+                    "SET standard_conforming_strings = on; \
+                     SET statement_timeout = {timeout_ms}; \
+                     SET search_path TO \"{}\"",
+                    schema.replace('"', "\"\"")
+                ))
+                .await
+                .map_err(|e| describe_pg_error(e, timeout_secs))?;
+
+            client
+                .batch_execute("BEGIN")
+                .await
+                .map_err(|e| describe_pg_error(e, timeout_secs))?;
+            for statement in &request.statements {
+                // The extended protocol takes exactly one statement, so even a lexing
+                // difference between the guard and Postgres can't smuggle a second one in.
+                if let Err(e) = client.execute(statement.sql.as_str(), &[]).await {
+                    let _ = client.batch_execute("ROLLBACK").await;
+                    return Err(describe_pg_error(e, timeout_secs));
+                }
+            }
+            client
+                .batch_execute("COMMIT")
+                .await
+                .map_err(|e| describe_pg_error(e, timeout_secs))?;
+            Ok(ApplyDdlResult::default())
+        })
     }
 }
 

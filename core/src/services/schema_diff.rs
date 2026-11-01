@@ -7,7 +7,7 @@ use crate::models::{
     ConnectionRecord, HistoryFixResult, HistoryNamingRule, InvalidObjectList, ObjectErrorList,
     SchemaObject, ServersData, TableDdls, TableFilterRule,
 };
-use crate::repositories::db_repository::DbRepository;
+use crate::repositories::db_repository::{ApplyDdlRequest, ApplyDdlResult, DbRepository};
 use crate::repositories::oracle_repository::configure_client_lib_dir;
 use crate::services::cancel;
 
@@ -109,6 +109,14 @@ impl SchemaDiffService {
     ) -> Result<ObjectErrorList> {
         self.repo
             .fetch_object_errors(conn, name, object_type, max_rows)
+    }
+
+    pub fn apply_ddl(
+        &self,
+        conn: &ConnectionRecord,
+        request: &ApplyDdlRequest,
+    ) -> Result<ApplyDdlResult> {
+        self.repo.apply_ddl(conn, request)
     }
 
     pub fn generate_history_fix(

@@ -7,7 +7,7 @@ use crate::models::{
     InvalidObjectList, ObjectErrorList, SchemaObject, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::{
-    DbRepository, QueryOutput, ReadOnlyQuery, ReadOnlyResult,
+    ApplyDdlRequest, ApplyDdlResult, DbRepository, QueryOutput, ReadOnlyQuery, ReadOnlyResult,
 };
 use crate::repositories::oracle_repository::DbOracleRepository;
 use crate::repositories::postgres_repository::DbPostgresRepository;
@@ -135,5 +135,13 @@ impl DbRepository for DispatchRepository {
     ) -> Result<ObjectErrorList> {
         self.repo(conn)
             .fetch_object_errors(conn, name, object_type, max_rows)
+    }
+
+    fn apply_ddl(
+        &self,
+        conn: &ConnectionRecord,
+        request: &ApplyDdlRequest,
+    ) -> Result<ApplyDdlResult> {
+        self.repo(conn).apply_ddl(conn, request)
     }
 }

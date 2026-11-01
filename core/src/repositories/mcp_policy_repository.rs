@@ -62,7 +62,8 @@ impl Default for SqliteMcpPolicyRepository {
 
 const COLUMNS: &str = "connection_id, mcp_enabled, allow_schema_list, allow_ddl_read, \
     allow_save_scripts, allow_compare_fix, data_access, allow_raw_sql, table_rules, \
-    object_deny, max_rows, query_timeout_secs, mcp_username, allow_invalid_objects, allow_compare_object";
+    object_deny, max_rows, query_timeout_secs, mcp_username, allow_invalid_objects, \
+    allow_compare_object, allow_apply_ddl, apply_ddl_requires_approval";
 
 fn row_to_policy(row: &rusqlite::Row) -> rusqlite::Result<McpPolicy> {
     let data_access: String = row.get(6)?;
@@ -92,6 +93,8 @@ fn row_to_policy(row: &rusqlite::Row) -> rusqlite::Result<McpPolicy> {
         mcp_username: row.get(12)?,
         allow_invalid_objects: row.get(13)?,
         mcp_password_set: false,
+        allow_apply_ddl: row.get(15)?,
+        apply_ddl_requires_approval: row.get(16)?,
     })
 }
 
@@ -135,6 +138,18 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
                 "ALTER TABLE connection_mcp_policy ADD COLUMN allow_compare_object INTEGER NOT NULL DEFAULT 0",
                 [],
             )?;
+        }
+
+        // Deploys stay off for connections that predate the capability.
+        for ddl in [
+            "ALTER TABLE connection_mcp_policy ADD COLUMN allow_apply_ddl INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE connection_mcp_policy ADD COLUMN apply_ddl_requires_approval INTEGER NOT NULL DEFAULT 1",
+        ] {
+            if let Err(e) = conn.execute(ddl, [])
+                && !e.to_string().contains("duplicate column name")
+            {
+                return Err(e).context("Failed to migrate the MCP policy table");
+            }
         }
         Ok(())
     }
@@ -181,8 +196,9 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
             "INSERT INTO connection_mcp_policy (
                 connection_id, mcp_enabled, allow_schema_list, allow_ddl_read, allow_save_scripts,
                 allow_compare_fix, data_access, allow_raw_sql, table_rules, object_deny,
-                max_rows, query_timeout_secs, mcp_username, allow_invalid_objects, allow_compare_object
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                max_rows, query_timeout_secs, mcp_username, allow_invalid_objects, allow_compare_object, allow_apply_ddl,
+                apply_ddl_requires_approval
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
              ON CONFLICT(connection_id) DO UPDATE SET
                 mcp_enabled = excluded.mcp_enabled,
                 allow_schema_list = excluded.allow_schema_list,
@@ -197,7 +213,9 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
                 query_timeout_secs = excluded.query_timeout_secs,
                 mcp_username = excluded.mcp_username,
                 allow_invalid_objects = excluded.allow_invalid_objects,
-                allow_compare_object = excluded.allow_compare_object",
+                allow_compare_object = excluded.allow_compare_object,
+                allow_apply_ddl = excluded.allow_apply_ddl,
+                apply_ddl_requires_approval = excluded.apply_ddl_requires_approval",
             params![
                 policy.connection_id,
                 policy.mcp_enabled,
@@ -214,6 +232,8 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
                 policy.mcp_username,
                 policy.allow_invalid_objects,
                 policy.allow_compare_object,
+                policy.allow_apply_ddl,
+                policy.apply_ddl_requires_approval,
             ],
         )
         .with_context(|| {

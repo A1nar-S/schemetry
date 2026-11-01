@@ -2,7 +2,7 @@
 //! shared SQLite file.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
@@ -10,16 +10,19 @@ use anyhow::{Result, anyhow};
 use crate::models::*;
 use crate::repositories::connection_repository::ConnectionRepository;
 use crate::repositories::db_repository::{
-    DbRepository, QueryOutput, ReadOnlyQuery, ReadOnlyResult,
+    ApplyDdlRequest, ApplyDdlResult, DbRepository, DdlCompileError, DdlStatement, QueryOutput,
+    ReadOnlyQuery, ReadOnlyResult,
 };
 use crate::repositories::filter_rule_repository::FilterRuleRepository;
 use crate::repositories::folder_schema_override_repository::SchemaFolderOverrideRepository;
+use crate::repositories::mcp_apply_approval_repository::SqliteMcpApprovalRepository;
 use crate::repositories::mcp_audit_repository::{GENESIS_HASH, McpAuditRepository};
 use crate::repositories::mcp_policy_repository::McpPolicyRepository;
 use crate::services::connection_catalog::ConnectionCatalogService;
 use crate::services::ddl_save::DdlSaveOptions;
 use crate::services::filter_rules::FilterRuleService;
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
+use crate::services::mcp_apply_approval::McpApprovalService;
 use crate::services::mcp_audit::McpAuditService;
 use crate::services::mcp_gateway::{GatewaySettings, McpGateway};
 use crate::services::mcp_policy::McpPolicyService;
@@ -138,6 +141,12 @@ pub struct FakeDb {
     pub invalid_objects: Mutex<Vec<InvalidObject>>,
     /// `"TYPE:UPPER_NAME"` → diagnostics.
     pub object_errors: Mutex<HashMap<String, ObjectErrorList>>,
+    /// Deploys executed through `apply_ddl`, as `(username, object name, statements)`.
+    pub applied: Mutex<Vec<(String, String, Vec<DdlStatement>)>>,
+    /// Compile errors the next deploy reports.
+    pub compile_errors: Mutex<Vec<DdlCompileError>>,
+    /// Makes deploys fail with this message.
+    pub apply_failure: Mutex<Option<String>>,
     /// Counts catalog/DDL/data calls, to prove a denied call never reached the database.
     pub db_calls: Mutex<u32>,
 }
@@ -292,6 +301,24 @@ impl DbRepository for FakeDb {
             list.truncated = true;
         }
         Ok(list)
+    }
+    fn apply_ddl(
+        &self,
+        conn: &ConnectionRecord,
+        request: &ApplyDdlRequest,
+    ) -> Result<ApplyDdlResult> {
+        self.touch();
+        if let Some(message) = self.apply_failure.lock().unwrap().clone() {
+            return Err(anyhow!(message));
+        }
+        self.applied.lock().unwrap().push((
+            conn.username.clone(),
+            request.object_name.clone(),
+            request.statements.clone(),
+        ));
+        Ok(ApplyDdlResult {
+            compile_errors: self.compile_errors.lock().unwrap().clone(),
+        })
     }
 }
 
@@ -497,6 +524,10 @@ pub struct Harness {
     pub audit: Arc<MemoryAudit>,
     pub policies: Arc<MemoryPolicies>,
     pub settings: Arc<FakeSettings>,
+    pub approvals: Arc<McpApprovalService>,
+    /// The approval service's "now", in unix seconds.
+    pub clock: Arc<AtomicI64>,
+    _approvals_dir: tempfile::TempDir,
 }
 
 impl Harness {
@@ -505,6 +536,18 @@ impl Harness {
         let audit = Arc::new(MemoryAudit::default());
         let policies = Arc::new(MemoryPolicies::default());
         let settings = Arc::new(FakeSettings::default());
+        let approvals_dir = tempfile::tempdir().unwrap();
+        let clock = Arc::new(AtomicI64::new(1_700_000_000));
+        let approvals = Arc::new(McpApprovalService::with_clock(
+            Arc::new(SqliteMcpApprovalRepository::with_path(
+                approvals_dir.path().join("approvals.db"),
+            )),
+            {
+                let clock = Arc::clone(&clock);
+                Arc::new(move || clock.load(Ordering::SeqCst))
+            },
+        ));
+        approvals.init_db().unwrap();
         let db_repo: Arc<dyn DbRepository> = db.clone();
         let gateway = McpGateway::from_parts(
             Arc::new(ConnectionCatalogService::new(Arc::new(FakeConnections(
@@ -516,6 +559,7 @@ impl Harness {
             Arc::new(SchemaFolderOverrideService::new(Arc::new(NoOverrides))),
             Arc::new(McpPolicyService::new(policies.clone())),
             Arc::new(McpAuditService::new(audit.clone()).without_forwarding()),
+            Arc::clone(&approvals),
             settings.clone(),
         );
         Self {
@@ -524,6 +568,9 @@ impl Harness {
             audit,
             policies,
             settings,
+            approvals,
+            clock,
+            _approvals_dir: approvals_dir,
         }
     }
 

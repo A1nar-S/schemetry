@@ -20,12 +20,14 @@ use schemetry_core::repositories::db_repository::{DbRepository, ReadOnlyQuery};
 use schemetry_core::repositories::dispatch_repository::DispatchRepository;
 use schemetry_core::repositories::filter_rule_repository::FilterRuleRepository;
 use schemetry_core::repositories::folder_schema_override_repository::SchemaFolderOverrideRepository;
+use schemetry_core::repositories::mcp_apply_approval_repository::SqliteMcpApprovalRepository;
 use schemetry_core::repositories::mcp_audit_repository::SqliteMcpAuditRepository;
 use schemetry_core::repositories::mcp_policy_repository::SqliteMcpPolicyRepository;
 use schemetry_core::services::connection_catalog::ConnectionCatalogService;
 use schemetry_core::services::ddl_save::DdlSaveOptions;
 use schemetry_core::services::filter_rules::FilterRuleService;
 use schemetry_core::services::folder_schema_overrides::SchemaFolderOverrideService;
+use schemetry_core::services::mcp_apply_approval::McpApprovalService;
 use schemetry_core::services::mcp_audit::McpAuditService;
 use schemetry_core::services::mcp_gateway::*;
 use schemetry_core::services::mcp_policy::{AccountPassword, McpPolicyService};
@@ -153,6 +155,7 @@ struct Env {
     gateway: McpGateway,
     policies: McpPolicyService,
     audit: McpAuditService,
+    approvals: Arc<McpApprovalService>,
     repo: Arc<dyn DbRepository>,
     schema_root: tempfile::TempDir,
     _db_dir: tempfile::TempDir,
@@ -173,6 +176,10 @@ fn env_with(second: ConnectionRecord) -> Env {
     policies.init_db().unwrap();
     let audit = McpAuditService::new(audit_repo()).without_forwarding();
     audit.init_db().unwrap();
+    let approvals = Arc::new(McpApprovalService::new(Arc::new(
+        SqliteMcpApprovalRepository::with_path(db_path.clone()),
+    )));
+    approvals.init_db().unwrap();
 
     let repo: Arc<dyn DbRepository> = Arc::new(DispatchRepository::new());
     let settings = Arc::new(Settings {
@@ -189,12 +196,14 @@ fn env_with(second: ConnectionRecord) -> Env {
         Arc::new(SchemaFolderOverrideService::new(Arc::new(NoOverrides))),
         Arc::new(McpPolicyService::new(policy_repo())),
         Arc::new(McpAuditService::new(audit_repo()).without_forwarding()),
+        Arc::clone(&approvals),
         settings,
     );
     Env {
         gateway,
         policies,
         audit,
+        approvals,
         repo,
         schema_root,
         _db_dir: db_dir,
@@ -670,4 +679,52 @@ fn audit_entries_never_contain_credentials() {
     for entry in env.audit.list(&McpAuditFilter::default()).unwrap() {
         assert!(!format!("{entry:?}").contains(&password));
     }
+}
+
+#[test]
+#[ignore = "requires the Postgres containers from docker/docker-compose.yml"]
+fn apply_ddl_deploys_a_view_only_after_the_user_approves_it() {
+    let env = env();
+    set(
+        &env,
+        McpPolicy {
+            allow_apply_ddl: true,
+            ..base(ID())
+        },
+    );
+    let args = || ApplyDdlArgs {
+        connection_id: ID(),
+        object_name: "mcp_it_deployed".into(),
+        object_type: "VIEW".into(),
+        ddl: Some("CREATE OR REPLACE VIEW mcp_it_deployed AS SELECT 1 AS one".into()),
+        file: None,
+    };
+
+    let pending = env.gateway.apply_ddl(CLIENT, args()).unwrap();
+    assert_eq!(pending["status"], "pending");
+    assert!(
+        env.approvals
+            .decide(pending["approval_id"].as_i64().unwrap(), true)
+            .unwrap()
+    );
+
+    let applied = env.gateway.apply_ddl(CLIENT, args()).unwrap();
+    assert_eq!(applied["status"], "applied");
+
+    let ddl = env
+        .repo
+        .fetch_object_ddl(&pg::source_connection(), "mcp_it_deployed", "VIEW");
+    assert!(ddl.unwrap().to_lowercase().contains("select 1"));
+
+    // The approval was single-use.
+    assert_eq!(
+        env.gateway.apply_ddl(CLIENT, args()).unwrap()["status"],
+        "pending"
+    );
+
+    pg::execute_script(
+        &pg::source_connection(),
+        "DROP VIEW IF EXISTS mcp_it_deployed;",
+    );
+    assert!(env.audit.verify().unwrap().ok);
 }

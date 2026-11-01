@@ -223,6 +223,19 @@
           <label class="check-row"><input type="checkbox" bind:checked={policy.allow_save_scripts} /> Save migration / code files</label>
           <label class="check-row"><input type="checkbox" bind:checked={policy.allow_compare_fix} /> Compare schemas &amp; generate fix scripts</label>
           <label class="check-row"><input type="checkbox" bind:checked={policy.allow_compare_object} /> Compare a local file with an object's DDL (needs Read DDL)</label>
+          <label class="check-row"><input type="checkbox" bind:checked={policy.allow_apply_ddl} /> Deploy DDL (<code>apply_ddl</code>) — dev/test databases only</label>
+          {#if policy.allow_apply_ddl}
+            <label class="check-row" style="margin-left:22px;">
+              <input type="checkbox" bind:checked={policy.apply_ddl_requires_approval} />
+              Require my approval for every deploy
+            </label>
+            <p class="hint">
+              Agents may run one <code>CREATE [OR REPLACE]</code> of a view, procedure, function, package, trigger or type in this connection's own schema, using this connection's database account.
+              {policy.apply_ddl_requires_approval
+                ? 'Each deploy waits for you under Pending deploys in the MCP audit view; the approval covers exactly the reviewed script, once.'
+                : 'Without approval, the deploy runs as soon as the agent calls it. Never enable this on a shared or production database.'}
+            </p>
+          {/if}
         </div>
 
         <!-- (c) Data access -->

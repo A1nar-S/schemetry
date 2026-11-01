@@ -10,6 +10,7 @@ use tauri::State;
 use crate::models::{
     DbType, McpAuditEntry, McpAuditFilter, McpAuditVerification, McpPolicy, SchemaObject,
 };
+use crate::services::mcp_apply_approval::ApplyRequest;
 use crate::services::mcp_audit_sink::{self, SinkConfig};
 use crate::services::mcp_policy::{AccountPassword, McpTool};
 use crate::services::settings;
@@ -182,6 +183,70 @@ pub async fn mcp_preview(
         Err(error) => preview.objects_error = Some(error),
     }
     Ok(preview)
+}
+
+#[derive(Serialize)]
+pub struct McpApplyRequestView {
+    #[serde(flatten)]
+    pub request: ApplyRequest,
+    pub connection_name: String,
+}
+
+/// Deploy requests agents filed through `apply_ddl` that are still open: pending ones
+/// awaiting a decision and approved ones the agent has not used yet.
+#[tauri::command]
+pub fn list_mcp_apply_requests(
+    state: State<AppState>,
+) -> Result<Vec<McpApplyRequestView>, String> {
+    let connections = state
+        .catalog
+        .list_connection_summaries()
+        .map_err(|e| e.to_string())?;
+    let open = state.mcp_approval_svc.list_open().map_err(|e| e.to_string())?;
+    Ok(open
+        .into_iter()
+        .map(|request| McpApplyRequestView {
+            connection_name: connections
+                .iter()
+                .find(|c| c.id == request.connection_id)
+                .map(|c| c.name.clone())
+                .unwrap_or_default(),
+            request,
+        })
+        .collect())
+}
+
+/// The only place a deploy can be approved. Approving needs deploys to still be enabled
+/// for the request's connection.
+#[tauri::command]
+pub fn decide_mcp_apply_request(
+    state: State<AppState>,
+    id: i64,
+    approve: bool,
+) -> Result<(), String> {
+    if approve {
+        let open = state.mcp_approval_svc.list_open().map_err(|e| e.to_string())?;
+        let request = open
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or("That request has expired or was already decided.")?;
+        let policy = state
+            .mcp_policy_svc
+            .get(request.connection_id)
+            .map_err(|e| e.to_string())?;
+        if !policy.mcp_enabled || !policy.allow_apply_ddl {
+            return Err("Deploying DDL is switched off for this connection.".to_string());
+        }
+    }
+    let decided = state
+        .mcp_approval_svc
+        .decide(id, approve)
+        .map_err(|e| e.to_string())?;
+    if decided {
+        Ok(())
+    } else {
+        Err("That request has expired or was already decided.".to_string())
+    }
 }
 
 #[derive(Serialize, Deserialize)]

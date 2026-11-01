@@ -37,10 +37,11 @@ pub enum McpTool {
     RunQuery,
     ListInvalidObjects,
     GetObjectErrors,
+    ApplyDdl,
 }
 
 impl McpTool {
-    pub const ALL: [McpTool; 10] = [
+    pub const ALL: [McpTool; 11] = [
         McpTool::ListSchemaObjects,
         McpTool::GetObjectDdl,
         McpTool::SaveMigrationScript,
@@ -51,6 +52,7 @@ impl McpTool {
         McpTool::RunQuery,
         McpTool::ListInvalidObjects,
         McpTool::GetObjectErrors,
+        McpTool::ApplyDdl,
     ];
 
     pub fn name(self) -> &'static str {
@@ -65,6 +67,7 @@ impl McpTool {
             McpTool::RunQuery => "run_query",
             McpTool::ListInvalidObjects => "list_invalid_objects",
             McpTool::GetObjectErrors => "get_object_errors",
+            McpTool::ApplyDdl => "apply_ddl",
         }
     }
 
@@ -169,6 +172,7 @@ impl McpPolicy {
             McpTool::CompareSchemas | McpTool::GenerateFixScript => {
                 (!self.allow_compare_fix).then(|| setting_off("allow_compare_fix"))
             }
+            McpTool::ApplyDdl => (!self.allow_apply_ddl).then(|| setting_off("allow_apply_ddl")),
             McpTool::CompareObject => (!(self.allow_compare_object && self.allow_ddl_read))
                 .then(|| setting_off("allow_compare_object and allow_ddl_read")),
             McpTool::ListInvalidObjects => (!(self.allow_invalid_objects
@@ -350,6 +354,8 @@ impl McpPolicy {
             "compare_object": self.allow_compare_object && self.allow_ddl_read,
             "data_access": self.data_access,
             "run_query": self.allow_raw_sql && self.data_access == McpDataAccess::Allowlist,
+            "apply_ddl": self.allow_apply_ddl,
+            "apply_ddl_requires_approval": self.allow_apply_ddl && self.apply_ddl_requires_approval,
             "table_rules": rules,
             "max_rows": self.max_rows,
             "query_timeout_secs": self.query_timeout_secs,

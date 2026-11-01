@@ -12,7 +12,8 @@ use crate::models::{
     MatchType, ObjectError, ObjectErrorList, SchemaObject, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::{
-    DbRepository, LobCell, LobSource, QueryOutput, ReadOnlyQuery, ReadOnlyResult,
+    ApplyDdlRequest, ApplyDdlResult, DbRepository, DdlCompileError, LobCell, LobSource,
+    QueryOutput, ReadOnlyQuery, ReadOnlyResult,
 };
 use crate::repositories::filter_rule_repository::{ParamStyle, build_predicate};
 use crate::services::cancel::{checkpoint, on_cancel};
@@ -473,6 +474,82 @@ impl DbRepository for DbOracleRepository {
         result.map_err(|e| {
             if e.to_string().contains("ORA-01013") {
                 anyhow!("Query timed out after {} seconds.", request.timeout_secs)
+            } else {
+                e
+            }
+        })
+    }
+
+    fn apply_ddl(
+        &self,
+        conn: &ConnectionRecord,
+        request: &ApplyDdlRequest,
+    ) -> Result<ApplyDdlResult> {
+        let db = self.connect(conn)?;
+
+        // Same watchdog as run_readonly_query: works with every client version.
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
+        let weak = Arc::downgrade(&db);
+        let timeout = std::time::Duration::from_secs(u64::from(request.timeout_secs.max(1)));
+        let watchdog = std::thread::spawn(move || {
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(timeout)
+                && let Some(db) = weak.upgrade()
+            {
+                let _ = db.break_execution();
+            }
+        });
+
+        let result = (|| -> Result<ApplyDdlResult> {
+            for statement in &request.statements {
+                match db.execute(&statement.sql, &[]) {
+                    Ok(_) => {}
+                    // The unit was created but does not compile; ALL_ERRORS tells why.
+                    Err(e) if e.to_string().contains("ORA-24344") => {}
+                    Err(e) => return Err(anyhow!(e.to_string())),
+                }
+            }
+            let owner = conn.username.to_ascii_uppercase();
+            let rows = db
+                .query(
+                    "SELECT TYPE, ATTRIBUTE, LINE, POSITION, TEXT FROM ALL_ERRORS \
+                     WHERE OWNER = :1 AND NAME = :2 ORDER BY TYPE, SEQUENCE",
+                    &[&owner, &request.object_name],
+                )
+                .map_err(|e| anyhow!(e.to_string()))?;
+            let mut compile_errors = Vec::new();
+            for row in rows {
+                let row = row.map_err(|e| anyhow!(e.to_string()))?;
+                compile_errors.push(DdlCompileError {
+                    object_type: row
+                        .get::<_, String>(0)
+                        .map_err(|e| anyhow!(e.to_string()))?,
+                    severity: row
+                        .get::<_, Option<String>>(1)
+                        .map_err(|e| anyhow!(e.to_string()))?
+                        .unwrap_or_else(|| "ERROR".to_string()),
+                    line: row.get::<_, i64>(2).map_err(|e| anyhow!(e.to_string()))?,
+                    position: row.get::<_, i64>(3).map_err(|e| anyhow!(e.to_string()))?,
+                    text: cap_chars(
+                        row.get::<_, String>(4)
+                            .map_err(|e| anyhow!(e.to_string()))?,
+                        MCP_CELL_CAP,
+                    ),
+                });
+                if compile_errors.len() >= 100 {
+                    break;
+                }
+            }
+            Ok(ApplyDdlResult { compile_errors })
+        })();
+
+        drop(stop);
+        let _ = watchdog.join();
+        result.map_err(|e| {
+            if e.to_string().contains("ORA-01013") {
+                anyhow!(
+                    "The deploy timed out after {} seconds.",
+                    request.timeout_secs
+                )
             } else {
                 e
             }

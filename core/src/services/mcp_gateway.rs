@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::models::{ConnectionRecord, DbType, Discrepancy, McpOutcome, McpPolicy, SchemaObject};
-use crate::repositories::db_repository::{ReadOnlyQuery, ReadOnlyResult};
+use crate::repositories::db_repository::{ApplyDdlRequest, ReadOnlyQuery, ReadOnlyResult};
 use crate::services::compare::compare_tables_across_servers;
 use crate::services::connection_catalog::ConnectionCatalogService;
 use crate::services::ddl_compare::{self, FileAccessError};
@@ -20,8 +20,10 @@ use crate::services::ddl_save::{self, DdlSaveArgs};
 use crate::services::filter_rules::FilterRuleService;
 use crate::services::fix::{self, Dialect};
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
+use crate::services::mcp_apply_approval::{McpApprovalService, NewApplyRequest};
 use crate::services::mcp_audit::{McpAuditDraft, McpAuditService};
 use crate::services::mcp_audit_target::{self, TARGET_KEY};
+use crate::services::mcp_ddl_guard;
 use crate::services::mcp_policy::{ENABLE_HINT, McpPolicyService, McpTool};
 use crate::services::mcp_query_builder::{self, Filter, OrderBy, TableQuery};
 use crate::services::mcp_sql_guard;
@@ -74,6 +76,13 @@ impl From<anyhow::Error> for ToolError {
 }
 
 type ToolResult = Result<Value, ToolError>;
+
+/// Adds one field to what the audit entry records beyond the call's arguments.
+fn note(ctx: &mut Ctx, key: &str, value: Value) {
+    if let Value::Object(map) = ctx.details.get_or_insert_with(|| json!({})) {
+        map.insert(key.to_string(), value);
+    }
+}
 
 fn denied<T>(message: impl Into<String>) -> Result<T, ToolError> {
     Err(ToolError::Denied(message.into()))
@@ -229,6 +238,22 @@ tool_args! {
     }
 }
 
+tool_args! {
+    pub struct ApplyDdlArgs {
+        pub connection_id: i64,
+        pub object_name: String,
+        /// VIEW, PROCEDURE, FUNCTION, PACKAGE (spec, or spec + body), PACKAGE BODY, TRIGGER,
+        /// TYPE or TYPE BODY (Oracle); VIEW, FUNCTION, PROCEDURE or TRIGGER (Postgres).
+        pub object_type: String,
+        /// The `CREATE [OR REPLACE]` statement. Give exactly one of `ddl` or `file`.
+        #[serde(default)]
+        pub ddl: Option<String>,
+        /// Path of a DDL file, relative to the connection's schema folder.
+        #[serde(default)]
+        pub file: Option<String>,
+    }
+}
+
 /// Per-call state the audit entry is built from.
 #[derive(Default)]
 struct Ctx {
@@ -278,6 +303,7 @@ pub struct McpGateway {
     folder_overrides: Arc<SchemaFolderOverrideService>,
     policy_svc: Arc<McpPolicyService>,
     audit_svc: Arc<McpAuditService>,
+    approvals: Arc<McpApprovalService>,
     settings: Arc<dyn GatewaySettings>,
 }
 
@@ -387,6 +413,7 @@ impl McpGateway {
             Arc::clone(&services.folder_schema_overrides_svc),
             Arc::clone(&services.mcp_policy_svc),
             Arc::clone(&services.mcp_audit_svc),
+            Arc::clone(&services.mcp_approval_svc),
             Arc::new(AppSettings),
         )
     }
@@ -400,6 +427,7 @@ impl McpGateway {
         folder_overrides: Arc<SchemaFolderOverrideService>,
         policy_svc: Arc<McpPolicyService>,
         audit_svc: Arc<McpAuditService>,
+        approvals: Arc<McpApprovalService>,
         settings: Arc<dyn GatewaySettings>,
     ) -> Self {
         Self {
@@ -410,6 +438,7 @@ impl McpGateway {
             folder_overrides,
             policy_svc,
             audit_svc,
+            approvals,
             settings,
         }
     }
@@ -1435,6 +1464,179 @@ impl McpGateway {
         )
     }
 
+    /// Deploys one validated `CREATE` statement (or a package spec + body) to the
+    /// connection's own schema. With approval required the first call only files a request
+    /// for the user; the identical retry after approval executes and spends it.
+    pub fn apply_ddl(&self, client: &str, args: ApplyDdlArgs) -> ToolResult {
+        // The DDL text never enters the audit log — only its size and digest do.
+        let arguments = json!({
+            "connection_id": args.connection_id,
+            "object_name": args.object_name,
+            "object_type": args.object_type,
+            "file": args.file,
+        });
+        self.audited(
+            client,
+            McpTool::ApplyDdl.name(),
+            Some(args.connection_id),
+            arguments,
+            |ctx| {
+                let Resolved { conn, policy } =
+                    self.resolve(ctx, args.connection_id, McpTool::ApplyDdl)?;
+                let name = args.object_name.trim();
+                let object_type = args
+                    .object_type
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_ascii_uppercase();
+                if !mcp_query_builder::valid_identifier(name) {
+                    return denied("object_name must be a plain identifier.");
+                }
+                if !mcp_ddl_guard::supported_types(conn.db_type).contains(&object_type.as_str()) {
+                    return denied(format!(
+                        "object_type must be one of: {}.",
+                        mcp_ddl_guard::supported_types(conn.db_type).join(", ")
+                    ));
+                }
+                if policy.object_denied(name, &object_type) {
+                    return denied(format!("{object_type} {name} is hidden by policy."));
+                }
+
+                let raw = match (&args.ddl, &args.file) {
+                    (Some(ddl), None) => ddl.clone(),
+                    (None, Some(file)) => self.read_deploy_file(&conn, file)?,
+                    _ => return denied("Provide exactly one of ddl or file."),
+                };
+                if raw.trim().is_empty() || raw.len() > MAX_DDL_BYTES || raw.contains('\0') {
+                    return denied("The DDL must be non-empty text of at most 1 MB.");
+                }
+                let ddl = mcp_ddl_guard::normalize(&raw);
+                let sha256 = sha256_hex(ddl.as_bytes());
+                note(ctx, "sha256", json!(sha256));
+                note(ctx, "ddl_bytes", json!(ddl.len()));
+
+                let schema = schema_of(&conn);
+                let statements =
+                    mcp_ddl_guard::validate(&ddl, &object_type, name, &schema, conn.db_type)
+                        .map_err(ToolError::Denied)?;
+                let object_name = match conn.db_type {
+                    DbType::Oracle => name.to_ascii_uppercase(),
+                    DbType::Postgres => name.to_string(),
+                };
+                let summary = mcp_ddl_guard::summarize(&statements);
+                let request = NewApplyRequest {
+                    connection_id: conn.id,
+                    object_type: object_type.clone(),
+                    object_name: object_name.clone(),
+                    sha256: sha256.clone(),
+                    bytes: ddl.len() as i64,
+                    summary: summary.clone(),
+                    ddl,
+                };
+
+                let approval_id = if policy.apply_ddl_requires_approval {
+                    match self.approvals.consume(&request)? {
+                        Some(id) => Some(id),
+                        None => {
+                            let pending = self.approvals.request(&request)?;
+                            note(ctx, "status", json!("pending"));
+                            note(ctx, "approval_id", json!(pending.id));
+                            return Ok(json!({
+                                "status": "pending",
+                                "executed": false,
+                                "approval_id": pending.id,
+                                "plan": {
+                                    "statement": summary,
+                                    "object_type": object_type,
+                                    "object_name": object_name,
+                                    "bytes": request.bytes,
+                                    "sha256": sha256,
+                                },
+                                "expires_at_unix": pending.expires_at,
+                                "message": format!(
+                                    "Nothing was executed. Ask the user to approve deploy request #{} in \
+                                     Schemetry (MCP audit view → Pending deploys), then call apply_ddl \
+                                     again with exactly the same arguments.",
+                                    pending.id
+                                ),
+                            }));
+                        }
+                    }
+                } else {
+                    None
+                };
+                if let Some(id) = approval_id {
+                    note(ctx, "approval_id", json!(id));
+                }
+
+                let deploy = ApplyDdlRequest {
+                    object_name,
+                    statements,
+                    timeout_secs: policy.query_timeout_secs.max(30),
+                };
+                let result = self.diff_svc.apply_ddl(&conn, &deploy)?;
+                let errors = result
+                    .compile_errors
+                    .iter()
+                    .filter(|e| e.severity == "ERROR")
+                    .count();
+                ctx.row_count = Some(deploy.statements.len() as i64);
+                note(ctx, "status", json!("applied"));
+                note(ctx, "compile_errors", json!(errors));
+                Ok(json!({
+                    "status": "applied",
+                    "executed": true,
+                    "object_type": object_type,
+                    "object_name": deploy.object_name,
+                    "sha256": sha256,
+                    "bytes": request.bytes,
+                    "statements": deploy.statements.len(),
+                    "approval_id": approval_id,
+                    "compile_errors": result.compile_errors,
+                    "compiled_without_errors": errors == 0,
+                }))
+            },
+        )
+    }
+
+    /// Reads a DDL file the agent named relative to the connection's schema folder,
+    /// refusing anything that resolves outside it.
+    fn read_deploy_file(
+        &self,
+        conn: &ConnectionRecord,
+        relative: &str,
+    ) -> Result<String, ToolError> {
+        let relative_path = std::path::Path::new(relative.trim());
+        if relative.trim().is_empty()
+            || relative_path
+                .components()
+                .any(|c| !matches!(c, std::path::Component::Normal(_)))
+        {
+            return denied(
+                "file must be a relative path inside the schema folder (no .. or drive).",
+            );
+        }
+        let root = self.settings.schema_root().map_err(ToolError::Failed)?;
+        let dir = ddl_save::resolve_schema_dir(&self.folder_overrides, &schema_of(conn), &root)
+            .map_err(ToolError::Failed)?;
+        let (Ok(dir), Ok(path)) = (dir.canonicalize(), dir.join(relative_path).canonicalize())
+        else {
+            return failed("The DDL file was not found in the schema folder.");
+        };
+        // Canonical paths, so symlinks cannot lead out of the folder.
+        if !path.starts_with(&dir) || !path.is_file() {
+            return denied("file must be a file inside the schema folder.");
+        }
+        let too_big = std::fs::metadata(&path).map_or(true, |m| m.len() > MAX_DDL_BYTES as u64);
+        if too_big {
+            return denied("The DDL file is larger than 1 MB.");
+        }
+        std::fs::read_to_string(&path).map_err(|e| {
+            ToolError::Failed(format!("Could not read the DDL file as UTF-8 text: {e}"))
+        })
+    }
+
     /// Runs on the dedicated MCP account when one is configured, otherwise on the
     /// connection's own credentials.
     fn run_readonly(
@@ -1511,6 +1713,9 @@ fn rows_to_json(result: ReadOnlyResult, limit: u32) -> Value {
 #[path = "tests/mcp_gateway.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "tests/mcp_apply_ddl.rs"]
+mod apply_ddl_tests;
 #[cfg(test)]
 #[path = "tests/mcp_gateway_targets.rs"]
 mod target_tests;

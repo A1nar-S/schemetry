@@ -17,7 +17,7 @@ use rmcp::{
     transport::stdio,
 };
 use schemetry_core::services::mcp_gateway::{
-    CompareObjectArgs, CompareSchemasArgs, GenerateFixScriptArgs, GetObjectDdlArgs,
+    ApplyDdlArgs, CompareObjectArgs, CompareSchemasArgs, GenerateFixScriptArgs, GetObjectDdlArgs,
     GetObjectErrorsArgs, ListInvalidObjectsArgs, ListSchemaObjectsArgs, McpGateway, QueryTableArgs,
     RunQueryArgs, SaveMigrationScriptArgs, ToolError,
 };
@@ -250,6 +250,18 @@ impl SchemetryMcp {
     ) -> Result<CallToolResult, McpError> {
         let (gateway, client) = (Arc::clone(&self.gateway), client_name(&context));
         run_blocking(move || gateway.run_query(&client, args)).await
+    }
+
+    #[tool(
+        description = "Deploy one CREATE [OR REPLACE] statement (view, procedure, function, package spec+body, trigger, type) to a dev/test connection's own schema, then check compile errors. Only for connections whose policy allows it; the statement is validated (nothing but that one CREATE) and the user normally has to approve it in Schemetry first: the first call returns status 'pending' with an approval id — ask the user to approve, then call again with identical arguments. Give ddl text or a file path relative to the schema folder."
+    )]
+    async fn apply_ddl(
+        &self,
+        Parameters(args): Parameters<ApplyDdlArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let (gateway, client) = (Arc::clone(&self.gateway), client_name(&context));
+        run_blocking(move || gateway.apply_ddl(&client, args)).await
     }
 }
 

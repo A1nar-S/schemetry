@@ -371,6 +371,10 @@ pub struct McpPolicy {
     pub mcp_username: String,
     /// Output only: whether a password is stored for `mcp_username`.
     pub mcp_password_set: bool,
+    /// `apply_ddl` may deploy code objects to this connection (dev/test databases only).
+    pub allow_apply_ddl: bool,
+    /// Every deploy must first be approved by the user in the Schemetry app.
+    pub apply_ddl_requires_approval: bool,
 }
 
 impl McpPolicy {
@@ -399,6 +403,8 @@ impl Default for McpPolicy {
             query_timeout_secs: Self::DEFAULT_TIMEOUT_SECS,
             mcp_username: String::new(),
             mcp_password_set: false,
+            allow_apply_ddl: false,
+            apply_ddl_requires_approval: true,
         }
     }
 }

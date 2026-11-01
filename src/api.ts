@@ -13,6 +13,7 @@ import type {
   McpAuditPage,
   McpAuditSinkKind,
   McpAuditVerification,
+  McpApplyRequest,
   McpPolicy,
   McpPreview,
   McpSettings,
@@ -345,5 +346,13 @@ export async function mcpAuditVerify(): Promise<McpAuditVerification> {
 
 export async function mcpAuditExportCsv(filter: McpAuditFilter, outputFolder: string): Promise<string> {
   return invoke('mcp_audit_export_csv', { filter, outputFolder });
+}
+
+export async function listMcpApplyRequests(): Promise<McpApplyRequest[]> {
+  return invoke('list_mcp_apply_requests');
+}
+
+export async function decideMcpApplyRequest(id: number, approve: boolean): Promise<void> {
+  return invoke('decide_mcp_apply_request', { id, approve });
 }
 

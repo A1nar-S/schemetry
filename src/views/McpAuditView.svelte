@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '../components/Icon.svelte';
+  import McpApplyRequests from '../components/McpApplyRequests.svelte';
   import VirtualTable from '../components/VirtualTable.svelte';
   import type { VCol } from '../components/VirtualTable.svelte';
   import { onMount } from 'svelte';
@@ -36,6 +37,7 @@
     'compare_object',
     'query_table',
     'run_query',
+    'apply_ddl',
   ];
 
   const cols: VCol[] = [
@@ -237,6 +239,8 @@
   <p class="hint">
     Entries can't be edited or deleted from Schemetry. For a copy outside this machine, configure an external sink in Settings → MCP server.
   </p>
+
+  <McpApplyRequests onDecided={() => void onFilterChange()} />
 
   <!-- Filters -->
   <div class="card filters">
