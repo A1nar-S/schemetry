@@ -9,7 +9,7 @@ use crate::repositories::folder_schema_override_repository::SchemaFolderOverride
 use crate::services::ddl_save::{
     DdlSaveArgs, DdlSaveOptions, PACKAGE_SPEC_AND_BODY, combine_package_spec_and_body,
     encode_content, has_package_spec_and_body, is_package_spec_and_body, next_migration_version,
-    plan_ddl_save, resolve_schema_dir, save_ddl_to_folder as save_ddl_service,
+    plan_ddl_save, plan_ddl_save_raw, resolve_schema_dir, save_ddl_to_folder as save_ddl_service,
     settings_object_type,
 };
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
@@ -71,6 +71,34 @@ fn storage_modes_write_the_expected_files() {
             "mode {mode}"
         );
     }
+}
+
+#[test]
+fn raw_plans_keep_the_bytes_untouched_in_code_and_migration_files() {
+    let folder_overrides =
+        SchemaFolderOverrideService::new(Arc::new(TestOverrideRepository { override_row: None }));
+    let mut options = options("both");
+    options.encoding = "windows-1257".to_string();
+    let raw: &[u8] = b"\xEF\xBB\xBFCREATE TABLE ORDERS (ID INTEGER);\r\n\xE0";
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    let plan = plan_ddl_save_raw(
+        &folder_overrides,
+        &temp_dir.path().to_string_lossy(),
+        &args(),
+        &options,
+        raw,
+    )
+    .unwrap();
+
+    assert_eq!(plan.files.len(), 2);
+    for file in &plan.files {
+        assert_eq!(file.content, raw, "{}", file.kind);
+    }
+    assert!(
+        !temp_dir.path().join("app").exists(),
+        "planning must not write"
+    );
 }
 
 #[test]

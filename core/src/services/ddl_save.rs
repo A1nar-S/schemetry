@@ -246,6 +246,28 @@ pub fn plan_ddl_save(
     args: &DdlSaveArgs,
     options: &DdlSaveOptions,
 ) -> Result<DdlSavePlan, String> {
+    plan_inner(folder_overrides, schema_root, args, options, None)
+}
+
+/// Like [`plan_ddl_save`], but every planned file gets `raw` exactly as given: no
+/// idempotency wrapping and no re-encoding. `args.ddl` is ignored.
+pub fn plan_ddl_save_raw(
+    folder_overrides: &SchemaFolderOverrideService,
+    schema_root: &str,
+    args: &DdlSaveArgs,
+    options: &DdlSaveOptions,
+    raw: &[u8],
+) -> Result<DdlSavePlan, String> {
+    plan_inner(folder_overrides, schema_root, args, options, Some(raw))
+}
+
+fn plan_inner(
+    folder_overrides: &SchemaFolderOverrideService,
+    schema_root: &str,
+    args: &DdlSaveArgs,
+    options: &DdlSaveOptions,
+    raw: Option<&[u8]>,
+) -> Result<DdlSavePlan, String> {
     if is_package_spec_and_body(&args.object_type) && args.db_type.eq_ignore_ascii_case("postgres")
     {
         return Err(format!(
@@ -307,13 +329,18 @@ pub fn plan_ddl_save(
         plan.files.push(PlannedFile {
             kind: "code",
             exists: code_file.exists(),
-            content: encode_content(&args.ddl, &encoding),
+            content: match raw {
+                Some(bytes) => bytes.to_vec(),
+                None => encode_content(&args.ddl, &encoding),
+            },
             path: code_file,
         });
     }
 
     if write_migration {
-        let migration_ddl = if args.db_type.eq_ignore_ascii_case("postgres") {
+        let migration_ddl = if raw.is_some() {
+            String::new()
+        } else if args.db_type.eq_ignore_ascii_case("postgres") {
             crate::repositories::postgres_repository::build_deploy_script(
                 &args.object_type.to_ascii_uppercase(),
                 &args.object_name,
@@ -326,7 +353,10 @@ pub fn plan_ddl_save(
                 &args.ddl,
             )
         };
-        let migration_content = encode_content(&migration_ddl, &encoding);
+        let migration_content = match raw {
+            Some(bytes) => bytes.to_vec(),
+            None => encode_content(&migration_ddl, &encoding),
+        };
         let now = Local::now();
 
         let primary_name = if folder_mode == "version" {

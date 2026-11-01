@@ -293,7 +293,8 @@ fn list_read_ddl_and_save_scripts_end_to_end() {
         connection_id: ID(),
         object_name: "employees".into(),
         object_type: "TABLE".into(),
-        ddl: ddl_text.clone(),
+        ddl: Some(ddl_text.clone()),
+        source: None,
         description: "from_mcp".into(),
         dry_run,
     };

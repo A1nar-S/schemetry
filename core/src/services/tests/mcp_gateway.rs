@@ -755,7 +755,7 @@ fn combined_package_type_is_rejected_for_postgres() {
     );
     let mut save = save_args("ORDER_API", "pkg");
     save.object_type = "PACKAGE SPEC AND BODY".into();
-    save.ddl = format!("{PKG_SPEC}\n{PKG_BODY}");
+    save.ddl = Some(format!("{PKG_SPEC}\n{PKG_BODY}"));
     let saved = denied_message(h.gateway.save_migration_script(CLIENT, save));
     assert!(saved.contains("Oracle"), "{saved}");
     assert_eq!(h.db_calls(), 0);
@@ -787,7 +787,9 @@ fn saving_the_combined_package_type_writes_one_pck_file() {
     let (h, root) = save_harness();
     let mut args = save_args("ORDER_API", "pkg");
     args.object_type = "package spec and body".into();
-    args.ddl = crate::services::ddl_save::combine_package_spec_and_body(PKG_SPEC, PKG_BODY);
+    args.ddl = Some(crate::services::ddl_save::combine_package_spec_and_body(
+        PKG_SPEC, PKG_BODY,
+    ));
     args.dry_run = true;
     let out = h
         .gateway
@@ -799,7 +801,7 @@ fn saving_the_combined_package_type_writes_one_pck_file() {
         .iter()
         .find(|f| f["kind"] == "code")
         .unwrap();
-    assert_eq!(code["content"], args.ddl);
+    assert_eq!(code["content"], args.ddl.clone().unwrap());
     assert!(code["path"].as_str().unwrap().ends_with("ORDER_API.sql"));
 
     args.dry_run = false;
@@ -814,7 +816,7 @@ fn saving_the_combined_package_type_writes_one_pck_file() {
             .join("ORDER_API.sql"),
     )
     .unwrap();
-    assert_eq!(saved, args.ddl);
+    assert_eq!(saved, args.ddl.clone().unwrap());
 }
 
 #[test]
@@ -823,7 +825,7 @@ fn saving_the_combined_package_type_requires_spec_and_body() {
     for ddl in [PKG_SPEC, PKG_BODY, "CREATE TABLE ORDERS (ID NUMBER);"] {
         let mut args = save_args("ORDER_API", "pkg");
         args.object_type = "PACKAGE SPEC AND BODY".into();
-        args.ddl = ddl.into();
+        args.ddl = Some(ddl.into());
         let message = denied_message(h.gateway.save_migration_script(CLIENT, args));
         assert!(message.contains("CREATE PACKAGE BODY"), "{message}");
     }
@@ -1264,7 +1266,8 @@ fn save_args(name: &str, description: &str) -> SaveMigrationScriptArgs {
         connection_id: 1,
         object_name: name.into(),
         object_type: "TABLE".into(),
-        ddl: "CREATE TABLE ORDERS (ID NUMBER);".into(),
+        ddl: Some("CREATE TABLE ORDERS (ID NUMBER);".into()),
+        source: None,
         description: description.into(),
         dry_run: false,
     }
@@ -1402,10 +1405,10 @@ fn path_traversal_in_names_and_descriptions_is_rejected() {
 fn oversized_or_empty_ddl_is_rejected() {
     let (h, _root) = save_harness();
     let mut empty = save_args("ORDERS", "x");
-    empty.ddl = "   ".into();
+    empty.ddl = Some("   ".into());
     denied_message(h.gateway.save_migration_script(CLIENT, empty));
     let mut huge = save_args("ORDERS", "x");
-    huge.ddl = "x".repeat(1_000_001);
+    huge.ddl = Some("x".repeat(1_000_001));
     denied_message(h.gateway.save_migration_script(CLIENT, huge));
 }
 
@@ -1445,7 +1448,7 @@ fn hidden_objects_cannot_have_scripts_saved() {
 fn the_audit_trail_keeps_a_digest_of_saved_ddl_not_the_ddl_itself() {
     let (h, _root) = save_harness();
     let mut args = save_args("ORDERS", "x");
-    args.ddl = "CREATE TABLE ORDERS (SECRET_COLUMN_NAME NUMBER);".into();
+    args.ddl = Some("CREATE TABLE ORDERS (SECRET_COLUMN_NAME NUMBER);".into());
     h.gateway.save_migration_script(CLIENT, args).unwrap();
 
     let entry = &h.entries()[0];
@@ -1454,6 +1457,439 @@ fn the_audit_trail_keeps_a_digest_of_saved_ddl_not_the_ddl_itself() {
     assert_eq!(arguments["ddl_bytes"], 48);
     assert_eq!(arguments["ddl_sha256"].as_str().unwrap().len(), 64);
     assert_eq!(arguments["target_paths"].as_array().unwrap().len(), 2);
+}
+
+// ── save_migration_script with a source ─────────────────────────────────────────
+
+fn source_args(source: SaveSource) -> SaveMigrationScriptArgs {
+    SaveMigrationScriptArgs {
+        ddl: None,
+        source: Some(source),
+        ..save_args("ORDERS", "from_source")
+    }
+}
+
+fn from_file(path: &str) -> SaveMigrationScriptArgs {
+    source_args(SaveSource {
+        server: None,
+        file: Some(path.into()),
+    })
+}
+
+fn from_server() -> SaveMigrationScriptArgs {
+    source_args(SaveSource {
+        server: Some(true),
+        file: None,
+    })
+}
+
+/// Writes `bytes` to `<schema folder>/<relative>` and returns the schema folder.
+fn put_source(root: &tempfile::TempDir, relative: &str, bytes: &[u8]) -> std::path::PathBuf {
+    let schema_dir = root.path().join("app");
+    let file = schema_dir.join(relative);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, bytes).unwrap();
+    schema_dir
+}
+
+fn saved_file<'a>(out: &'a Value, kind: &str) -> &'a Value {
+    out["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["kind"] == kind)
+        .unwrap()
+}
+
+#[test]
+fn server_source_saves_the_connections_ddl_without_echoing_it() {
+    let (h, _root) = save_harness();
+    let ddl = "CREATE TABLE ORDERS (SECRET_COLUMN_NAME NUMBER);\n";
+    h.db.ddls
+        .lock()
+        .unwrap()
+        .insert("TABLE:ORDERS".into(), ddl.into());
+
+    let out = h
+        .gateway
+        .save_migration_script(CLIENT, from_server())
+        .unwrap();
+    assert_eq!(out["written"], true);
+    assert_eq!(out["source"]["kind"], "server");
+    assert_eq!(out["source"]["bytes"], ddl.len());
+    assert!(!out.to_string().contains("SECRET_COLUMN_NAME"));
+
+    let code = saved_file(&out, "code");
+    let on_disk = std::fs::read(code["path"].as_str().unwrap()).unwrap();
+    assert_eq!(on_disk, ddl.as_bytes());
+    assert_eq!(code["bytes"], ddl.len());
+    assert_eq!(code["sha256"], sha256_hex(ddl.as_bytes()));
+    assert_eq!(code["line_count"], 1);
+    assert_eq!(code["overwrites_existing"], false);
+    assert!(
+        std::path::Path::new(saved_file(&out, "migration")["path"].as_str().unwrap()).is_file()
+    );
+
+    assert_audit(&h, 1, McpOutcome::Allowed);
+    let entry = &h.entries()[0];
+    assert!(!entry.arguments.contains("SECRET_COLUMN_NAME"));
+    let arguments: Value = serde_json::from_str(&entry.arguments).unwrap();
+    assert_eq!(arguments["source_kind"], "server");
+    assert_eq!(arguments["source_bytes"], ddl.len());
+    assert_eq!(arguments["source_sha256"], sha256_hex(ddl.as_bytes()));
+}
+
+#[test]
+fn server_source_dry_run_reports_metadata_only() {
+    let (h, root) = save_harness();
+    h.db.ddls.lock().unwrap().insert(
+        "TABLE:ORDERS".into(),
+        "CREATE TABLE ORDERS (ID NUMBER);".into(),
+    );
+    let mut args = from_server();
+    args.dry_run = true;
+    let out = h.gateway.save_migration_script(CLIENT, args).unwrap();
+
+    assert_eq!(out["written"], false);
+    assert!(saved_file(&out, "code").get("content").is_none());
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn server_source_needs_ddl_read_permission_and_respects_hidden_objects() {
+    let (h, root) = save_harness();
+    h.db.ddls.lock().unwrap().insert(
+        "TABLE:ORDERS".into(),
+        "CREATE TABLE ORDERS (ID NUMBER);".into(),
+    );
+    h.set_policy(McpPolicy {
+        allow_save_scripts: true,
+        allow_ddl_read: false,
+        ..enabled_policy(1)
+    });
+    let message = denied_message(h.gateway.save_migration_script(CLIENT, from_server()));
+    assert!(message.contains("allow_ddl_read"));
+    assert_eq!(*h.db.db_calls.lock().unwrap(), 0);
+
+    h.set_policy(McpPolicy {
+        allow_save_scripts: true,
+        object_deny: vec![McpObjectDenyRule {
+            object_type: "*".into(),
+            name: "ORDERS".into(),
+        }],
+        ..enabled_policy(1)
+    });
+    denied_message(h.gateway.save_migration_script(CLIENT, from_server()));
+    assert_eq!(*h.db.db_calls.lock().unwrap(), 0);
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    assert_audit(&h, 2, McpOutcome::Denied);
+}
+
+#[test]
+fn server_source_without_ddl_fails_and_is_audited() {
+    let (h, root) = save_harness();
+    failed_message(h.gateway.save_migration_script(CLIENT, from_server()));
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    assert_audit(&h, 1, McpOutcome::Error);
+}
+
+#[test]
+fn file_source_is_copied_byte_for_byte_into_every_file() {
+    let (h, root) = save_harness();
+    // BOM, CRLF line endings, a Windows-1257 byte that is not valid UTF-8, no final newline.
+    let bytes: &[u8] = b"\xEF\xBB\xBFCREATE TABLE ORDERS (\r\n  NAME VARCHAR2(10) -- \xE0\r\n);";
+    put_source(&root, "src/orders.sql", bytes);
+
+    let out = h
+        .gateway
+        .save_migration_script(CLIENT, from_file("src/orders.sql"))
+        .unwrap();
+    assert_eq!(out["source"]["kind"], "file");
+    assert_eq!(out["source"]["sha256"], sha256_hex(bytes));
+    assert!(!out.to_string().contains("CREATE TABLE"));
+
+    for kind in ["code", "migration"] {
+        let file = saved_file(&out, kind);
+        assert_eq!(
+            std::fs::read(file["path"].as_str().unwrap()).unwrap(),
+            bytes,
+            "{kind}"
+        );
+        assert_eq!(file["bytes"], bytes.len());
+        assert_eq!(file["sha256"], sha256_hex(bytes));
+        assert_eq!(file["line_count"], 3);
+        assert_eq!(file["overwrites_existing"], false);
+    }
+
+    let entry = &h.entries()[0];
+    assert!(!entry.arguments.contains("CREATE TABLE"));
+    let arguments: Value = serde_json::from_str(&entry.arguments).unwrap();
+    assert_eq!(arguments["source_kind"], "file");
+    assert_eq!(arguments["source_bytes"], bytes.len());
+    assert_eq!(arguments["source_sha256"], sha256_hex(bytes));
+    assert_audit(&h, 1, McpOutcome::Allowed);
+}
+
+#[test]
+fn file_source_dry_run_never_returns_content_and_reports_overwrites() {
+    let (h, root) = save_harness();
+    put_source(&root, "orders.sql", b"CREATE TABLE ORDERS (ID NUMBER);\n");
+    h.gateway
+        .save_migration_script(CLIENT, from_file("orders.sql"))
+        .unwrap();
+
+    let mut args = from_file("./orders.sql");
+    args.dry_run = true;
+    args.description = "again".into();
+    let out = h.gateway.save_migration_script(CLIENT, args).unwrap();
+    assert_eq!(out["written"], false);
+    let code = saved_file(&out, "code");
+    assert!(code.get("content").is_none());
+    assert_eq!(code["overwrites_existing"], true);
+    assert_eq!(code["line_count"], 1);
+}
+
+#[test]
+fn file_source_may_be_the_file_it_overwrites() {
+    let (h, root) = save_harness();
+    let bytes = b"CREATE TABLE ORDERS (ID NUMBER);\n";
+    put_source(&root, "code/app/ORDERS.sql", bytes);
+    let out = h
+        .gateway
+        .save_migration_script(CLIENT, from_file("code/app/ORDERS.sql"))
+        .unwrap();
+    assert_eq!(saved_file(&out, "code")["overwrites_existing"], true);
+    let code = std::fs::read(saved_file(&out, "code")["path"].as_str().unwrap()).unwrap();
+    assert_eq!(code, bytes);
+}
+
+#[test]
+fn file_source_paths_cannot_leave_the_schema_folder() {
+    let (h, root) = save_harness();
+    put_source(&root, "ok.sql", b"SELECT 1 FROM DUAL;");
+    std::fs::write(root.path().join("outside.sql"), b"SELECT 2 FROM DUAL;").unwrap();
+    let outside_abs = root
+        .path()
+        .join("outside.sql")
+        .to_string_lossy()
+        .into_owned();
+
+    let mut calls = 0;
+    for path in [
+        "../outside.sql",
+        "sub/../../outside.sql",
+        "..\\outside.sql",
+        outside_abs.as_str(),
+        "/etc/passwd",
+        "\\\\server\\share\\x.sql",
+        "C:\\Windows\\win.ini",
+        "C:win.ini",
+        "ok.sql:stream",
+        "",
+        "   ",
+        "ok\0.sql",
+    ] {
+        calls += 1;
+        let message = denied_message(h.gateway.save_migration_script(CLIENT, from_file(path)));
+        assert!(!message.is_empty(), "{path:?}");
+        assert_audit(&h, calls, McpOutcome::Denied);
+    }
+    // Nothing was written next to the sources.
+    assert_eq!(
+        std::fs::read_dir(root.path().join("app")).unwrap().count(),
+        1
+    );
+}
+
+#[test]
+fn file_source_symlinks_cannot_escape_the_schema_folder() {
+    let (h, root) = save_harness();
+    let schema_dir = put_source(&root, "ok.sql", b"SELECT 1 FROM DUAL;");
+    let outside = root.path().join("outside.sql");
+    std::fs::write(&outside, b"SELECT 2 FROM DUAL;").unwrap();
+    let outside_dir = root.path().join("elsewhere");
+    std::fs::create_dir_all(&outside_dir).unwrap();
+    std::fs::write(outside_dir.join("x.sql"), b"SELECT 3 FROM DUAL;").unwrap();
+
+    #[cfg(unix)]
+    let linked = {
+        use std::os::unix::fs::symlink;
+        symlink(&outside, schema_dir.join("link.sql")).is_ok()
+            && symlink(&outside_dir, schema_dir.join("linkdir")).is_ok()
+    };
+    #[cfg(windows)]
+    let linked = {
+        // Directory junctions need no privilege, unlike symlinks.
+        let link = schema_dir.join("linkdir");
+        std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside_dir)
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    };
+    if !linked {
+        eprintln!("skipping: symlinks cannot be created here");
+        return;
+    }
+
+    #[cfg(unix)]
+    denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, from_file("link.sql")),
+    );
+    denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, from_file("linkdir/x.sql")),
+    );
+    assert_audit(&h, if cfg!(unix) { 2 } else { 1 }, McpOutcome::Denied);
+}
+
+#[test]
+fn file_source_must_be_an_existing_non_empty_text_file() {
+    let (h, root) = save_harness();
+    put_source(&root, "empty.sql", b"");
+    put_source(&root, "blank.sql", b" \r\n\t");
+    put_source(&root, "binary.sql", b"CREATE\0TABLE");
+    put_source(&root, "dir/inner.sql", b"SELECT 1 FROM DUAL;");
+
+    denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, from_file("empty.sql")),
+    );
+    denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, from_file("blank.sql")),
+    );
+    denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, from_file("binary.sql")),
+    );
+    denied_message(h.gateway.save_migration_script(CLIENT, from_file("dir")));
+    failed_message(
+        h.gateway
+            .save_migration_script(CLIENT, from_file("missing.sql")),
+    );
+    assert_eq!(h.entries().len(), 5);
+}
+
+#[test]
+fn file_source_size_cap_is_eight_megabytes() {
+    let (h, root) = save_harness();
+    // Over the 1 MB inline limit, so only the file path can carry it.
+    let big = vec![b'x'; 2_000_000];
+    put_source(&root, "big.sql", &big);
+    let out = h
+        .gateway
+        .save_migration_script(CLIENT, from_file("big.sql"))
+        .unwrap();
+    assert_eq!(saved_file(&out, "code")["bytes"], big.len());
+
+    put_source(&root, "huge.sql", &vec![b'x'; 8 * 1024 * 1024 + 1]);
+    let message = denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, from_file("huge.sql")),
+    );
+    assert!(message.contains("8 MB"));
+}
+
+#[test]
+fn exactly_one_of_ddl_and_source_is_required() {
+    let (h, root) = save_harness();
+    put_source(&root, "orders.sql", b"SELECT 1 FROM DUAL;");
+
+    let mut neither = save_args("ORDERS", "x");
+    neither.ddl = None;
+    assert!(
+        denied_message(h.gateway.save_migration_script(CLIENT, neither)).contains("exactly one")
+    );
+
+    let mut both = from_file("orders.sql");
+    both.ddl = Some("CREATE TABLE ORDERS (ID NUMBER);".into());
+    assert!(denied_message(h.gateway.save_migration_script(CLIENT, both)).contains("exactly one"));
+
+    for source in [
+        SaveSource {
+            server: None,
+            file: None,
+        },
+        SaveSource {
+            server: Some(false),
+            file: None,
+        },
+        SaveSource {
+            server: Some(true),
+            file: Some("orders.sql".into()),
+        },
+    ] {
+        denied_message(h.gateway.save_migration_script(CLIENT, source_args(source)));
+    }
+    assert_audit(&h, 5, McpOutcome::Denied);
+    assert_eq!(
+        std::fs::read_dir(root.path().join("app")).unwrap().count(),
+        1
+    );
+}
+
+#[test]
+fn file_source_cannot_save_hidden_objects_or_without_the_flag() {
+    let (h, root) = save_harness();
+    put_source(&root, "orders.sql", b"SELECT 1 FROM DUAL;");
+    h.set_policy(McpPolicy {
+        allow_save_scripts: true,
+        object_deny: vec![McpObjectDenyRule {
+            object_type: "*".into(),
+            name: "ORDERS".into(),
+        }],
+        ..enabled_policy(1)
+    });
+    denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, from_file("orders.sql")),
+    );
+    h.set_policy(enabled_policy(1));
+    denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, from_file("orders.sql")),
+    );
+    assert_eq!(
+        std::fs::read_dir(root.path().join("app")).unwrap().count(),
+        1
+    );
+}
+
+#[test]
+fn source_arguments_deserialize_and_reject_unknown_fields() {
+    let args: SaveMigrationScriptArgs = serde_json::from_value(json!({
+        "connection_id": 1,
+        "object_name": "ORDERS",
+        "object_type": "TABLE",
+        "description": "x",
+        "source": { "file": "a/b.sql" },
+    }))
+    .unwrap();
+    assert!(args.ddl.is_none());
+    assert_eq!(args.source.unwrap().file.as_deref(), Some("a/b.sql"));
+
+    let typo = serde_json::from_value::<SaveMigrationScriptArgs>(json!({
+        "connection_id": 1,
+        "object_name": "ORDERS",
+        "object_type": "TABLE",
+        "description": "x",
+        "source": { "files": "a/b.sql" },
+    }));
+    assert!(typo.is_err());
+}
+
+#[test]
+fn line_count_counts_a_final_unterminated_line() {
+    assert_eq!(line_count(b""), 0);
+    assert_eq!(line_count(b"a"), 1);
+    assert_eq!(line_count(b"a\n"), 1);
+    assert_eq!(line_count(b"a\nb"), 2);
+    assert_eq!(line_count(b"a\r\nb\r\n"), 2);
+    assert_eq!(line_count(b"\n\n"), 2);
 }
 
 // ── compare / fix ───────────────────────────────────────────────────────────────

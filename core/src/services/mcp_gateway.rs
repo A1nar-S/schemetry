@@ -3,6 +3,7 @@
 //! wrapper, which keeps all enforcement testable without a protocol client.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -140,6 +141,20 @@ tool_args! {
     }
 }
 
+/// Where the DDL to save comes from when it is not passed inline. Give exactly one field.
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SaveSource {
+    /// `true`: fetch the object's DDL from the connection itself (needs `allow_ddl_read`).
+    #[serde(default)]
+    pub server: Option<bool>,
+    /// A file path relative to the schema's folder; its bytes are copied into the saved
+    /// files unchanged (no re-encoding, no idempotency wrapping). Absolute paths, `..`
+    /// and symlinks leaving the schema folder are refused; at most 8 MB.
+    #[serde(default)]
+    pub file: Option<String>,
+}
+
 tool_args! {
     pub struct SaveMigrationScriptArgs {
         pub connection_id: i64,
@@ -147,11 +162,16 @@ tool_args! {
         /// e.g. TABLE, VIEW, PACKAGE, PACKAGE BODY, or PACKAGE SPEC AND BODY (Oracle: one .pck file
         /// holding both, so `ddl` must contain CREATE PACKAGE and CREATE PACKAGE BODY).
         pub object_type: String,
-        /// The DDL to save.
-        pub ddl: String,
+        /// The DDL to save, inline (at most 1 MB). Give exactly one of `ddl` and `source`; prefer
+        /// `source` so large DDL does not have to pass through the agent.
+        #[serde(default)]
+        pub ddl: Option<String>,
+        /// Where Schemetry reads the DDL from instead: `{"server": true}` or `{"file": "relative/path.sql"}`.
+        #[serde(default)]
+        pub source: Option<SaveSource>,
         /// Short label used in the migration file name: letters, digits, `_` and `-`, up to 80 characters.
         pub description: String,
-        /// Return the target paths and rendered content without writing anything.
+        /// Report the target paths (and, for inline `ddl`, the rendered content) without writing anything.
         #[serde(default)]
         pub dry_run: bool,
     }
@@ -401,6 +421,85 @@ fn bounded_arguments(arguments: Value) -> String {
 
 fn target_of(object_type: &str, names: &[String]) -> Map<String, Value> {
     mcp_audit_target::object_target(object_type, names)
+}
+
+/// Upper bound for a source file copied by `save_migration_script` (inline DDL stays at 1 MB).
+const MAX_SOURCE_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+enum SourceRequest<'a> {
+    Inline,
+    Server,
+    File(&'a str),
+}
+
+fn line_count(bytes: &[u8]) -> usize {
+    let newlines = bytes.iter().filter(|&&b| b == b'\n').count();
+    match bytes.last() {
+        None => 0,
+        Some(b'\n') => newlines,
+        Some(_) => newlines + 1,
+    }
+}
+
+/// Reads a file given relative to the schema folder, refusing anything that is not a plain
+/// relative path or that resolves (e.g. through a symlink) outside that folder. The bytes
+/// are returned untouched.
+fn read_source_file(schema_dir: &Path, relative: &str) -> Result<Vec<u8>, ToolError> {
+    use std::io::Read;
+    use std::path::Component;
+
+    let path = Path::new(relative);
+    let plain = !relative.trim().is_empty()
+        && !relative.contains(['\0', ':'])
+        && !relative.starts_with(['/', '\\'])
+        && !path.is_absolute()
+        && path
+            .components()
+            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    if !plain {
+        return denied(
+            "source.file must be a relative path inside the schema folder (no absolute paths, drive letters or `..`).",
+        );
+    }
+
+    let root = schema_dir.canonicalize().map_err(|error| {
+        ToolError::Failed(format!(
+            "The schema folder {} is not readable: {error}",
+            schema_dir.display()
+        ))
+    })?;
+    let resolved = root.join(path).canonicalize().map_err(|error| {
+        ToolError::Failed(format!(
+            "source.file {relative:?} could not be resolved: {error}"
+        ))
+    })?;
+    if !resolved.starts_with(&root) {
+        return denied("source.file resolves outside the schema folder.");
+    }
+    let metadata = std::fs::metadata(&resolved)
+        .map_err(|error| ToolError::Failed(format!("source.file could not be read: {error}")))?;
+    if !metadata.is_file() {
+        return denied("source.file must be a regular file.");
+    }
+    if metadata.len() > MAX_SOURCE_FILE_BYTES {
+        return denied("source.file must be at most 8 MB.");
+    }
+
+    // The size can change between the check and the read, so the read is capped as well.
+    let mut bytes = Vec::new();
+    std::fs::File::open(&resolved)
+        .and_then(|file| file.take(MAX_SOURCE_FILE_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|error| ToolError::Failed(format!("source.file could not be read: {error}")))?;
+    if bytes.len() as u64 > MAX_SOURCE_FILE_BYTES {
+        return denied("source.file must be at most 8 MB.");
+    }
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return denied("source.file is empty.");
+    }
+    if bytes.contains(&0) {
+        return denied("source.file must be a text file (it contains NUL bytes).");
+    }
+    Ok(bytes)
 }
 
 impl McpGateway {
@@ -793,15 +892,20 @@ impl McpGateway {
 
     pub fn save_migration_script(&self, client: &str, args: SaveMigrationScriptArgs) -> ToolResult {
         // The DDL itself can be large; the audit trail keeps its size and digest.
-        let arguments = json!({
+        let mut arguments = json!({
             "connection_id": args.connection_id,
             "object_name": args.object_name,
             "object_type": args.object_type,
             "description": args.description,
             "dry_run": args.dry_run,
-            "ddl_bytes": args.ddl.len(),
-            "ddl_sha256": sha256_hex(args.ddl.as_bytes()),
         });
+        if let Some(ddl) = &args.ddl {
+            arguments["ddl_bytes"] = json!(ddl.len());
+            arguments["ddl_sha256"] = json!(sha256_hex(ddl.as_bytes()));
+        }
+        if let Some(source) = &args.source {
+            arguments["source"] = json!({ "server": source.server, "file": source.file });
+        }
         self.audited(
             client,
             McpTool::SaveMigrationScript.name(),
@@ -831,9 +935,34 @@ impl McpGateway {
                         "description may only contain letters, digits, _ and - (max 80 characters).",
                     );
                 }
-                if args.ddl.trim().is_empty() || args.ddl.len() > MAX_DDL_BYTES || args.ddl.contains('\0') {
-                    return denied("ddl must be non-empty text of at most 1 MB.");
-                }
+                let source_request = match (&args.ddl, &args.source) {
+                    (Some(_), Some(_)) => {
+                        return denied("Give exactly one of ddl and source, not both.");
+                    }
+                    (None, None) => {
+                        return denied(
+                            "Give exactly one of ddl and source ({\"server\": true} or {\"file\": \"relative/path\"}).",
+                        );
+                    }
+                    (Some(ddl), None) => {
+                        if ddl.trim().is_empty() || ddl.len() > MAX_DDL_BYTES || ddl.contains('\0') {
+                            return denied("ddl must be non-empty text of at most 1 MB.");
+                        }
+                        SourceRequest::Inline
+                    }
+                    (None, Some(source)) => match (source.server, &source.file) {
+                        (Some(true), None) => SourceRequest::Server,
+                        (None | Some(false), Some(file)) => SourceRequest::File(file),
+                        (Some(true), Some(_)) => {
+                            return denied("source must set exactly one of server and file, not both.");
+                        }
+                        _ => {
+                            return denied(
+                                "source must be {\"server\": true} or {\"file\": \"relative/path\"}.",
+                            );
+                        }
+                    },
+                };
                 if object_hidden(&policy, object_name, &object_type) {
                     return denied(format!("{object_type} {object_name} is hidden by policy."));
                 }
@@ -841,31 +970,85 @@ impl McpGateway {
                     if conn.db_type != DbType::Oracle {
                         return denied(PACKAGE_COMBINED_ORACLE_ONLY);
                     }
-                    if !ddl_save::has_package_spec_and_body(&args.ddl) {
+                    if let Some(ddl) = &args.ddl
+                        && !ddl_save::has_package_spec_and_body(ddl)
+                    {
                         return denied(
                             "ddl for PACKAGE SPEC AND BODY must contain both a CREATE PACKAGE and a CREATE PACKAGE BODY statement.",
                         );
                     }
                 }
+                if matches!(source_request, SourceRequest::Server) {
+                    policy
+                        .check_tool(McpTool::GetObjectDdl)
+                        .map_err(ToolError::Denied)?;
+                }
 
                 let schema_root = self.settings.schema_root().map_err(ToolError::Failed)?;
-                let save_args = DdlSaveArgs {
+                let mut save_args = DdlSaveArgs {
                     schema: schema_of(&conn),
                     object_name: object_name.to_string(),
                     object_type: object_type.clone(),
-                    ddl: args.ddl.clone(),
+                    ddl: args.ddl.clone().unwrap_or_default(),
                     description: description.to_string(),
                     db_type: db_type_name(conn.db_type).to_string(),
                 };
                 let options = self.settings.save_options(&object_type);
-                let plan =
-                    ddl_save::plan_ddl_save(&self.folder_overrides, &schema_root, &save_args, &options)
-                        .map_err(ToolError::Failed)?;
+                let schema_dir = ddl_save::resolve_schema_dir(&self.folder_overrides, &save_args.schema, &schema_root)
+                    .map_err(ToolError::Failed)?;
+
+                let (source_kind, raw_file) = match source_request {
+                    SourceRequest::Inline => ("inline", None),
+                    SourceRequest::Server => {
+                        let ddl = self
+                            .diff_svc
+                            .fetch_object_ddl(&conn, object_name, &object_type)?;
+                        if ddl.trim().is_empty() || ddl.len() > MAX_DDL_BYTES || ddl.contains('\0') {
+                            return failed(
+                                "The connection returned no usable DDL (empty, over 1 MB or binary) for this object.",
+                            );
+                        }
+                        save_args.ddl = ddl;
+                        ("server", None)
+                    }
+                    SourceRequest::File(relative) => {
+                        ("file", Some(read_source_file(&schema_dir, relative)?))
+                    }
+                };
+                let source_bytes: &[u8] = match &raw_file {
+                    Some(bytes) => bytes,
+                    None => save_args.ddl.as_bytes(),
+                };
+                let source_info = json!({
+                    "kind": source_kind,
+                    "bytes": source_bytes.len(),
+                    "sha256": sha256_hex(source_bytes),
+                });
+                ctx.details = Some(json!({
+                    "source_kind": source_kind,
+                    "source_bytes": source_bytes.len(),
+                    "source_sha256": sha256_hex(source_bytes),
+                }));
+
+                let plan = match &raw_file {
+                    Some(bytes) => ddl_save::plan_ddl_save_raw(
+                        &self.folder_overrides,
+                        &schema_root,
+                        &save_args,
+                        &options,
+                        bytes,
+                    ),
+                    None => ddl_save::plan_ddl_save(
+                        &self.folder_overrides,
+                        &schema_root,
+                        &save_args,
+                        &options,
+                    ),
+                }
+                .map_err(ToolError::Failed)?;
 
                 // Names were validated, so every target already sits inside the schema folder;
                 // this guards the join result itself.
-                let schema_dir = ddl_save::resolve_schema_dir(&self.folder_overrides, &save_args.schema, &schema_root)
-                    .map_err(ToolError::Failed)?;
                 for file in &plan.files {
                     let escapes = file
                         .path
@@ -882,9 +1065,16 @@ impl McpGateway {
                     .iter()
                     .map(|f| f.path.to_string_lossy().into_owned())
                     .collect();
-                ctx.details = Some(json!({ "target_paths": paths }));
+                ctx.details = Some(json!({
+                    "source_kind": source_kind,
+                    "source_bytes": source_bytes.len(),
+                    "source_sha256": sha256_hex(source_bytes),
+                    "target_paths": paths,
+                }));
                 ctx.row_count = Some(plan.files.len() as i64);
 
+                // Content is only echoed for a dry run of inline DDL the agent supplied itself.
+                let echo_content = args.dry_run && source_kind == "inline";
                 let files: Vec<Value> = plan
                     .files
                     .iter()
@@ -892,9 +1082,12 @@ impl McpGateway {
                         let mut entry = json!({
                             "kind": file.kind,
                             "path": file.path.to_string_lossy(),
+                            "bytes": file.content.len(),
+                            "sha256": sha256_hex(&file.content),
+                            "line_count": line_count(&file.content),
                             "overwrites_existing": file.exists,
                         });
-                        if args.dry_run {
+                        if echo_content {
                             entry["content"] =
                                 Value::String(String::from_utf8_lossy(&file.content).into_owned());
                         }
@@ -903,10 +1096,10 @@ impl McpGateway {
                     .collect();
 
                 if args.dry_run {
-                    return Ok(json!({ "dry_run": true, "written": false, "files": files }));
+                    return Ok(json!({ "dry_run": true, "written": false, "source": source_info, "files": files }));
                 }
                 ddl_save::write_plan(&plan).map_err(ToolError::Failed)?;
-                Ok(json!({ "dry_run": false, "written": true, "files": files }))
+                Ok(json!({ "dry_run": false, "written": true, "source": source_info, "files": files }))
             },
         )
     }
