@@ -3,8 +3,8 @@ use std::io::Write;
 use anyhow::Result;
 
 use crate::models::{
-    CompletionMetadata, ConnectionRecord, HistoryFixResult, HistoryNamingRule, SchemaObject,
-    TableDdls, TableFilterRule,
+    CompletionMetadata, ConnectionRecord, HistoryFixResult, HistoryNamingRule, InvalidObjectList,
+    ObjectErrorList, SchemaObject, TableDdls, TableFilterRule,
 };
 
 /// Engine-agnostic schema/query interface. `DbOracleRepository` and
@@ -69,6 +69,24 @@ pub trait DbRepository: Send + Sync {
         conn: &ConnectionRecord,
         request: &ReadOnlyQuery,
     ) -> Result<ReadOnlyResult>;
+    /// Objects of the connection's schema the database flags as invalid (Oracle), at most
+    /// `max_rows`, optionally of one `object_type`. Engines without the concept return a
+    /// "not applicable" result rather than an error.
+    fn fetch_invalid_objects(
+        &self,
+        conn: &ConnectionRecord,
+        object_type: Option<&str>,
+        max_rows: usize,
+    ) -> Result<InvalidObjectList>;
+    /// Compile errors and warnings of one object of the connection's schema, at most
+    /// `max_rows`; see [`DbRepository::fetch_invalid_objects`] for engines without them.
+    fn fetch_object_errors(
+        &self,
+        conn: &ConnectionRecord,
+        name: &str,
+        object_type: &str,
+        max_rows: usize,
+    ) -> Result<ObjectErrorList>;
 }
 
 /// A bounded, read-only query. `binds` are Oracle `:1`, `:2`, … values; Postgres queries

@@ -73,6 +73,74 @@ fn ddl_and_schema_objects_on_source() {
 
 #[test]
 #[ignore = "requires the two Oracle containers from docker/docker-compose.yml"]
+fn invalid_objects_and_compile_errors_are_reported() {
+    common::init_oracle_client();
+    let svc = diff_service();
+    let source = common::source_connection();
+
+    // Seeded by V4__broken_objects.sql: a FORCE view on a missing table and a
+    // procedure calling an undefined one.
+    let list = svc
+        .fetch_invalid_objects(&source, None, 100)
+        .expect("fetch_invalid_objects failed");
+    assert!(list.applicable);
+    for (name, object_type) in [("BROKEN_VIEW", "VIEW"), ("BROKEN_PROC", "PROCEDURE")] {
+        assert!(
+            list.objects
+                .iter()
+                .any(|o| o.name == name && o.object_type == object_type),
+            "expected invalid {object_type} {name}, got: {:?}",
+            list.objects
+        );
+    }
+    assert!(
+        !list.objects.iter().any(|o| o.name == "EMPLOYEES"),
+        "valid objects must not be listed"
+    );
+
+    let views = svc
+        .fetch_invalid_objects(&source, Some("view"), 100)
+        .expect("filtered fetch failed");
+    assert!(views.objects.iter().all(|o| o.object_type == "VIEW"));
+    assert!(views.objects.iter().any(|o| o.name == "BROKEN_VIEW"));
+
+    let capped = svc
+        .fetch_invalid_objects(&source, None, 1)
+        .expect("capped fetch failed");
+    assert_eq!(capped.objects.len(), 1);
+    assert!(capped.truncated);
+
+    let errors = svc
+        .fetch_object_errors(&source, "broken_proc", "procedure", 50)
+        .expect("fetch_object_errors failed");
+    assert_eq!(errors.status.as_deref(), Some("INVALID"));
+    assert!(
+        !errors.errors.is_empty(),
+        "expected compile errors: {errors:?}"
+    );
+    assert!(
+        errors
+            .errors
+            .iter()
+            .any(|e| e.attribute == "ERROR" && e.line >= 1 && e.message.contains("PLS-")),
+        "expected a PLS error with a line number: {:?}",
+        errors.errors
+    );
+
+    let clean = svc
+        .fetch_object_errors(&source, "EMPLOYEES", "TABLE", 50)
+        .expect("errors for a valid object failed");
+    assert!(clean.errors.is_empty());
+    assert_eq!(clean.status.as_deref(), Some("VALID"));
+
+    let missing = svc
+        .fetch_object_errors(&source, "NO_SUCH_THING", "PROCEDURE", 50)
+        .expect("errors for a missing object failed");
+    assert!(missing.status.is_none() && missing.message.is_some());
+}
+
+#[test]
+#[ignore = "requires the two Oracle containers from docker/docker-compose.yml"]
 fn multi_server_query_execution() {
     common::init_oracle_client();
     let query_svc = QueryService::new(Arc::new(DbOracleRepository::new()));

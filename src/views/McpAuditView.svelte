@@ -28,6 +28,8 @@
     'list_connections',
     'list_schema_objects',
     'get_object_ddl',
+    'list_invalid_objects',
+    'get_object_errors',
     'save_migration_script',
     'compare_schemas',
     'generate_fix_script',

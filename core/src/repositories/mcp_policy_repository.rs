@@ -62,7 +62,7 @@ impl Default for SqliteMcpPolicyRepository {
 
 const COLUMNS: &str = "connection_id, mcp_enabled, allow_schema_list, allow_ddl_read, \
     allow_save_scripts, allow_compare_fix, data_access, allow_raw_sql, table_rules, \
-    object_deny, max_rows, query_timeout_secs, mcp_username";
+    object_deny, max_rows, query_timeout_secs, mcp_username, allow_invalid_objects";
 
 fn row_to_policy(row: &rusqlite::Row) -> rusqlite::Result<McpPolicy> {
     let data_access: String = row.get(6)?;
@@ -89,6 +89,7 @@ fn row_to_policy(row: &rusqlite::Row) -> rusqlite::Result<McpPolicy> {
         max_rows: u32::try_from(max_rows).unwrap_or(McpPolicy::DEFAULT_MAX_ROWS),
         query_timeout_secs: u32::try_from(timeout).unwrap_or(McpPolicy::DEFAULT_TIMEOUT_SECS),
         mcp_username: row.get(12)?,
+        allow_invalid_objects: row.get(13)?,
         mcp_password_set: false,
     })
 }
@@ -114,6 +115,17 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
             )",
             [],
         )?;
+        // Added after the first release: existing policies stay denied (default-deny).
+        let has_invalid_objects_column = conn
+            .prepare("SELECT 1 FROM pragma_table_info('connection_mcp_policy') WHERE name = 'allow_invalid_objects'")?
+            .exists([])?;
+        if !has_invalid_objects_column {
+            conn.execute(
+                "ALTER TABLE connection_mcp_policy \
+                 ADD COLUMN allow_invalid_objects INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
         Ok(())
     }
 
@@ -159,8 +171,8 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
             "INSERT INTO connection_mcp_policy (
                 connection_id, mcp_enabled, allow_schema_list, allow_ddl_read, allow_save_scripts,
                 allow_compare_fix, data_access, allow_raw_sql, table_rules, object_deny,
-                max_rows, query_timeout_secs, mcp_username
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                max_rows, query_timeout_secs, mcp_username, allow_invalid_objects
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(connection_id) DO UPDATE SET
                 mcp_enabled = excluded.mcp_enabled,
                 allow_schema_list = excluded.allow_schema_list,
@@ -173,7 +185,8 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
                 object_deny = excluded.object_deny,
                 max_rows = excluded.max_rows,
                 query_timeout_secs = excluded.query_timeout_secs,
-                mcp_username = excluded.mcp_username",
+                mcp_username = excluded.mcp_username,
+                allow_invalid_objects = excluded.allow_invalid_objects",
             params![
                 policy.connection_id,
                 policy.mcp_enabled,
@@ -188,6 +201,7 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
                 policy.max_rows,
                 policy.query_timeout_secs,
                 policy.mcp_username,
+                policy.allow_invalid_objects,
             ],
         )
         .with_context(|| {
@@ -240,3 +254,7 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/mcp_policy_repository.rs"]
+mod tests;

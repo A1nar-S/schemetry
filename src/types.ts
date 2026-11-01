@@ -181,6 +181,7 @@ export type McpPolicy = {
   mcp_enabled: boolean;
   allow_schema_list: boolean;
   allow_ddl_read: boolean;
+  allow_invalid_objects: boolean;
   allow_save_scripts: boolean;
   allow_compare_fix: boolean;
   data_access: McpDataAccess;

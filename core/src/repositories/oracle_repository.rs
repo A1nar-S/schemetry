@@ -8,8 +8,8 @@ use oracle::{Connection, InitParams, Row};
 
 use crate::models::{
     ColumnInfo, CompletionColumn, CompletionMetadata, CompletionRelation, ConnectionRecord,
-    HistoryFixResult, HistoryNamingRule, HistoryTableIssue, MatchType, SchemaObject, TableDdls,
-    TableFilterRule,
+    HistoryFixResult, HistoryNamingRule, HistoryTableIssue, InvalidObject, InvalidObjectList,
+    MatchType, ObjectError, ObjectErrorList, SchemaObject, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::{
     DbRepository, LobCell, LobSource, QueryOutput, ReadOnlyQuery, ReadOnlyResult,
@@ -830,6 +830,151 @@ impl DbRepository for DbOracleRepository {
         }
 
         Ok(HistoryFixResult { issues, fix_sql })
+    }
+
+    fn fetch_invalid_objects(
+        &self,
+        conn: &ConnectionRecord,
+        object_type: Option<&str>,
+        max_rows: usize,
+    ) -> Result<InvalidObjectList> {
+        let db = self.connect(conn)?;
+        let schema = conn.username.to_ascii_uppercase();
+        let wanted = object_type
+            .map(|t| t.trim().to_ascii_uppercase())
+            .filter(|t| !t.is_empty());
+
+        let mut sql = String::from(
+            "SELECT OBJECT_NAME, OBJECT_TYPE, TO_CHAR(LAST_DDL_TIME, 'YYYY-MM-DD HH24:MI:SS') \
+             FROM ALL_OBJECTS WHERE OWNER = :1 AND STATUS = 'INVALID'",
+        );
+        let mut binds: Vec<&dyn ToSql> = vec![&schema];
+        if let Some(wanted) = &wanted {
+            sql.push_str(" AND OBJECT_TYPE = :2");
+            binds.push(wanted);
+        }
+        sql.push_str(" ORDER BY OBJECT_TYPE, OBJECT_NAME");
+
+        let rows = db.query(&sql, &binds).map_err(|e| anyhow!(e.to_string()))?;
+        let mut objects = Vec::new();
+        let mut truncated = false;
+        for row_result in rows {
+            if objects.len() >= max_rows {
+                truncated = true;
+                break;
+            }
+            let row = row_result.map_err(|e| anyhow!(e.to_string()))?;
+            objects.push(InvalidObject {
+                name: row.get(0).map_err(|e| anyhow!(e.to_string()))?,
+                object_type: row.get(1).map_err(|e| anyhow!(e.to_string()))?,
+                last_ddl_time: row.get(2).map_err(|e| anyhow!(e.to_string()))?,
+            });
+        }
+        Ok(InvalidObjectList {
+            applicable: true,
+            message: None,
+            objects,
+            truncated,
+        })
+    }
+
+    fn fetch_object_errors(
+        &self,
+        conn: &ConnectionRecord,
+        name: &str,
+        object_type: &str,
+        max_rows: usize,
+    ) -> Result<ObjectErrorList> {
+        let db = self.connect(conn)?;
+        let schema = conn.username.to_ascii_uppercase();
+        let name = name.trim().to_ascii_uppercase();
+        let object_type = object_type.trim().to_ascii_uppercase();
+
+        let status = db
+            .query(
+                "SELECT STATUS FROM ALL_OBJECTS \
+                 WHERE OWNER = :1 AND OBJECT_NAME = :2 AND OBJECT_TYPE = :3",
+                &[&schema, &name, &object_type],
+            )
+            .map_err(|e| anyhow!(e.to_string()))?
+            .next()
+            .transpose()
+            .map_err(|e| anyhow!(e.to_string()))?
+            .map(|row| row.get::<usize, String>(0))
+            .transpose()
+            .map_err(|e| anyhow!(e.to_string()))?;
+
+        let rows = db
+            .query(
+                "SELECT LINE, POSITION, ATTRIBUTE, TEXT FROM ALL_ERRORS \
+                 WHERE OWNER = :1 AND NAME = :2 AND TYPE = :3 ORDER BY SEQUENCE",
+                &[&schema, &name, &object_type],
+            )
+            .map_err(|e| anyhow!(e.to_string()))?;
+        let mut errors = Vec::new();
+        let mut truncated = false;
+        for row_result in rows {
+            if errors.len() >= max_rows {
+                truncated = true;
+                break;
+            }
+            let row = row_result.map_err(|e| anyhow!(e.to_string()))?;
+            let line: Option<i64> = row.get(0).map_err(|e| anyhow!(e.to_string()))?;
+            let position: Option<i64> = row.get(1).map_err(|e| anyhow!(e.to_string()))?;
+            let attribute: Option<String> = row.get(2).map_err(|e| anyhow!(e.to_string()))?;
+            let text: Option<String> = row.get(3).map_err(|e| anyhow!(e.to_string()))?;
+            errors.push(map_error_row(line, position, attribute, text));
+        }
+
+        let message = errors_note(status.as_deref(), errors.len());
+        Ok(ObjectErrorList {
+            applicable: true,
+            message,
+            status,
+            errors,
+            truncated,
+        })
+    }
+}
+
+/// Longest compiler message kept per diagnostic.
+const MAX_ERROR_TEXT_CHARS: usize = 2_000;
+
+fn map_error_row(
+    line: Option<i64>,
+    position: Option<i64>,
+    attribute: Option<String>,
+    text: Option<String>,
+) -> ObjectError {
+    ObjectError {
+        line: line.unwrap_or(0),
+        position: position.unwrap_or(0),
+        attribute: attribute
+            .map(|a| a.trim().to_ascii_uppercase())
+            .filter(|a| !a.is_empty())
+            .unwrap_or_else(|| "ERROR".to_string()),
+        message: cap_chars(
+            text.unwrap_or_default().trim().to_string(),
+            MAX_ERROR_TEXT_CHARS,
+        ),
+    }
+}
+
+/// Explains an empty or surprising diagnostics result so an agent doesn't have to guess.
+fn errors_note(status: Option<&str>, error_count: usize) -> Option<String> {
+    match (status, error_count) {
+        (None, _) => Some(
+            "No such object in this schema (or it is not visible to this account).".to_string(),
+        ),
+        (Some("INVALID"), 0) => Some(
+            "The object is INVALID but has no recorded compile errors: it may depend on an \
+             invalid object, or it has not been recompiled since the change that invalidated it."
+                .to_string(),
+        ),
+        (Some(_), 0) => {
+            Some("No compile errors or warnings are recorded for this object.".to_string())
+        }
+        _ => None,
     }
 }
 

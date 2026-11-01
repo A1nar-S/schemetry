@@ -1,5 +1,55 @@
 use super::*;
 
+// ── invalid objects / compile errors ─────────────────────────────
+
+#[test]
+fn error_rows_are_normalised() {
+    let row = map_error_row(
+        Some(12),
+        Some(5),
+        Some(" error ".into()),
+        Some("  PLS-00201: identifier 'X' must be declared\n".into()),
+    );
+    assert_eq!(
+        row,
+        ObjectError {
+            line: 12,
+            position: 5,
+            attribute: "ERROR".into(),
+            message: "PLS-00201: identifier 'X' must be declared".into(),
+        }
+    );
+}
+
+#[test]
+fn error_rows_tolerate_nulls_and_cap_long_messages() {
+    let row = map_error_row(None, None, None, None);
+    assert_eq!((row.line, row.position), (0, 0));
+    assert_eq!(row.attribute, "ERROR");
+    assert_eq!(row.message, "");
+
+    let long = map_error_row(
+        Some(1),
+        Some(1),
+        Some("WARNING".into()),
+        Some("x".repeat(5_000)),
+    );
+    assert_eq!(long.attribute, "WARNING");
+    assert!(long.message.chars().count() <= MAX_ERROR_TEXT_CHARS + 1);
+}
+
+#[test]
+fn errors_note_explains_empty_results() {
+    assert!(errors_note(None, 0).unwrap().contains("No such object"));
+    assert!(errors_note(Some("INVALID"), 0).unwrap().contains("INVALID"));
+    assert!(
+        errors_note(Some("VALID"), 0)
+            .unwrap()
+            .contains("No compile errors")
+    );
+    assert_eq!(errors_note(Some("INVALID"), 2), None);
+}
+
 // ── clean_opt ────────────────────────────────────────────────────
 
 #[test]

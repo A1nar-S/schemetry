@@ -64,14 +64,43 @@ fn nothing_is_allowed_until_mcp_is_enabled() {
 
 #[test]
 fn enabled_policy_allows_only_listing_and_ddl_by_default() {
-    let policy = enabled_policy(1);
+    let policy = McpPolicy {
+        allow_invalid_objects: false,
+        ..enabled_policy(1)
+    };
     assert!(policy.check_tool(McpTool::ListSchemaObjects).is_ok());
     assert!(policy.check_tool(McpTool::GetObjectDdl).is_ok());
+    assert!(policy.check_tool(McpTool::ListInvalidObjects).is_err());
+    assert!(policy.check_tool(McpTool::GetObjectErrors).is_err());
     assert!(policy.check_tool(McpTool::SaveMigrationScript).is_err());
     assert!(policy.check_tool(McpTool::CompareSchemas).is_err());
     assert!(policy.check_tool(McpTool::GenerateFixScript).is_err());
     assert!(policy.check_tool(McpTool::QueryTable).is_err());
     assert!(policy.check_tool(McpTool::RunQuery).is_err());
+}
+
+#[test]
+fn invalid_object_tools_share_one_capability_flag() {
+    let mut policy = enabled_policy(1);
+    policy.allow_invalid_objects = false;
+    for tool in [McpTool::ListInvalidObjects, McpTool::GetObjectErrors] {
+        let reason = policy.check_tool(tool).unwrap_err();
+        assert!(reason.contains("allow_invalid_objects"), "{reason}");
+    }
+    assert!(policy.check_tool(McpTool::GetObjectDdl).is_ok());
+    assert_eq!(policy.agent_view()["invalid_objects"], false);
+}
+
+#[test]
+fn invalid_object_tools_also_need_listing_or_ddl_read() {
+    let mut policy = enabled_policy(1);
+    assert!(policy.check_tool(McpTool::ListInvalidObjects).is_ok());
+    assert!(policy.check_tool(McpTool::GetObjectErrors).is_ok());
+    policy.allow_schema_list = false;
+    assert!(policy.check_tool(McpTool::ListInvalidObjects).is_err());
+    assert!(policy.check_tool(McpTool::GetObjectErrors).is_ok());
+    policy.allow_ddl_read = false;
+    assert!(policy.check_tool(McpTool::GetObjectErrors).is_err());
 }
 
 #[test]

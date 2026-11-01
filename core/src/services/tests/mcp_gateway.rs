@@ -357,6 +357,199 @@ fn ddl_of_hidden_objects_is_refused_and_others_are_returned() {
     assert_audit(&h, 4, McpOutcome::Denied);
 }
 
+// ── invalid objects ─────────────────────────────────────────────────────────────
+
+fn invalid(name: &str, object_type: &str) -> crate::models::InvalidObject {
+    crate::models::InvalidObject {
+        name: name.into(),
+        object_type: object_type.into(),
+        last_ddl_time: Some("2026-01-02 03:04:05".into()),
+    }
+}
+
+fn errors_args(name: &str, ty: &str) -> GetObjectErrorsArgs {
+    GetObjectErrorsArgs {
+        connection_id: 1,
+        object_name: name.into(),
+        object_type: ty.into(),
+    }
+}
+
+fn invalid_args(object_type: Option<&str>) -> ListInvalidObjectsArgs {
+    ListInvalidObjectsArgs {
+        connection_id: 1,
+        object_type: object_type.map(Into::into),
+    }
+}
+
+#[test]
+fn list_invalid_objects_filters_by_type_hides_denied_and_audits_counts() {
+    let h = oracle();
+    h.set_policy(McpPolicy {
+        object_deny: vec![McpObjectDenyRule {
+            object_type: "*".into(),
+            name: "SECRET_*".into(),
+        }],
+        ..enabled_policy(1)
+    });
+    *h.db.invalid_objects.lock().unwrap() = vec![
+        invalid("PKG_ORDERS", "PACKAGE BODY"),
+        invalid("SECRET_PKG", "PACKAGE BODY"),
+        invalid("V_ORDERS", "VIEW"),
+    ];
+
+    let all = h
+        .gateway
+        .list_invalid_objects(CLIENT, invalid_args(None))
+        .unwrap();
+    let names: Vec<&str> = all["objects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["PKG_ORDERS", "V_ORDERS"]);
+    assert_eq!(all["count"], 2);
+    assert_eq!(all["applicable"], true);
+
+    let views = h
+        .gateway
+        .list_invalid_objects(CLIENT, invalid_args(Some("view")))
+        .unwrap();
+    assert_eq!(views["count"], 1);
+
+    let entries = h.entries();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].tool, "list_invalid_objects");
+    assert_eq!(entries[0].row_count, Some(2));
+    let arguments: Value = serde_json::from_str(&entries[0].arguments).unwrap();
+    assert_eq!(arguments["invalid_count"], 2);
+    assert_eq!(arguments["hidden_by_policy"], 1);
+    assert!(!entries[0].arguments.contains("SECRET_PKG"));
+}
+
+#[test]
+fn list_invalid_objects_rejects_malformed_type_and_respects_the_capability_flag() {
+    let h = oracle();
+    h.set_policy(enabled_policy(1));
+    let message = denied_message(
+        h.gateway
+            .list_invalid_objects(CLIENT, invalid_args(Some("VIEW'; --"))),
+    );
+    assert!(message.contains("object_type"));
+    assert_eq!(h.db_calls(), 0);
+
+    h.set_policy(McpPolicy {
+        allow_invalid_objects: false,
+        ..enabled_policy(1)
+    });
+    let message = denied_message(h.gateway.list_invalid_objects(CLIENT, invalid_args(None)));
+    assert!(message.contains("allow_invalid_objects"));
+    let message = denied_message(
+        h.gateway
+            .get_object_errors(CLIENT, errors_args("P", "PACKAGE")),
+    );
+    assert!(message.contains("allow_invalid_objects"));
+    assert_eq!(h.db_calls(), 0);
+    assert_audit(&h, 3, McpOutcome::Denied);
+}
+
+#[test]
+fn invalid_object_tools_are_not_applicable_on_postgres() {
+    let h = postgres();
+    h.set_policy(enabled_policy(1));
+    let list = h
+        .gateway
+        .list_invalid_objects(CLIENT, invalid_args(None))
+        .unwrap();
+    assert_eq!(list["applicable"], false);
+    assert_eq!(list["count"], 0);
+    assert!(list["message"].is_string());
+    let errors = h
+        .gateway
+        .get_object_errors(CLIENT, errors_args("FN_X", "FUNCTION"))
+        .unwrap();
+    assert_eq!(errors["applicable"], false);
+    assert_eq!(errors["errors"], json!([]));
+    assert_audit(&h, 2, McpOutcome::Allowed);
+}
+
+#[test]
+fn get_object_errors_returns_diagnostics_with_counts() {
+    use crate::models::{ObjectError, ObjectErrorList};
+    let h = oracle();
+    h.set_policy(enabled_policy(1));
+    h.db.object_errors.lock().unwrap().insert(
+        "PACKAGE BODY:PKG_ORDERS".into(),
+        ObjectErrorList {
+            applicable: true,
+            message: None,
+            status: Some("INVALID".into()),
+            errors: vec![
+                ObjectError {
+                    line: 12,
+                    position: 5,
+                    attribute: "ERROR".into(),
+                    message: "PLS-00201: identifier 'X' must be declared".into(),
+                },
+                ObjectError {
+                    line: 20,
+                    position: 1,
+                    attribute: "WARNING".into(),
+                    message: "PLW-05018: unit omitted its AUTHID clause".into(),
+                },
+            ],
+            truncated: false,
+        },
+    );
+
+    let out = h
+        .gateway
+        .get_object_errors(CLIENT, errors_args("pkg_orders", "package body"))
+        .unwrap();
+    assert_eq!(out["object_type"], "PACKAGE BODY");
+    assert_eq!(out["status"], "INVALID");
+    assert_eq!(out["error_count"], 1);
+    assert_eq!(out["warning_count"], 1);
+    assert_eq!(out["errors"][0]["line"], 12);
+    assert_eq!(out["errors"][0]["position"], 5);
+
+    let entries = h.entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].tool, "get_object_errors");
+    assert_eq!(entries[0].row_count, Some(2));
+    let arguments: Value = serde_json::from_str(&entries[0].arguments).unwrap();
+    assert_eq!(arguments["error_count"], 1);
+    assert_eq!(arguments["warning_count"], 1);
+}
+
+#[test]
+fn get_object_errors_refuses_hidden_and_malformed_requests_without_touching_the_database() {
+    let h = oracle();
+    h.set_policy(McpPolicy {
+        object_deny: vec![McpObjectDenyRule {
+            object_type: "PACKAGE".into(),
+            name: "SECRET_*".into(),
+        }],
+        ..enabled_policy(1)
+    });
+    let hidden = denied_message(
+        h.gateway
+            .get_object_errors(CLIENT, errors_args("SECRET_PKG", "PACKAGE")),
+    );
+    assert!(hidden.contains("hidden"));
+    denied_message(
+        h.gateway
+            .get_object_errors(CLIENT, errors_args("A; DROP", "VIEW")),
+    );
+    denied_message(
+        h.gateway
+            .get_object_errors(CLIENT, errors_args("V", "VIEW; --")),
+    );
+    assert_eq!(h.db_calls(), 0);
+    assert_audit(&h, 3, McpOutcome::Denied);
+}
+
 // ── query_table ─────────────────────────────────────────────────────────────────
 
 #[test]

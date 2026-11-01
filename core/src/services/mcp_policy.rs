@@ -24,10 +24,12 @@ pub enum McpTool {
     GenerateFixScript,
     QueryTable,
     RunQuery,
+    ListInvalidObjects,
+    GetObjectErrors,
 }
 
 impl McpTool {
-    pub const ALL: [McpTool; 7] = [
+    pub const ALL: [McpTool; 9] = [
         McpTool::ListSchemaObjects,
         McpTool::GetObjectDdl,
         McpTool::SaveMigrationScript,
@@ -35,6 +37,8 @@ impl McpTool {
         McpTool::GenerateFixScript,
         McpTool::QueryTable,
         McpTool::RunQuery,
+        McpTool::ListInvalidObjects,
+        McpTool::GetObjectErrors,
     ];
 
     pub fn name(self) -> &'static str {
@@ -46,6 +50,8 @@ impl McpTool {
             McpTool::GenerateFixScript => "generate_fix_script",
             McpTool::QueryTable => "query_table",
             McpTool::RunQuery => "run_query",
+            McpTool::ListInvalidObjects => "list_invalid_objects",
+            McpTool::GetObjectErrors => "get_object_errors",
         }
     }
 
@@ -133,6 +139,14 @@ impl McpPolicy {
             McpTool::CompareSchemas | McpTool::GenerateFixScript => {
                 (self.allow_compare_fix, "allow_compare_fix")
             }
+            McpTool::ListInvalidObjects => (
+                self.allow_invalid_objects && self.allow_schema_list,
+                "allow_invalid_objects and allow_schema_list",
+            ),
+            McpTool::GetObjectErrors => (
+                self.allow_invalid_objects && self.allow_ddl_read,
+                "allow_invalid_objects and allow_ddl_read",
+            ),
             McpTool::QueryTable => (
                 self.data_access == McpDataAccess::Allowlist,
                 "data_access = allowlist",
@@ -234,6 +248,7 @@ impl McpPolicy {
             "get_object_ddl": self.allow_ddl_read,
             "save_migration_script": self.allow_save_scripts,
             "compare_and_fix": self.allow_compare_fix,
+            "invalid_objects": self.allow_invalid_objects,
             "data_access": self.data_access,
             "run_query": self.allow_raw_sql && self.data_access == McpDataAccess::Allowlist,
             "table_rules": rules,

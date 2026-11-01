@@ -31,6 +31,7 @@ use crate::state::AppServices;
 
 const MAX_LISTED_OBJECTS: usize = 5_000;
 const MAX_DISCREPANCIES: usize = 500;
+const MAX_OBJECT_ERRORS: usize = 500;
 const MAX_SCRIPT_BYTES: usize = 500_000;
 const MAX_RESULT_BYTES: usize = 1_000_000;
 const MAX_DDL_BYTES: usize = 1_000_000;
@@ -103,6 +104,25 @@ tool_args! {
         pub connection_id: i64,
         pub object_name: String,
         /// e.g. TABLE, VIEW, PROCEDURE, FUNCTION, PACKAGE, PACKAGE BODY, TRIGGER, SEQUENCE, TYPE.
+        pub object_type: String,
+    }
+}
+
+tool_args! {
+    pub struct ListInvalidObjectsArgs {
+        /// Id from `list_connections`.
+        pub connection_id: i64,
+        /// Only invalid objects of this type, e.g. PACKAGE BODY, VIEW.
+        #[serde(default)]
+        pub object_type: Option<String>,
+    }
+}
+
+tool_args! {
+    pub struct GetObjectErrorsArgs {
+        pub connection_id: i64,
+        pub object_name: String,
+        /// e.g. VIEW, PROCEDURE, FUNCTION, PACKAGE, PACKAGE BODY, TRIGGER, TYPE, TYPE BODY.
         pub object_type: String,
     }
 }
@@ -563,6 +583,106 @@ impl McpGateway {
                 let ddl = self.diff_svc.fetch_object_ddl(&conn, name, &object_type)?;
                 ctx.row_count = Some(1);
                 Ok(json!({ "object_name": name, "object_type": object_type, "ddl": ddl }))
+            },
+        )
+    }
+
+    pub fn list_invalid_objects(&self, client: &str, args: ListInvalidObjectsArgs) -> ToolResult {
+        let arguments = serde_json::to_value(&args).unwrap_or_default();
+        self.audited(
+            client,
+            McpTool::ListInvalidObjects.name(),
+            Some(args.connection_id),
+            arguments,
+            |ctx| {
+                let Resolved { conn, policy } =
+                    self.resolve(ctx, args.connection_id, McpTool::ListInvalidObjects)?;
+                let wanted = args
+                    .object_type
+                    .as_deref()
+                    .map(|t| t.trim().to_ascii_uppercase())
+                    .filter(|t| !t.is_empty());
+                if wanted.as_deref().is_some_and(|t| !valid_object_type(t)) {
+                    return denied("object_type is not a recognised object type.");
+                }
+
+                let list = self.diff_svc.fetch_invalid_objects(
+                    &conn,
+                    wanted.as_deref(),
+                    MAX_LISTED_OBJECTS,
+                )?;
+                let fetched = list.objects.len();
+                let objects: Vec<_> = list
+                    .objects
+                    .into_iter()
+                    .filter(|o| !policy.object_denied(&o.name, &o.object_type))
+                    .collect();
+
+                ctx.row_count = Some(objects.len() as i64);
+                ctx.details = Some(json!({
+                    "invalid_count": objects.len(),
+                    "hidden_by_policy": fetched - objects.len(),
+                }));
+                Ok(json!({
+                    "applicable": list.applicable,
+                    "message": list.message,
+                    "objects": objects,
+                    "count": objects.len(),
+                    "truncated": list.truncated,
+                }))
+            },
+        )
+    }
+
+    pub fn get_object_errors(&self, client: &str, args: GetObjectErrorsArgs) -> ToolResult {
+        let arguments = serde_json::to_value(&args).unwrap_or_default();
+        self.audited(
+            client,
+            McpTool::GetObjectErrors.name(),
+            Some(args.connection_id),
+            arguments,
+            |ctx| {
+                let Resolved { conn, policy } =
+                    self.resolve(ctx, args.connection_id, McpTool::GetObjectErrors)?;
+                let name = args.object_name.trim();
+                let object_type = args.object_type.trim().to_ascii_uppercase();
+                if !mcp_query_builder::valid_identifier(name) {
+                    return denied("object_name must be a plain identifier.");
+                }
+                if !valid_object_type(&object_type) {
+                    return denied("object_type is not a recognised object type.");
+                }
+                if policy.object_denied(name, &object_type) {
+                    return denied(format!(
+                        "Errors for {object_type} {name} are hidden by policy."
+                    ));
+                }
+
+                let list = self.diff_svc.fetch_object_errors(
+                    &conn,
+                    name,
+                    &object_type,
+                    MAX_OBJECT_ERRORS,
+                )?;
+                let warnings = list
+                    .errors
+                    .iter()
+                    .filter(|e| e.attribute == "WARNING")
+                    .count();
+                let errors = list.errors.len() - warnings;
+                ctx.row_count = Some(list.errors.len() as i64);
+                ctx.details = Some(json!({ "error_count": errors, "warning_count": warnings }));
+                Ok(json!({
+                    "object_name": name,
+                    "object_type": object_type,
+                    "applicable": list.applicable,
+                    "message": list.message,
+                    "status": list.status,
+                    "errors": list.errors,
+                    "error_count": errors,
+                    "warning_count": warnings,
+                    "truncated": list.truncated,
+                }))
             },
         )
     }

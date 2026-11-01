@@ -143,6 +143,71 @@ pub struct SchemaObject {
     pub object_type: String,
 }
 
+/// A stored object the database flags as not compiling (Oracle `STATUS = 'INVALID'`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvalidObject {
+    pub name: String,
+    pub object_type: String,
+    /// When the object was last (re)compiled or altered, as the database formats it.
+    pub last_ddl_time: Option<String>,
+}
+
+/// Invalid objects of a connection's schema. Engines without the concept (Postgres)
+/// report `applicable = false` and an explanation instead of an error.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvalidObjectList {
+    pub applicable: bool,
+    pub message: Option<String>,
+    pub objects: Vec<InvalidObject>,
+    /// More invalid objects existed than the row cap; the extras were dropped.
+    pub truncated: bool,
+}
+
+impl InvalidObjectList {
+    pub fn not_applicable(message: impl Into<String>) -> Self {
+        Self {
+            applicable: false,
+            message: Some(message.into()),
+            objects: Vec::new(),
+            truncated: false,
+        }
+    }
+}
+
+/// One compiler diagnostic of a stored object (Oracle `ALL_ERRORS`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectError {
+    pub line: i64,
+    pub position: i64,
+    /// `ERROR` or `WARNING`.
+    pub attribute: String,
+    pub message: String,
+}
+
+/// Compile diagnostics of one object; see [`InvalidObjectList`] for `applicable`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectErrorList {
+    pub applicable: bool,
+    pub message: Option<String>,
+    /// The database's current status for the object, when it exists (`VALID`/`INVALID`).
+    pub status: Option<String>,
+    pub errors: Vec<ObjectError>,
+    /// More diagnostics existed than the row cap; the extras were dropped.
+    pub truncated: bool,
+}
+
+impl ObjectErrorList {
+    pub fn not_applicable(message: impl Into<String>) -> Self {
+        Self {
+            applicable: false,
+            message: Some(message.into()),
+            status: None,
+            errors: Vec::new(),
+            truncated: false,
+        }
+    }
+}
+
 /// Schema metadata for SQL autocompletion in the query editor.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CompletionMetadata {
@@ -290,6 +355,8 @@ pub struct McpPolicy {
     pub allow_ddl_read: bool,
     pub allow_save_scripts: bool,
     pub allow_compare_fix: bool,
+    /// `list_invalid_objects` and `get_object_errors`: compile status and diagnostics.
+    pub allow_invalid_objects: bool,
     pub data_access: McpDataAccess,
     /// Free-form SQL (`run_query`); still needs `data_access = allowlist`.
     pub allow_raw_sql: bool,
@@ -320,6 +387,7 @@ impl Default for McpPolicy {
             allow_ddl_read: true,
             allow_save_scripts: false,
             allow_compare_fix: false,
+            allow_invalid_objects: false,
             data_access: McpDataAccess::None,
             allow_raw_sql: false,
             table_rules: Vec::new(),

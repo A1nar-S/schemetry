@@ -219,6 +219,7 @@
           <div class="section-title">Capabilities</div>
           <label class="check-row"><input type="checkbox" bind:checked={policy.allow_schema_list} /> List schema objects</label>
           <label class="check-row"><input type="checkbox" bind:checked={policy.allow_ddl_read} /> Read DDL</label>
+          <label class="check-row"><input type="checkbox" bind:checked={policy.allow_invalid_objects} /> Read invalid objects &amp; compile errors (Oracle)</label>
           <label class="check-row"><input type="checkbox" bind:checked={policy.allow_save_scripts} /> Save migration / code files</label>
           <label class="check-row"><input type="checkbox" bind:checked={policy.allow_compare_fix} /> Compare schemas &amp; generate fix scripts</label>
         </div>

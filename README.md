@@ -122,6 +122,7 @@ A stdio [MCP](https://modelcontextprotocol.io) server that lets AI agents (Claud
 | `list_connections` | connection has MCP enabled | id, name, engine, schema and the effective policy. Never passwords or hosts. |
 | `list_schema_objects` | `allow_schema_list` | Active compare filter rules and the policy's hidden objects are applied. |
 | `get_object_ddl` | `allow_ddl_read` | DDL only, never data. Hidden objects are refused. |
+| `list_invalid_objects`, `get_object_errors` | `allow_invalid_objects` (off by default; also needs `allow_schema_list`, and `allow_ddl_read` for `get_object_errors`) | Oracle: objects with `STATUS = 'INVALID'` and their compile errors/warnings (line, position, message) so an agent can fix code and verify it compiles. Bounded; hidden objects are omitted/refused. PostgreSQL returns a "not applicable" result. |
 | `save_migration_script` | `allow_save_scripts` | Uses the app's folder/naming rules; confined to the schema folder; `dry_run` previews. Names are restricted to letters, digits and `_ - $ #`. The schema is derived from the connection. |
 | `compare_schemas`, `generate_fix_script` | `allow_compare_fix` on **every** involved connection | Fix scripts are returned, never executed. |
 | `query_table` | `data_access = allowlist` | Structured columns / filters / ordering — no SQL text. Table and column rules are enforced exactly. |

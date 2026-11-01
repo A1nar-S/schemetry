@@ -4,8 +4,8 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::models::{
-    ConnectionRecord, HistoryFixResult, HistoryNamingRule, SchemaObject, ServersData, TableDdls,
-    TableFilterRule,
+    ConnectionRecord, HistoryFixResult, HistoryNamingRule, InvalidObjectList, ObjectErrorList,
+    SchemaObject, ServersData, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::DbRepository;
 use crate::repositories::oracle_repository::configure_client_lib_dir;
@@ -89,6 +89,26 @@ impl SchemaDiffService {
         object_type: &str,
     ) -> Result<String> {
         self.repo.fetch_object_ddl(conn, name, object_type)
+    }
+
+    pub fn fetch_invalid_objects(
+        &self,
+        conn: &ConnectionRecord,
+        object_type: Option<&str>,
+        max_rows: usize,
+    ) -> Result<InvalidObjectList> {
+        self.repo.fetch_invalid_objects(conn, object_type, max_rows)
+    }
+
+    pub fn fetch_object_errors(
+        &self,
+        conn: &ConnectionRecord,
+        name: &str,
+        object_type: &str,
+        max_rows: usize,
+    ) -> Result<ObjectErrorList> {
+        self.repo
+            .fetch_object_errors(conn, name, object_type, max_rows)
     }
 
     pub fn generate_history_fix(

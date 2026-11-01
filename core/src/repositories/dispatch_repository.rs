@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::models::{
     CompletionMetadata, ConnectionRecord, DbType, HistoryFixResult, HistoryNamingRule,
-    SchemaObject, TableDdls, TableFilterRule,
+    InvalidObjectList, ObjectErrorList, SchemaObject, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::{
     DbRepository, QueryOutput, ReadOnlyQuery, ReadOnlyResult,
@@ -114,5 +114,26 @@ impl DbRepository for DispatchRepository {
         request: &ReadOnlyQuery,
     ) -> Result<ReadOnlyResult> {
         self.repo(conn).run_readonly_query(conn, request)
+    }
+
+    fn fetch_invalid_objects(
+        &self,
+        conn: &ConnectionRecord,
+        object_type: Option<&str>,
+        max_rows: usize,
+    ) -> Result<InvalidObjectList> {
+        self.repo(conn)
+            .fetch_invalid_objects(conn, object_type, max_rows)
+    }
+
+    fn fetch_object_errors(
+        &self,
+        conn: &ConnectionRecord,
+        name: &str,
+        object_type: &str,
+        max_rows: usize,
+    ) -> Result<ObjectErrorList> {
+        self.repo(conn)
+            .fetch_object_errors(conn, name, object_type, max_rows)
     }
 }

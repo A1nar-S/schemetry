@@ -46,6 +46,7 @@ pub fn enabled_policy(connection_id: i64) -> McpPolicy {
     McpPolicy {
         connection_id,
         mcp_enabled: true,
+        allow_invalid_objects: true,
         ..McpPolicy::default()
     }
 }
@@ -134,6 +135,9 @@ pub struct FakeDb {
     pub table_ddls: Mutex<TableDdls>,
     pub readonly_result: Mutex<Option<ReadOnlyResult>>,
     pub seen: Mutex<Vec<SeenQuery>>,
+    pub invalid_objects: Mutex<Vec<InvalidObject>>,
+    /// `"TYPE:UPPER_NAME"` → diagnostics.
+    pub object_errors: Mutex<HashMap<String, ObjectErrorList>>,
     /// Counts catalog/DDL/data calls, to prove a denied call never reached the database.
     pub db_calls: Mutex<u32>,
 }
@@ -231,6 +235,63 @@ impl DbRepository for FakeDb {
             .unwrap()
             .take()
             .ok_or_else(|| anyhow!("no result prepared"))
+    }
+    fn fetch_invalid_objects(
+        &self,
+        conn: &ConnectionRecord,
+        object_type: Option<&str>,
+        max_rows: usize,
+    ) -> Result<InvalidObjectList> {
+        self.touch();
+        if conn.db_type == DbType::Postgres {
+            return Ok(InvalidObjectList::not_applicable("not applicable"));
+        }
+        let mut objects: Vec<InvalidObject> = self
+            .invalid_objects
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|o| object_type.is_none_or(|t| o.object_type.eq_ignore_ascii_case(t)))
+            .cloned()
+            .collect();
+        let truncated = objects.len() > max_rows;
+        objects.truncate(max_rows);
+        Ok(InvalidObjectList {
+            applicable: true,
+            message: None,
+            objects,
+            truncated,
+        })
+    }
+    fn fetch_object_errors(
+        &self,
+        conn: &ConnectionRecord,
+        name: &str,
+        object_type: &str,
+        max_rows: usize,
+    ) -> Result<ObjectErrorList> {
+        self.touch();
+        if conn.db_type == DbType::Postgres {
+            return Ok(ObjectErrorList::not_applicable("not applicable"));
+        }
+        let mut list = self
+            .object_errors
+            .lock()
+            .unwrap()
+            .get(&format!("{object_type}:{}", name.to_ascii_uppercase()))
+            .cloned()
+            .unwrap_or(ObjectErrorList {
+                applicable: true,
+                message: Some("No such object".into()),
+                status: None,
+                errors: Vec::new(),
+                truncated: false,
+            });
+        if list.errors.len() > max_rows {
+            list.errors.truncate(max_rows);
+            list.truncated = true;
+        }
+        Ok(list)
     }
 }
 

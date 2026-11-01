@@ -7,8 +7,8 @@ use tokio_postgres::{Client, NoTls};
 
 use crate::models::{
     ColumnInfo, CompletionColumn, CompletionMetadata, CompletionRelation, ConnectionRecord,
-    HistoryFixResult, HistoryNamingRule, HistoryTableIssue, MatchType, SchemaObject, TableDdls,
-    TableFilterRule,
+    HistoryFixResult, HistoryNamingRule, HistoryTableIssue, InvalidObjectList, MatchType,
+    ObjectErrorList, SchemaObject, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::{
     DbRepository, LobCell, LobSource, QueryOutput, ReadOnlyQuery, ReadOnlyResult,
@@ -1168,7 +1168,33 @@ impl DbRepository for DbPostgresRepository {
             })
         })
     }
+
+    fn fetch_invalid_objects(
+        &self,
+        _conn: &ConnectionRecord,
+        _object_type: Option<&str>,
+        _max_rows: usize,
+    ) -> Result<InvalidObjectList> {
+        Ok(InvalidObjectList::not_applicable(
+            NO_INVALID_OBJECTS_MESSAGE,
+        ))
+    }
+
+    fn fetch_object_errors(
+        &self,
+        _conn: &ConnectionRecord,
+        _name: &str,
+        _object_type: &str,
+        _max_rows: usize,
+    ) -> Result<ObjectErrorList> {
+        Ok(ObjectErrorList::not_applicable(NO_INVALID_OBJECTS_MESSAGE))
+    }
 }
+
+/// Postgres validates a definition when it is created, so there is nothing to list.
+const NO_INVALID_OBJECTS_MESSAGE: &str = "Not applicable for PostgreSQL: it has no invalid-object \
+     status or stored compile errors. Definitions are checked when they are created, so a \
+     function or view that exists is not left in an invalid state.";
 
 /// The bytea cells of one query result.
 struct PgLobSource {

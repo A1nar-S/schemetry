@@ -17,8 +17,9 @@ use rmcp::{
     transport::stdio,
 };
 use schemetry_core::services::mcp_gateway::{
-    CompareSchemasArgs, GenerateFixScriptArgs, GetObjectDdlArgs, ListSchemaObjectsArgs, McpGateway,
-    QueryTableArgs, RunQueryArgs, SaveMigrationScriptArgs, ToolError,
+    CompareSchemasArgs, GenerateFixScriptArgs, GetObjectDdlArgs, GetObjectErrorsArgs,
+    ListInvalidObjectsArgs, ListSchemaObjectsArgs, McpGateway, QueryTableArgs, RunQueryArgs,
+    SaveMigrationScriptArgs, ToolError,
 };
 use serde_json::Value;
 
@@ -151,6 +152,30 @@ impl SchemetryMcp {
     ) -> Result<CallToolResult, McpError> {
         let (gateway, client) = (Arc::clone(&self.gateway), client_name(&context));
         run_blocking(move || gateway.get_object_ddl(&client, args)).await
+    }
+
+    #[tool(
+        description = "List the objects of a connection's schema that the database flags as invalid (Oracle: STATUS = INVALID, e.g. packages, views, triggers that fail to compile), optionally filtered by object type. Use get_object_errors for the compiler messages. PostgreSQL has no such concept and returns a 'not applicable' result. Hidden objects are omitted."
+    )]
+    async fn list_invalid_objects(
+        &self,
+        Parameters(args): Parameters<ListInvalidObjectsArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let (gateway, client) = (Arc::clone(&self.gateway), client_name(&context));
+        run_blocking(move || gateway.list_invalid_objects(&client, args)).await
+    }
+
+    #[tool(
+        description = "Read the compile errors and warnings (line, position, severity, message) of one stored object, e.g. after fixing code, to verify it now compiles. Oracle only; PostgreSQL returns a 'not applicable' result."
+    )]
+    async fn get_object_errors(
+        &self,
+        Parameters(args): Parameters<GetObjectErrorsArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let (gateway, client) = (Arc::clone(&self.gateway), client_name(&context));
+        run_blocking(move || gateway.get_object_errors(&client, args)).await
     }
 
     #[tool(
