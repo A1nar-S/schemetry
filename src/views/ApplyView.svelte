@@ -113,10 +113,9 @@
   <div style="display:flex;flex-direction:column;overflow:hidden;flex:1;">
     <div style="padding:10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;flex-shrink:0;">
       <div class="hint" style="margin:0;">
-        Runs the script on each selected server with that connection's own account. Oracle runs each
-        statement in its own session and commits it (so <code>COMMIT</code> and <code>ALTER SESSION</code> do not carry
-        over); PostgreSQL applies the whole script in one transaction. PL/SQL units end with a line holding only
-        <code>/</code>.
+        Runs on every selected server with that connection's own account. Oracle: statements run one by one and each
+        is committed; the first error stops the script. PostgreSQL: one transaction, so any error rolls everything
+        back. Put a <code>/</code> line after each procedure, function, package or trigger.
       </div>
       <SqlEditor bind:value={$script} {dialect} height="240px" />
       <div class="row">
