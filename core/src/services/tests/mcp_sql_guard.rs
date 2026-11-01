@@ -676,3 +676,41 @@ fn non_ascii_outside_strings_and_quoted_names_is_refused() {
         );
     }
 }
+
+#[test]
+fn a_keyword_used_as_a_label_does_not_confuse_the_table_scan() {
+    assert_eq!(
+        tables(
+            "WITH \"from\" AS (SELECT 1) SELECT x AS from FROM secret s",
+            PG
+        ),
+        ["secret"]
+    );
+    assert_eq!(
+        tables("SELECT * FROM a b JOIN a c ON b.id = c.group, secret", PG),
+        ["a", "a", "secret"]
+    );
+    assert_eq!(
+        tables(
+            "SELECT * FROM (SELECT 1 AS \"order\") b JOIN (SELECT 1 AS x) c ON b.order = c.x, secret",
+            PG
+        ),
+        ["secret"]
+    );
+}
+
+#[test]
+fn an_oracle_recursive_cte_needs_a_top_level_union_all() {
+    rejected(
+        "WITH secret(x) AS (SELECT x FROM secret UNION SELECT 1 FROM dual) SELECT * FROM secret",
+        ORA,
+    );
+    rejected(
+        "WITH secret(x) AS (SELECT x FROM secret WHERE x IN (SELECT 1 FROM dual UNION ALL SELECT 2 FROM dual)) SELECT * FROM secret",
+        ORA,
+    );
+    ok(
+        "WITH r(n) AS (SELECT 1 FROM dual UNION ALL SELECT n + 1 FROM r WHERE n < 5) SELECT n FROM r",
+        ORA,
+    );
+}

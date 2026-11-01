@@ -643,9 +643,16 @@ fn cte_names(
         let body = &tokens[*from..*to];
         // Oracle recursion needs a column list and a UNION ALL, so only then is a
         // self-reference the CTE itself rather than the table of that name.
-        let recursive_oracle = db_type == DbType::Oracle
-            && *is_header
-            && body.iter().any(|t| word_is(Some(t), "UNION"));
+        let mut depth = 0usize;
+        let has_top_level_union_all = body.iter().enumerate().any(|(n, t)| {
+            match t {
+                Token::Symbol('(') => depth += 1,
+                Token::Symbol(')') => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            depth == 0 && word_is(Some(t), "UNION") && word_is(body.get(n + 1), "ALL")
+        });
+        let recursive_oracle = db_type == DbType::Oracle && *is_header && has_top_level_union_all;
         let first = if recursive_oracle { k + 1 } else { k };
         for token in body {
             let Some(used) = name_of(token, db_type) else {
@@ -785,6 +792,16 @@ fn extract_tables(
                 if stack.last() == Some(&Frame::FromList) {
                     expecting_table = true;
                 }
+                i += 1;
+                continue;
+            }
+            // Postgres allows any keyword as a label after AS or a dot (`1 AS from`, `c.group`),
+            // where it is a name, not a clause.
+            Token::Word(_)
+                if i > 0
+                    && (matches!(tokens.get(i - 1), Some(Token::Symbol('.')))
+                        || word_is(tokens.get(i - 1), "AS")) =>
+            {
                 i += 1;
                 continue;
             }
