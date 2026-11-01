@@ -7,10 +7,11 @@ use anyhow::Result;
 use crate::models::SchemaFolderOverride;
 use crate::repositories::folder_schema_override_repository::SchemaFolderOverrideRepository;
 use crate::services::ddl_save::{
-    DdlSaveArgs, DdlSaveOptions, PACKAGE_SPEC_AND_BODY, combine_package_spec_and_body,
-    encode_content, has_package_spec_and_body, is_package_spec_and_body, next_migration_version,
-    plan_ddl_save, plan_ddl_save_raw, resolve_schema_dir, save_ddl_to_folder as save_ddl_service,
-    settings_object_type,
+    DdlSaveArgs, DdlSaveOptions, FLYWAY_TEMPLATE, LineEnding, NameValues, PACKAGE_SPEC_AND_BODY,
+    TIMESTAMP_TEMPLATE, apply_line_endings, combine_package_spec_and_body, encode_content,
+    has_package_spec_and_body, is_package_spec_and_body, next_migration_version, plan_ddl_save,
+    plan_ddl_save_raw, render_file_name, resolve_schema_dir,
+    save_ddl_to_folder as save_ddl_service, settings_object_type, validate_naming_template,
 };
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
 
@@ -35,6 +36,8 @@ fn options(storage_mode: &str) -> DdlSaveOptions {
         version_label: String::new(),
         extension: "tab".to_string(),
         encoding: "utf8".to_string(),
+        line_endings: String::new(),
+        naming_template: String::new(),
     }
 }
 
@@ -201,13 +204,350 @@ fn version_scan_checks_direct_and_one_level_subdirectories() {
 
 #[test]
 fn encoding_supports_utf8_bom_windows_1257_and_unknown_fallback() {
-    assert_eq!(encode_content("abc", "utf8"), b"abc");
-    assert_eq!(encode_content("abc", "utf8-bom"), b"\xEF\xBB\xBFabc");
+    assert_eq!(encode_content("abc", "utf8").unwrap(), b"abc");
     assert_eq!(
-        encode_content("Ā", "windows-1257"),
+        encode_content("abc", "utf8-bom").unwrap(),
+        b"\xEF\xBB\xBFabc"
+    );
+    assert_eq!(
+        encode_content("Ā", "windows-1257").unwrap(),
         encoding_rs::WINDOWS_1257.encode("Ā").0.into_owned()
     );
-    assert_eq!(encode_content("abc", "unknown"), b"abc");
+    assert_eq!(encode_content("abc", "unknown").unwrap(), b"abc");
+}
+
+#[test]
+fn unrepresentable_characters_refuse_the_save_and_name_the_offenders() {
+    let error = encode_content("a\nbЖc€d", "windows-1257").unwrap_err();
+
+    assert!(error.contains("'Ж' (U+0416)"), "{error}");
+    assert!(error.contains("line 2"), "{error}");
+    assert!(error.contains("windows-1257"), "{error}");
+    assert!(!error.contains("&#"), "{error}");
+    // Baltic letters do exist in Windows-1257.
+    assert!(encode_content("ĀāĒē", "windows-1257").is_ok());
+}
+
+#[test]
+fn saving_lossy_content_writes_nothing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut save_options = options("both");
+    save_options.encoding = "windows-1257".to_string();
+    let mut save_args = args();
+    save_args.ddl = "-- привет".to_string();
+
+    let error = save(temp_dir.path(), &save_args, &save_options).unwrap_err();
+
+    assert!(error.contains("U+043F"), "{error}");
+    assert_eq!(fs::read_dir(temp_dir.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn line_endings_are_normalised_before_encoding() {
+    assert_eq!(
+        apply_line_endings("a\r\nb\rc\nd", LineEnding::Keep),
+        "a\r\nb\rc\nd"
+    );
+    assert_eq!(
+        apply_line_endings("a\r\nb\rc\nd", LineEnding::Lf),
+        "a\nb\nc\nd"
+    );
+    assert_eq!(
+        apply_line_endings("a\r\nb\rc\nd", LineEnding::Crlf),
+        "a\r\nb\r\nc\r\nd"
+    );
+    assert!(LineEnding::parse("bogus").is_err());
+    assert_eq!(LineEnding::parse("").unwrap(), LineEnding::Keep);
+    assert_eq!(LineEnding::parse("CRLF").unwrap(), LineEnding::Crlf);
+}
+
+#[test]
+fn saved_files_use_the_configured_line_endings_and_report_them() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut save_options = options("both");
+    save_options.line_endings = "crlf".to_string();
+    save_options.encoding = "utf8-bom".to_string();
+    let mut save_args = args();
+    save_args.ddl = "CREATE TABLE ORDERS (\n  ID INTEGER\n);".to_string();
+
+    let folder_overrides =
+        SchemaFolderOverrideService::new(Arc::new(TestOverrideRepository { override_row: None }));
+    let plan = plan_ddl_save(
+        &folder_overrides,
+        &temp_dir.path().to_string_lossy(),
+        &save_args,
+        &save_options,
+    )
+    .unwrap();
+    let result = plan.result();
+
+    assert_eq!(result.encoding, "utf8-bom");
+    assert_eq!(result.line_endings, "crlf");
+    assert_eq!(result.naming_template, TIMESTAMP_TEMPLATE);
+    for file in &plan.files {
+        let text = String::from_utf8(file.content[3..].to_vec()).unwrap();
+        assert!(text.contains("\r\n"), "{}", file.kind);
+        assert!(!text.replace("\r\n", "").contains('\n'), "{}", file.kind);
+    }
+}
+
+#[test]
+fn folder_override_wins_for_line_endings_and_unknown_encoding_reports_utf8() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let overrides = SchemaFolderOverrideService::new(Arc::new(TestOverrideRepository {
+        override_row: Some(SchemaFolderOverride {
+            id: 1,
+            schema_name: "APP".to_string(),
+            line_endings: "lf".to_string(),
+            ..empty_override()
+        }),
+    }));
+    let mut save_options = options("code");
+    save_options.line_endings = "crlf".to_string();
+    save_options.encoding = "whatever".to_string();
+
+    let plan = plan_ddl_save(
+        &overrides,
+        &temp_dir.path().to_string_lossy(),
+        &args(),
+        &save_options,
+    )
+    .unwrap();
+
+    assert_eq!(plan.result().line_endings, "lf");
+    assert_eq!(plan.result().encoding, "utf8");
+
+    save_options.line_endings = "sideways".to_string();
+    let service =
+        SchemaFolderOverrideService::new(Arc::new(TestOverrideRepository { override_row: None }));
+    assert!(
+        plan_ddl_save(
+            &service,
+            &temp_dir.path().to_string_lossy(),
+            &args(),
+            &save_options
+        )
+        .is_err()
+    );
+}
+
+fn values<'a>(description: &'a str) -> NameValues<'a> {
+    NameValues {
+        date: "260415",
+        time: "1200",
+        schema: "KOPLIET",
+        object: "LIETOTAJS_TIESIBAS",
+        object_type: "PACKAGE BODY",
+        description,
+        version: 7,
+        extension: "pck",
+    }
+}
+
+#[test]
+fn templates_render_every_placeholder() {
+    assert_eq!(
+        render_file_name("{date}_{time}_{schema}${object}{ext}", &values("")).unwrap(),
+        "260415_1200_kopliet$LIETOTAJS_TIESIBAS.pck"
+    );
+    assert_eq!(
+        render_file_name("V{version}__{type}_{description}{ext}", &values("fix-1")).unwrap(),
+        "V7__package_body_fix-1.pck"
+    );
+    assert_eq!(
+        render_file_name("{object}#{description}.{ext}", &values("x")).unwrap(),
+        "LIETOTAJS_TIESIBAS#x.pck"
+    );
+}
+
+#[test]
+fn presets_match_the_historical_names_and_drop_dangling_separators() {
+    assert_eq!(
+        render_file_name(TIMESTAMP_TEMPLATE, &values("create_orders")).unwrap(),
+        "260415_1200_kopliet$create_orders.pck"
+    );
+    assert_eq!(
+        render_file_name(TIMESTAMP_TEMPLATE, &values("")).unwrap(),
+        "260415_1200_kopliet.pck"
+    );
+    assert_eq!(
+        render_file_name(FLYWAY_TEMPLATE, &values("")).unwrap(),
+        "V7__kopliet.pck"
+    );
+    assert_eq!(
+        render_file_name("{description}_{schema}_{object}{ext}", &values("")).unwrap(),
+        "kopliet_LIETOTAJS_TIESIBAS.pck"
+    );
+    assert_eq!(
+        render_file_name("{date}_{description}_{description}{ext}", &values("")).unwrap(),
+        "260415.pck"
+    );
+}
+
+#[test]
+fn invalid_templates_are_rejected() {
+    for template in [
+        "",
+        "   ",
+        "{unknown}_{object}",
+        "{object",
+        "object}",
+        "{object}/{ext}",
+        "{object}\\{ext}",
+        "../{object}",
+        "{object} x{ext}",
+        "{object}*{ext}",
+        &"a".repeat(121),
+    ] {
+        assert!(
+            validate_naming_template(template).is_err(),
+            "expected {template:?} to be rejected"
+        );
+    }
+    assert!(validate_naming_template(TIMESTAMP_TEMPLATE).is_ok());
+    assert!(validate_naming_template(FLYWAY_TEMPLATE).is_ok());
+    assert!(validate_naming_template("{date}_{time}_{schema}${object}{ext}").is_ok());
+}
+
+#[test]
+fn rendered_names_that_could_escape_or_are_unsafe_are_rejected() {
+    for description in ["../x", "a/b", "a\\b", "x..y", "C:", "a*b", "a\0b"] {
+        assert!(
+            render_file_name("{schema}_{description}{ext}", &values(description)).is_err(),
+            "expected description {description:?} to be rejected"
+        );
+    }
+    assert!(render_file_name("{description}", &values("NUL")).is_err());
+    assert!(render_file_name("{description}", &values("")).is_err());
+    assert!(
+        render_file_name(
+            "{object}",
+            &NameValues {
+                object: "a/b",
+                ..values("")
+            }
+        )
+        .is_err()
+    );
+    assert!(render_file_name(&"{object}".repeat(15), &values("")).is_err());
+}
+
+#[test]
+fn a_template_saves_with_an_optional_description() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut save_options = options("migration");
+    save_options.naming_template = "{date}_{time}_{schema}${object}{ext}".to_string();
+    let mut save_args = args();
+    save_args.description = String::new();
+
+    let result = save(temp_dir.path(), &save_args, &save_options).unwrap();
+
+    let filename = Path::new(result.migration_path.as_deref().unwrap())
+        .file_name()
+        .unwrap()
+        .to_string_lossy();
+    assert!(
+        regex::Regex::new(r"^\d{6}_\d{4}_app\$ORDERS\.tab$")
+            .unwrap()
+            .is_match(&filename),
+        "{filename}"
+    );
+    assert_eq!(
+        result.naming_template,
+        "{date}_{time}_{schema}${object}{ext}"
+    );
+}
+
+#[test]
+fn an_invalid_template_or_description_refuses_the_save_without_writing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut save_options = options("both");
+    save_options.naming_template = "{bogus}{ext}".to_string();
+    assert!(save(temp_dir.path(), &args(), &save_options).is_err());
+
+    let mut save_args = args();
+    save_args.description = "../../escape".to_string();
+    assert!(save(temp_dir.path(), &save_args, &options("both")).is_err());
+    assert_eq!(fs::read_dir(temp_dir.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn template_precedence_is_folder_template_folder_preset_global_template_global_preset() {
+    let service = |template: &str, convention: &str| {
+        SchemaFolderOverrideService::new(Arc::new(TestOverrideRepository {
+            override_row: Some(SchemaFolderOverride {
+                id: 1,
+                schema_name: "APP".to_string(),
+                naming_template: template.to_string(),
+                naming_convention: convention.to_string(),
+                ..empty_override()
+            }),
+        }))
+    };
+
+    let resolve = |svc: &SchemaFolderOverrideService| {
+        svc.resolve_naming_template("app", "timestamp", "{object}{ext}")
+            .unwrap()
+    };
+    assert_eq!(
+        resolve(&service("{schema}{ext}", "flyway")),
+        "{schema}{ext}"
+    );
+    assert_eq!(resolve(&service("", "flyway")), FLYWAY_TEMPLATE);
+    assert_eq!(resolve(&service("", "")), "{object}{ext}");
+    assert_eq!(
+        service("", "")
+            .resolve_naming_template("app", "flyway", "")
+            .unwrap(),
+        FLYWAY_TEMPLATE
+    );
+}
+
+#[test]
+fn saving_an_override_validates_template_and_line_endings() {
+    let service =
+        SchemaFolderOverrideService::new(Arc::new(TestOverrideRepository { override_row: None }));
+    let good = SchemaFolderOverride {
+        schema_name: "app".to_string(),
+        naming_template: "{date}_{object}{ext}".to_string(),
+        line_endings: "crlf".to_string(),
+        ..empty_override()
+    };
+    assert!(service.save_override(&good).is_ok());
+    assert!(
+        service
+            .save_override(&SchemaFolderOverride {
+                naming_template: "{nope}".to_string(),
+                ..good.clone()
+            })
+            .is_err()
+    );
+    assert!(
+        service
+            .save_override(&SchemaFolderOverride {
+                line_endings: "cr".to_string(),
+                ..good
+            })
+            .is_err()
+    );
+}
+
+fn empty_override() -> SchemaFolderOverride {
+    SchemaFolderOverride {
+        id: 0,
+        schema_name: String::new(),
+        folder_path: String::new(),
+        encoding: String::new(),
+        extensions: String::new(),
+        storage_modes: String::new(),
+        naming_convention: String::new(),
+        code_folder_name: String::new(),
+        migration_folder_name: String::new(),
+        migration_folder_mode: String::new(),
+        migration_version_label: String::new(),
+        line_endings: String::new(),
+        naming_template: String::new(),
+    }
 }
 
 #[test]
@@ -241,6 +581,8 @@ fn schema_directory_resolution_honors_override_without_creating_it() {
             migration_folder_name: String::new(),
             migration_folder_mode: String::new(),
             migration_version_label: String::new(),
+            line_endings: String::new(),
+            naming_template: String::new(),
         }),
     }));
 
@@ -267,6 +609,8 @@ fn save_applies_per_schema_folder_storage_extension_and_encoding_overrides() {
             migration_folder_name: "migrations".to_string(),
             migration_folder_mode: String::new(),
             migration_version_label: String::new(),
+            line_endings: String::new(),
+            naming_template: String::new(),
         }),
     }));
 
@@ -369,6 +713,8 @@ fn combined_package_uses_the_package_overrides_of_the_schema() {
             migration_folder_name: String::new(),
             migration_folder_mode: String::new(),
             migration_version_label: String::new(),
+            line_endings: String::new(),
+            naming_template: String::new(),
         }),
     }));
 

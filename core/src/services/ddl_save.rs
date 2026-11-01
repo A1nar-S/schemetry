@@ -74,7 +74,7 @@ pub struct DdlSaveArgs {
     pub db_type: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DdlSaveOptions {
     pub code_folder: String,
     pub migration_folder: String,
@@ -84,12 +84,22 @@ pub struct DdlSaveOptions {
     pub version_label: String,
     pub extension: String,
     pub encoding: String,
+    /// `keep` (or empty), `lf` or `crlf`.
+    pub line_endings: String,
+    /// Global migration file name template; empty means the `naming_convention` preset.
+    pub naming_template: String,
 }
 
 #[derive(Debug, Serialize)]
 pub struct SaveDdlResult {
     pub code_path: Option<String>,
     pub migration_path: Option<String>,
+    /// Effective encoding the files are written in: `utf8`, `utf8-bom` or `windows-1257`.
+    pub encoding: String,
+    /// Effective line-ending handling: `keep`, `lf` or `crlf`.
+    pub line_endings: String,
+    /// Effective migration file name template (a preset's template when none is set).
+    pub naming_template: String,
 }
 
 /// The configured schema root folder, or the message to show when it isn't set.
@@ -113,6 +123,8 @@ pub fn options_from_settings(object_type: &str) -> DdlSaveOptions {
         version_label: s::load_migration_version_label().unwrap_or_default(),
         extension: s::resolve_ddl_extension(object_type),
         encoding: s::load_ddl_file_encoding().unwrap_or_else(|| "utf8".to_string()),
+        line_endings: s::load_ddl_line_endings().unwrap_or_default(),
+        naming_template: s::load_naming_template().unwrap_or_default(),
     }
 }
 
@@ -126,19 +138,361 @@ pub fn resolve_schema_dir(
         .map_err(|error| error.to_string())
 }
 
-fn encode_content(content: &str, encoding: &str) -> Vec<u8> {
+/// The encoding a setting value actually selects; unknown values fall back to UTF-8.
+pub fn canonical_encoding(encoding: &str) -> &'static str {
     match encoding.trim().to_ascii_lowercase().as_str() {
+        "utf8-bom" => "utf8-bom",
+        "windows-1257" => "windows-1257",
+        _ => "utf8",
+    }
+}
+
+/// Rejects a typo such as `windows-1252` that [`canonical_encoding`] would quietly turn
+/// into UTF-8. Empty means "use the default".
+pub fn validate_encoding(encoding: &str) -> Result<(), String> {
+    match encoding.trim().to_ascii_lowercase().as_str() {
+        "" | "utf8" | "utf-8" | "utf8-bom" | "windows-1257" => Ok(()),
+        other => Err(format!(
+            "Unknown encoding '{other}'; use utf8, utf8-bom or windows-1257."
+        )),
+    }
+}
+
+/// Encodes `content`, refusing (instead of writing replacement characters) when the
+/// target encoding can't represent some of it.
+pub(crate) fn encode_content(content: &str, encoding: &str) -> Result<Vec<u8>, String> {
+    match canonical_encoding(encoding) {
         "utf8-bom" => {
             let mut bytes = vec![0xEF, 0xBB, 0xBF];
             bytes.extend_from_slice(content.as_bytes());
-            bytes
+            Ok(bytes)
         }
         "windows-1257" => {
-            let (encoded, _, _) = encoding_rs::WINDOWS_1257.encode(content);
-            encoded.into_owned()
+            let (encoded, _, had_errors) = encoding_rs::WINDOWS_1257.encode(content);
+            if had_errors {
+                return Err(unrepresentable_error(
+                    content,
+                    encoding_rs::WINDOWS_1257,
+                    "windows-1257",
+                ));
+            }
+            Ok(encoded.into_owned())
         }
-        _ => content.as_bytes().to_vec(),
+        _ => Ok(content.as_bytes().to_vec()),
     }
+}
+
+fn unrepresentable_error(
+    content: &str,
+    encoding: &'static encoding_rs::Encoding,
+    label: &str,
+) -> String {
+    const MAX_SHOWN: usize = 5;
+    let mut bad: Vec<char> = Vec::new();
+    let mut first_line = 0;
+    let mut buf = [0u8; 4];
+    for (index, line) in content.split('\n').enumerate() {
+        for c in line.chars() {
+            if encoding.encode(c.encode_utf8(&mut buf)).2 && !bad.contains(&c) {
+                if bad.is_empty() {
+                    first_line = index + 1;
+                }
+                bad.push(c);
+            }
+        }
+    }
+    let total = bad.len();
+    let shown: Vec<String> = bad
+        .iter()
+        .take(MAX_SHOWN)
+        .map(|c| {
+            if c.is_control() || c.is_whitespace() {
+                format!("U+{:04X}", *c as u32)
+            } else {
+                format!("'{c}' (U+{:04X})", *c as u32)
+            }
+        })
+        .collect();
+    let more = if total > MAX_SHOWN {
+        format!(" and {} more", total - MAX_SHOWN)
+    } else {
+        String::new()
+    };
+    format!(
+        "Not saved: the text contains characters that {label} cannot represent: {}{more} \
+         (first on line {first_line}). Use UTF-8 for this schema/folder or remove those characters.",
+        shown.join(", ")
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineEnding {
+    Keep,
+    Lf,
+    Crlf,
+}
+
+impl LineEnding {
+    /// Parses a setting value; empty means `keep`.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "" | "keep" => Ok(Self::Keep),
+            "lf" => Ok(Self::Lf),
+            "crlf" => Ok(Self::Crlf),
+            other => Err(format!(
+                "Unknown line ending setting '{other}' (expected keep, lf or crlf)."
+            )),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::Lf => "lf",
+            Self::Crlf => "crlf",
+        }
+    }
+}
+
+/// Normalises every line break (CRLF, lone CR, LF) to the chosen style; `Keep` is a no-op.
+pub fn apply_line_endings(content: &str, line_ending: LineEnding) -> String {
+    if line_ending == LineEnding::Keep {
+        return content.to_string();
+    }
+    let lf = content.replace("\r\n", "\n").replace('\r', "\n");
+    if line_ending == LineEnding::Crlf {
+        lf.replace('\n', "\r\n")
+    } else {
+        lf
+    }
+}
+
+pub const NAMING_PLACEHOLDERS: &[&str] = &[
+    "date",
+    "time",
+    "schema",
+    "object",
+    "type",
+    "description",
+    "version",
+    "ext",
+];
+pub const TIMESTAMP_TEMPLATE: &str = "{date}_{time}_{schema}${description}{ext}";
+pub const FLYWAY_TEMPLATE: &str = "V{version}__{schema}_{description}{ext}";
+const MAX_TEMPLATE_LEN: usize = 120;
+const MAX_FILE_NAME_LEN: usize = 200;
+const SEPARATORS: &[char] = &['_', '-', '$', '#', '.'];
+
+/// The template a `naming_convention` preset stands for.
+pub fn preset_naming_template(convention: &str) -> &'static str {
+    if convention.trim() == "flyway" {
+        FLYWAY_TEMPLATE
+    } else {
+        TIMESTAMP_TEMPLATE
+    }
+}
+
+enum TemplatePart<'a> {
+    Literal(&'a str),
+    Placeholder(&'a str),
+}
+
+fn parse_template(template: &str) -> Result<Vec<TemplatePart<'_>>, String> {
+    if template.trim().is_empty() {
+        return Err("The naming template is empty.".to_string());
+    }
+    if template.len() > MAX_TEMPLATE_LEN {
+        return Err(format!(
+            "The naming template is longer than {MAX_TEMPLATE_LEN} characters."
+        ));
+    }
+    let mut parts = Vec::new();
+    let mut rest = template;
+    while !rest.is_empty() {
+        let next = rest.find(['{', '}']).unwrap_or(rest.len());
+        if next > 0 {
+            let literal = &rest[..next];
+            if let Some(bad) = literal
+                .chars()
+                .find(|c| !(c.is_ascii_alphanumeric() || SEPARATORS.contains(c)))
+            {
+                return Err(format!(
+                    "The naming template contains '{bad}'; only letters, digits and _ - $ # . are allowed outside placeholders."
+                ));
+            }
+            parts.push(TemplatePart::Literal(literal));
+            rest = &rest[next..];
+            continue;
+        }
+        if rest.starts_with('}') {
+            return Err("The naming template has an unmatched '}'.".to_string());
+        }
+        let Some(end) = rest.find('}') else {
+            return Err("The naming template has an unclosed '{'.".to_string());
+        };
+        let name = &rest[1..end];
+        if !NAMING_PLACEHOLDERS.contains(&name) {
+            return Err(format!(
+                "Unknown placeholder {{{name}}} in the naming template (known: {}).",
+                NAMING_PLACEHOLDERS
+                    .iter()
+                    .map(|p| format!("{{{p}}}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ));
+        }
+        parts.push(TemplatePart::Placeholder(name));
+        rest = &rest[end + 1..];
+    }
+    Ok(parts)
+}
+
+pub struct NameValues<'a> {
+    pub date: &'a str,
+    pub time: &'a str,
+    pub schema: &'a str,
+    pub object: &'a str,
+    pub object_type: &'a str,
+    pub description: &'a str,
+    pub version: u32,
+    pub extension: &'a str,
+}
+
+/// Rejects names that could escape the target folder or be unsafe on common file systems.
+fn validate_file_name(name: &str) -> Result<(), String> {
+    let bad = |reason: &str| Err(format!("Invalid file name '{name}': {reason}."));
+    if name.is_empty() {
+        return bad("it is empty");
+    }
+    if name.chars().count() > MAX_FILE_NAME_LEN {
+        return bad(&format!("longer than {MAX_FILE_NAME_LEN} characters"));
+    }
+    if let Some(c) = name
+        .chars()
+        .find(|c| !(c.is_alphanumeric() || SEPARATORS.contains(c) || *c == ' '))
+    {
+        return bad(&format!(
+            "'{c}' is not allowed (letters, digits, space and _ - $ # . only)"
+        ));
+    }
+    if name.contains("..") || name.starts_with('.') || name.ends_with('.') {
+        return bad("dots may not lead, trail or repeat");
+    }
+    if name.starts_with(' ') || name.ends_with(' ') {
+        return bad("it may not start or end with a space");
+    }
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            stem.strip_prefix(prefix)
+                .is_some_and(|n| n.len() == 1 && n != "0" && n.chars().all(|c| c.is_ascii_digit()))
+        });
+    if reserved {
+        return bad("it is a reserved device name");
+    }
+    Ok(())
+}
+
+fn extension_suffix(extension: &str) -> String {
+    let ext = extension.trim().trim_start_matches('.');
+    if ext.is_empty() {
+        String::new()
+    } else {
+        format!(".{ext}")
+    }
+}
+
+/// Renders a naming template into a validated file name. An empty placeholder renders
+/// empty and takes the separator before it along, so no `_`/`$` is left dangling.
+pub fn render_file_name(template: &str, values: &NameValues) -> Result<String, String> {
+    let parts = parse_template(template)?;
+    let type_value = values
+        .object_type
+        .trim()
+        .to_ascii_lowercase()
+        .replace(' ', "_");
+    let mut segments: Vec<(String, bool)> = Vec::new();
+    let mut strip_leading = false;
+    for part in parts {
+        match part {
+            TemplatePart::Literal(text) => {
+                let text = if strip_leading {
+                    text.trim_start_matches(SEPARATORS)
+                } else {
+                    text
+                };
+                if !text.is_empty() {
+                    strip_leading = false;
+                    segments.push((text.to_string(), true));
+                }
+            }
+            TemplatePart::Placeholder(name) => {
+                let value = match name {
+                    "date" => values.date.to_string(),
+                    "time" => values.time.to_string(),
+                    "schema" => values.schema.to_lowercase(),
+                    "object" => values.object.trim().to_string(),
+                    "type" => type_value.clone(),
+                    "description" => values.description.trim().to_string(),
+                    "version" => values.version.to_string(),
+                    _ => extension_suffix(values.extension),
+                };
+                if value.is_empty() {
+                    match segments.last_mut() {
+                        Some((text, true)) => {
+                            let kept = text.trim_end_matches(SEPARATORS).len();
+                            text.truncate(kept);
+                            if text.is_empty() {
+                                segments.pop();
+                            }
+                        }
+                        Some(_) | None => {}
+                    }
+                    if segments.is_empty() {
+                        strip_leading = true;
+                    }
+                    continue;
+                }
+                if name == "ext" {
+                    if let Some((text, true)) = segments.last_mut() {
+                        if text.ends_with('.') {
+                            text.pop();
+                        }
+                    }
+                }
+                strip_leading = false;
+                segments.push((value, false));
+            }
+        }
+    }
+    let name: String = segments.into_iter().map(|(text, _)| text).collect();
+    validate_file_name(&name)?;
+    Ok(name)
+}
+
+/// Checks a template without any real values: it must parse and render a valid name.
+pub fn validate_naming_template(template: &str) -> Result<(), String> {
+    // Without one of these, two saves in the same minute would share a file name.
+    if !template.contains("{object}")
+        && !template.contains("{description}")
+        && !template.contains("{version}")
+    {
+        return Err("The naming template needs {object}, {description} or {version}.".to_string());
+    }
+    render_file_name(
+        template,
+        &NameValues {
+            date: "260415",
+            time: "1200",
+            schema: "schema",
+            object: "OBJECT_NAME",
+            object_type: "TABLE",
+            description: "description",
+            version: 1,
+            extension: "sql",
+        },
+    )
+    .map(|_| ())
 }
 
 /// Return the next Flyway version found in direct files or one level of subfolders.
@@ -228,6 +582,9 @@ pub fn decode_content(bytes: &[u8], encoding: &str) -> (String, bool) {
 #[derive(Clone, Debug, Default)]
 pub struct DdlSavePlan {
     pub files: Vec<PlannedFile>,
+    pub encoding: String,
+    pub line_endings: String,
+    pub naming_template: String,
 }
 
 impl DdlSavePlan {
@@ -241,6 +598,9 @@ impl DdlSavePlan {
         SaveDdlResult {
             code_path: path_of("code"),
             migration_path: path_of("migration"),
+            encoding: self.encoding.clone(),
+            line_endings: self.line_endings.clone(),
+            naming_template: self.naming_template.clone(),
         }
     }
 }
@@ -345,26 +705,49 @@ fn plan_inner(
     let encoding = folder_overrides
         .resolve_encoding(&schema_lower, &options.encoding)
         .map_err(|error| error.to_string())?;
+    let line_endings = LineEnding::parse(
+        &folder_overrides
+            .resolve_line_endings(&schema_lower, &options.line_endings)
+            .map_err(|error| error.to_string())?,
+    )?;
+    let naming_template = folder_overrides
+        .resolve_naming_template(
+            &schema_lower,
+            &options.naming_convention,
+            &options.naming_template,
+        )
+        .map_err(|error| error.to_string())?;
 
     let code_dir = schema_dir.join(code_folder).join(&schema_lower);
     let migration_dir = schema_dir.join(migration_folder);
     let write_code = storage_mode != "migration";
     let write_migration = storage_mode != "code";
-    let mut plan = DdlSavePlan::default();
+    let mut plan = DdlSavePlan {
+        encoding: canonical_encoding(&encoding).to_string(),
+        line_endings: line_endings.as_str().to_string(),
+        naming_template: naming_template.clone(),
+        ..Default::default()
+    };
+    let encode = |kind: &str, text: &str| {
+        encode_content(&apply_line_endings(text, line_endings), &encoding)
+            .map_err(|error| format!("{kind} file: {error}"))
+    };
 
     if write_code {
+        let ext_suffix = extension_suffix(&extension);
         let code_filename = if naming_convention == "flyway" {
-            format!("R__{}.{}", args.object_name, extension)
+            format!("R__{}{}", args.object_name, ext_suffix)
         } else {
-            format!("{}.{}", args.object_name, extension)
+            format!("{}{}", args.object_name, ext_suffix)
         };
+        validate_file_name(&code_filename)?;
         let code_file = code_dir.join(code_filename);
         plan.files.push(PlannedFile {
             kind: "code",
             exists: code_file.exists(),
             content: match raw {
                 Some(bytes) => bytes.to_vec(),
-                None => encode_content(&args.ddl, &encoding),
+                None => encode("Code", &args.ddl)?,
             },
             encoding: encoding_label(&encoding),
             path: code_file,
@@ -389,7 +772,7 @@ fn plan_inner(
         };
         let migration_content = match raw {
             Some(bytes) => bytes.to_vec(),
-            None => encode_content(&migration_ddl, &encoding),
+            None => encode("Migration", &migration_ddl)?,
         };
         let now = Local::now();
 
@@ -406,18 +789,28 @@ fn plan_inner(
             _ => migration_dir.clone(),
         };
 
-        let migration_filename = if naming_convention == "flyway" {
-            let version = next_migration_version(&migration_dir);
-            format!(
-                "V{}__{}_{}.{}",
-                version, schema_lower, args.description, extension
-            )
-        } else {
-            let timestamp = now.format("%y%m%d_%H%M").to_string();
-            format!(
-                "{}_{}${}.{}",
-                timestamp, schema_lower, args.description, extension
-            )
+        let migration_filename = {
+            // Without {object} or a description, two objects saved in the same minute would
+            // get the same name and the second would silently replace the first.
+            let description =
+                if !naming_template.contains("{object}") && args.description.trim().is_empty() {
+                    args.object_name.as_str()
+                } else {
+                    args.description.as_str()
+                };
+            render_file_name(
+                &naming_template,
+                &NameValues {
+                    date: &now.format("%y%m%d").to_string(),
+                    time: &now.format("%H%M").to_string(),
+                    schema: &schema_lower,
+                    object: &args.object_name,
+                    object_type: &args.object_type,
+                    description,
+                    version: next_migration_version(&migration_dir),
+                    extension: &extension,
+                },
+            )?
         };
         let migration_file = actual_migration_dir.join(&migration_filename);
         plan.files.push(PlannedFile {

@@ -57,7 +57,6 @@
     const obj = get(selectedObject);
     const ddl = get(generatedDdl);
     if (!obj || !ddl) return;
-    if (!saveDescription.trim()) { notify('Please enter a description.', 'error'); return; }
     showSaveModal = false;
     setBusy(true, 'Saving to folder…');
     try {
@@ -71,7 +70,7 @@
       });
       const paths = [result.code_path, result.migration_path].filter((p): p is string => !!p);
       const folder = (paths[0] ?? '').replace(/[/\\][^/\\]+$/, '');
-      notify(`Saved:\n${paths.join('\n')}`, 'ok', folder);
+      notify(`Saved (${result.encoding}, ${result.line_endings} line endings):\n${paths.join('\n')}`, 'ok', folder);
     } catch (e) {
       notify(`Save failed: ${String(e)}`, 'error');
     } finally {
@@ -347,7 +346,7 @@
         Object: <strong style="color:var(--text-accent);">{$selectedObject?.name}</strong>
       </div>
       <div class="field">
-        <span style="font-size:12px;">Description <span style="color:var(--text-muted);font-weight:400;">(double-click to fill default)</span></span>
+        <span style="font-size:12px;">Description <span style="color:var(--text-muted);font-weight:400;">(optional, double-click to fill default)</span></span>
         <input
           bind:value={saveDescription}
           placeholder="e.g. create_or_replace_DIVISIONS_VW"
@@ -362,7 +361,7 @@
       </p>
       <div class="row" style="justify-content:flex-end;gap:8px;">
         <button class="btn-secondary" on:click={() => { showSaveModal = false; }}>Cancel</button>
-        <button class="btn-primary" disabled={!saveDescription.trim() || $busy} on:click={() => void onSaveToFolder()}>Save</button>
+        <button class="btn-primary" disabled={$busy} on:click={() => void onSaveToFolder()}>Save</button>
       </div>
     </div>
   </Modal>

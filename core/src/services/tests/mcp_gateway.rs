@@ -1695,7 +1695,6 @@ fn path_traversal_in_names_and_descriptions_is_rejected() {
         ("ORDERS", "../../escape"),
         ("ORDERS", "a/b"),
         ("ORDERS", "a b"),
-        ("ORDERS", ""),
         ("ORDERS", "with.dot"),
         ("ORDERS\0", "ok"),
     ] {
@@ -1708,6 +1707,23 @@ fn path_traversal_in_names_and_descriptions_is_rejected() {
         );
     }
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn the_description_is_optional() {
+    let (h, _root) = save_harness();
+    let mut args = save_args("ORDERS", "");
+    args.dry_run = true;
+    let out = h.gateway.save_migration_script(CLIENT, args).unwrap();
+    let migration = out["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["kind"] == "migration")
+        .unwrap();
+    let path = migration["path"].as_str().unwrap();
+    // With no description and no {object} in the template, the object name keeps files apart.
+    assert!(path.ends_with("_app$ORDERS.sql"), "{path}");
 }
 
 #[test]

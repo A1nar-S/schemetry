@@ -96,6 +96,8 @@ export type AppSettings = {
   migration_folder_name: string;
   migration_folder_mode: string;
   migration_version_label: string;
+  ddl_line_endings: string;
+  naming_template: string;
   plsql_dev_path: string;
 };
 
@@ -115,6 +117,8 @@ export type SchemaFolderOverride = {
   migration_folder_name: string;
   migration_folder_mode: string;
   migration_version_label: string;
+  line_endings: string;
+  naming_template: string;
 };
 
 export type HistoryNamingRule = {
@@ -159,6 +163,9 @@ export type TableFilterRule = {
 export type SaveDdlResult = {
   code_path: string | null;
   migration_path: string | null;
+  encoding: string;
+  line_endings: string;
+  naming_template: string;
 };
 
 export type McpDataAccess = 'none' | 'allowlist';

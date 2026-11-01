@@ -171,7 +171,8 @@ tool_args! {
         /// Where Schemetry reads the DDL from instead: `{"server": true}` or `{"file": "relative/path.sql"}`.
         #[serde(default)]
         pub source: Option<SaveSource>,
-        /// Short label used in the migration file name: letters, digits, `_` and `-`, up to 80 characters.
+        /// Optional short label used in the migration file name: letters, digits, `_` and `-`, up to 80 characters. Leave empty to omit it.
+        #[serde(default)]
         pub description: String,
         /// Plan only: report what would be written without writing anything. Each file is described by
         /// kind, path, size, sha256, line count, encoding, line endings and, when it already exists,
@@ -441,15 +442,6 @@ enum SourceRequest<'a> {
     Inline,
     Server,
     File(&'a str),
-}
-
-fn line_count(bytes: &[u8]) -> usize {
-    let newlines = bytes.iter().filter(|&&b| b == b'\n').count();
-    match bytes.last() {
-        None => 0,
-        Some(b'\n') => newlines,
-        Some(_) => newlines + 1,
-    }
 }
 
 /// Reads a file given relative to the schema folder, refusing anything that is not a plain
@@ -941,7 +933,7 @@ impl McpGateway {
                 if !valid_object_type(&object_type) {
                     return denied("object_type is not a recognised object type.");
                 }
-                if !valid_file_component(description, 80, false) {
+                if !description.is_empty() && !valid_file_component(description, 80, false) {
                     return denied(
                         "description may only contain letters, digits, _ and - (max 80 characters).",
                     );
@@ -1937,6 +1929,16 @@ fn rows_to_json(result: ReadOnlyResult, limit: u32) -> Value {
     out.insert("truncated".into(), json!(truncated));
     out.insert("row_limit".into(), json!(limit));
     Value::Object(out)
+}
+
+#[cfg(test)]
+fn line_count(bytes: &[u8]) -> usize {
+    let newlines = bytes.iter().filter(|&&b| b == b'\n').count();
+    match bytes.last() {
+        None => 0,
+        Some(b'\n') => newlines,
+        Some(_) => newlines + 1,
+    }
 }
 
 #[cfg(test)]

@@ -19,6 +19,8 @@ pub struct AppSettings {
     pub migration_folder_name: String,
     pub migration_folder_mode: String,
     pub migration_version_label: String,
+    pub ddl_line_endings: String,
+    pub naming_template: String,
     pub plsql_dev_path: String,
 }
 
@@ -48,6 +50,9 @@ pub fn get_settings() -> AppSettings {
             .unwrap_or_else(|| "year".to_string()),
         migration_version_label: services::settings::load_migration_version_label()
             .unwrap_or_default(),
+        ddl_line_endings: services::settings::load_ddl_line_endings()
+            .unwrap_or_else(|| "keep".to_string()),
+        naming_template: services::settings::load_naming_template().unwrap_or_default(),
         plsql_dev_path: services::settings::load_plsql_dev_path().unwrap_or_default(),
     }
 }
@@ -65,8 +70,15 @@ pub fn save_settings(
     migration_folder_name: String,
     migration_folder_mode: String,
     migration_version_label: String,
+    ddl_line_endings: String,
+    naming_template: String,
     plsql_dev_path: String,
 ) -> Result<SaveSettingsResponse, String> {
+    services::ddl_save::LineEnding::parse(&ddl_line_endings)?;
+    services::ddl_save::validate_encoding(&ddl_file_encoding)?;
+    if !naming_template.trim().is_empty() {
+        services::ddl_save::validate_naming_template(naming_template.trim())?;
+    }
     services::settings::save_output_folder(output_folder.trim()).map_err(|e| e.to_string())?;
     services::settings::save_client_lib_dir(client_lib_dir.trim()).map_err(|e| e.to_string())?;
     services::settings::save_schema_root_folder(schema_root_folder.trim())
@@ -84,6 +96,10 @@ pub fn save_settings(
     services::settings::save_migration_folder_mode(migration_folder_mode.trim())
         .map_err(|e| e.to_string())?;
     services::settings::save_migration_version_label(migration_version_label.trim())
+        .map_err(|e| e.to_string())?;
+    services::settings::save_ddl_line_endings(ddl_line_endings.trim())
+        .map_err(|e| e.to_string())?;
+    services::settings::save_naming_template(naming_template.trim())
         .map_err(|e| e.to_string())?;
     services::settings::save_plsql_dev_path(plsql_dev_path.trim()).map_err(|e| e.to_string())?;
 

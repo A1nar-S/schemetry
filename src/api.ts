@@ -200,6 +200,8 @@ export async function saveSettings(
   migration_folder_name: string,
   migration_folder_mode: string,
   migration_version_label: string,
+  ddl_line_endings: string,
+  naming_template: string,
   plsql_dev_path: string,
 ): Promise<SaveSettingsResponse> {
   return invoke('save_settings', {
@@ -214,6 +216,8 @@ export async function saveSettings(
     migrationFolderName: migration_folder_name,
     migrationFolderMode: migration_folder_mode,
     migrationVersionLabel: migration_version_label,
+    ddlLineEndings: ddl_line_endings,
+    namingTemplate: naming_template,
     plsqlDevPath: plsql_dev_path,
   });
 }

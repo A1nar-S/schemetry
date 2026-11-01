@@ -44,6 +44,7 @@ Rust unit tests cover the core business logic. Tests live in separate files alon
 - `core/src/services/tests/fix.rs` — tests for `services/fix.rs` (fix-script generation, SQL builders, `generate_fix_script`)
 - `core/src/repositories/tests/oracle_repository.rs` — tests for `repositories/oracle_repository.rs` (`clean_opt`, `fmt_type`, `make_idempotent`, `clean_sequence_ddl`)
 - `core/src/services/tests/mcp_*.rs` — MCP policy rules, SQL guard, query builder, audit hash chain (incl. real-SQLite tamper tests), audit sinks, and the gateway (policy/audit invariants) against in-memory fakes from `core/src/test_support.rs`.
+- `core/src/services/tests/ddl_save.rs` — tests for `services/ddl_save.rs` (save planning, encoding refusal for unrepresentable characters, line-ending normalisation, file-name templates and their validation). Saved-file naming goes through `render_file_name`/`validate_file_name`, so keep any new naming option behind that validation (path confinement relies on it).
 
 `repositories/postgres_repository.rs` has no dedicated unit-test file yet — its catalog-introspection/DDL-rendering logic is exercised by the Postgres integration suite below instead.
 

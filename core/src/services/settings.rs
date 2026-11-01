@@ -194,6 +194,24 @@ pub fn save_naming_convention(convention: &str) -> Result<()> {
     save_setting("ddl_naming_convention", convention)
 }
 
+/// Global line-ending handling for saved DDL files: `keep` (default), `lf` or `crlf`.
+pub fn load_ddl_line_endings() -> Option<String> {
+    load_setting("ddl_line_endings")
+}
+
+pub fn save_ddl_line_endings(line_endings: &str) -> Result<()> {
+    save_setting("ddl_line_endings", line_endings)
+}
+
+/// Global migration file name template; empty means the `ddl_naming_convention` preset.
+pub fn load_naming_template() -> Option<String> {
+    load_setting("ddl_naming_template")
+}
+
+pub fn save_naming_template(template: &str) -> Result<()> {
+    save_setting("ddl_naming_template", template)
+}
+
 /// How the migration subfolder is chosen: `"year"` (the calendar year, e.g.
 /// `migration/2026/`) or `"version"` (the manually-set `migration_version_label`, e.g.
 /// `migration/1.4/`).

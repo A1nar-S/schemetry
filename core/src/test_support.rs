@@ -496,6 +496,7 @@ impl Default for FakeSettings {
                 version_label: String::new(),
                 extension: "sql".into(),
                 encoding: "utf8".into(),
+                ..Default::default()
             }),
         }
     }

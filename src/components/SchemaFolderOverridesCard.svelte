@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import type { ConnectionRecord, SchemaFolderOverride } from '../types';
-  import { DDL_FILE_ENCODINGS, DDL_OBJECT_TYPES, STORAGE_MODES, NAMING_CONVENTIONS, MIGRATION_FOLDER_MODES } from '../constants';
+  import { DDL_FILE_ENCODINGS, DDL_OBJECT_TYPES, STORAGE_MODES, NAMING_CONVENTIONS, MIGRATION_FOLDER_MODES, LINE_ENDINGS, NAMING_TEMPLATE_PRESETS, NAMING_TEMPLATE_HELP } from '../constants';
   import { listSchemaFolderOverrides, saveSchemaFolderOverride, deleteSchemaFolderOverride } from '../api';
   import { busy, setBusy, notify } from '../stores/notification';
   import ServerCombobox from './ServerCombobox.svelte';
@@ -55,7 +55,9 @@
         !item.code_folder_name.trim() &&
         !item.migration_folder_name.trim() &&
         !item.migration_folder_mode.trim() &&
-        !item.migration_version_label.trim())
+        !item.migration_version_label.trim() &&
+        !item.line_endings.trim() &&
+        !item.naming_template.trim())
     )
       return;
     setBusy(true, 'Saving schema folder override…');
@@ -76,7 +78,7 @@
       {
         id: 0, schema_name: '', folder_path: '', encoding: '', extensions: '', storage_modes: '',
         naming_convention: '', code_folder_name: '', migration_folder_name: '',
-        migration_folder_mode: '', migration_version_label: '',
+        migration_folder_mode: '', migration_version_label: '', line_endings: '', naming_template: '',
       },
     ];
   }
@@ -164,6 +166,7 @@
   let migrationModalCodeFolder = '';
   let migrationModalMigrationFolder = '';
   let migrationModalNaming = '';
+  let migrationModalTemplate = '';
   let migrationModalFolderMode = '';
   let migrationModalVersionLabel = '';
 
@@ -172,6 +175,7 @@
       item.code_folder_name,
       item.migration_folder_name,
       item.naming_convention,
+      item.naming_template,
       item.migration_folder_mode,
       item.migration_version_label,
     ].filter(v => v.trim()).length;
@@ -181,6 +185,7 @@
     migrationModalCodeFolder = item.code_folder_name;
     migrationModalMigrationFolder = item.migration_folder_name;
     migrationModalNaming = item.naming_convention;
+    migrationModalTemplate = item.naming_template;
     migrationModalFolderMode = item.migration_folder_mode;
     migrationModalVersionLabel = item.migration_version_label;
     migrationModalItem = item;
@@ -196,6 +201,7 @@
     item.code_folder_name = migrationModalCodeFolder.trim();
     item.migration_folder_name = migrationModalMigrationFolder.trim();
     item.naming_convention = migrationModalNaming;
+    item.naming_template = migrationModalTemplate.trim();
     item.migration_folder_mode = migrationModalFolderMode;
     item.migration_version_label = migrationModalFolderMode === 'version' ? migrationModalVersionLabel.trim() : '';
     overrides = overrides;
@@ -233,8 +239,8 @@
   <div class="section-title">Schema Folder Overrides</div>
   <p class="hint">
     Per-schema overrides for schemas that don't fit the defaults above: repository folder,
-    encoding, file extensions, storage modes, and migration settings (naming, folder
-    names, folder mode) — each left blank falls back to the default.
+    encoding, line endings, file extensions, storage modes, and migration settings (naming,
+    file name template, folder names, folder mode) — each left blank falls back to the default.
   </p>
 
   {#if loaded && overrides.length === 0}
@@ -263,6 +269,12 @@
         <option value="">Default encoding</option>
         {#each DDL_FILE_ENCODINGS as enc}
           <option value={enc.value}>{enc.label}</option>
+        {/each}
+      </select>
+      <select bind:value={item.line_endings} on:change={() => void persist(item)}>
+        <option value="">Default line endings</option>
+        {#each LINE_ENDINGS as le}
+          <option value={le.value}>{le.label}</option>
         {/each}
       </select>
       <button class="btn-secondary ext-override-btn" on:click={() => openExtModal(item)} title="Per-object-type DDL file extension overrides for this schema">
@@ -361,6 +373,11 @@
             <option value={nc.value}>{nc.label}</option>
           {/each}
         </select>
+      </label>
+      <label class="migration-field">
+        <span>File name template (optional — overrides the naming above)</span>
+        <input bind:value={migrationModalTemplate} placeholder={NAMING_TEMPLATE_PRESETS[migrationModalNaming] ?? 'Default template'} />
+        <span>{NAMING_TEMPLATE_HELP}</span>
       </label>
       <label class="migration-field">
         <span>Migration folder mode</span>

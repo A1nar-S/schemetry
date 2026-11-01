@@ -52,7 +52,8 @@ pub struct ConnectionRecord {
 /// global setting. `extensions` and `storage_modes` are each a JSON object mapping
 /// upper-cased object type (e.g. `"TABLE"`) to a value; a type missing from the map falls
 /// back to the global setting for that type. `naming_convention` is a single value
-/// (`"timestamp"` or `"flyway"`).
+/// (`"timestamp"` or `"flyway"`); a non-empty `naming_template` takes precedence over it.
+/// `line_endings` is `"keep"`, `"lf"` or `"crlf"`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaFolderOverride {
     #[serde(default)]
@@ -76,6 +77,13 @@ pub struct SchemaFolderOverride {
     pub migration_folder_mode: String,
     #[serde(default)]
     pub migration_version_label: String,
+    /// `keep`, `lf` or `crlf`; empty falls back to the global setting.
+    #[serde(default)]
+    pub line_endings: String,
+    /// File name template with `{date}`-style placeholders; empty falls back to
+    /// `naming_convention` (a preset) and then the global setting.
+    #[serde(default)]
+    pub naming_template: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

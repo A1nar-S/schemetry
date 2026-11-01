@@ -29,7 +29,7 @@ impl SqliteSchemaFolderOverrideRepository {
 }
 
 const COLUMNS: &str = "id, schema_name, folder_path, encoding, extensions, storage_modes, naming_convention, \
-    code_folder_name, migration_folder_name, migration_folder_mode, migration_version_label";
+    code_folder_name, migration_folder_name, migration_folder_mode, migration_version_label, line_endings, naming_template";
 
 fn row_to_override(row: &rusqlite::Row) -> rusqlite::Result<SchemaFolderOverride> {
     Ok(SchemaFolderOverride {
@@ -44,6 +44,8 @@ fn row_to_override(row: &rusqlite::Row) -> rusqlite::Result<SchemaFolderOverride
         migration_folder_name: row.get(8)?,
         migration_folder_mode: row.get(9)?,
         migration_version_label: row.get(10)?,
+        line_endings: row.get(11)?,
+        naming_template: row.get(12)?,
     })
 }
 
@@ -67,6 +69,8 @@ impl SchemaFolderOverrideRepository for SqliteSchemaFolderOverrideRepository {
             "migration_folder_name",
             "migration_folder_mode",
             "migration_version_label",
+            "line_endings",
+            "naming_template",
         ] {
             let _ = conn.execute(
                 &format!(
@@ -96,8 +100,9 @@ impl SchemaFolderOverrideRepository for SqliteSchemaFolderOverrideRepository {
         conn.execute(
             "INSERT INTO folder_schema_overrides
                 (schema_name, folder_path, encoding, extensions, storage_modes, naming_convention,
-                 code_folder_name, migration_folder_name, migration_folder_mode, migration_version_label)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 code_folder_name, migration_folder_name,                  migration_folder_mode, migration_version_label,
+                                  line_endings, naming_template)
+                              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 data.schema_name,
                 data.folder_path,
@@ -108,7 +113,9 @@ impl SchemaFolderOverrideRepository for SqliteSchemaFolderOverrideRepository {
                 data.code_folder_name,
                 data.migration_folder_name,
                 data.migration_folder_mode,
-                data.migration_version_label
+                data.migration_version_label,
+                data.line_endings,
+                data.naming_template
             ],
         )
         .context("Failed to insert schema folder override")?;
@@ -137,8 +144,9 @@ impl SchemaFolderOverrideRepository for SqliteSchemaFolderOverrideRepository {
             "UPDATE folder_schema_overrides SET
                 schema_name=?1, folder_path=?2, encoding=?3, extensions=?4, storage_modes=?5,
                 naming_convention=?6, code_folder_name=?7, migration_folder_name=?8,
-                migration_folder_mode=?9, migration_version_label=?10
-             WHERE id=?11",
+                migration_folder_mode=?9, migration_version_label=?10, line_endings=?11,
+                                naming_template=?12
+                             WHERE id=?13",
             params![
                 data.schema_name,
                 data.folder_path,
@@ -150,6 +158,8 @@ impl SchemaFolderOverrideRepository for SqliteSchemaFolderOverrideRepository {
                 data.migration_folder_name,
                 data.migration_folder_mode,
                 data.migration_version_label,
+                data.line_endings,
+                data.naming_template,
                 id
             ],
         )

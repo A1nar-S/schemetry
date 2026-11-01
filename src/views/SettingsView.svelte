@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import type { ConnectionRecord } from '../types';
-  import { DDL_FILE_ENCODINGS, DDL_OBJECT_TYPES, STORAGE_MODES, NAMING_CONVENTIONS, MIGRATION_FOLDER_MODES } from '../constants';
+  import { DDL_FILE_ENCODINGS, DDL_OBJECT_TYPES, STORAGE_MODES, NAMING_CONVENTIONS, MIGRATION_FOLDER_MODES, LINE_ENDINGS, NAMING_TEMPLATE_PRESETS, NAMING_TEMPLATE_HELP } from '../constants';
 
   // Every object type needs a concrete (non-undefined) entry so its <select> always
   // matches a real <option> — otherwise the box renders blank until touched.
@@ -36,6 +36,8 @@
   let migrationFolderName = 'migration';
   let migrationFolderMode = 'year';
   let migrationVersionLabel = '';
+  let ddlLineEndings = 'keep';
+  let namingTemplate = '';
   let plsqlDevPath = '';
 
   onMount(async () => {
@@ -43,7 +45,7 @@
       output_folder: '', client_lib_dir: '', last_query_export_dir: '', schema_root_folder: '',
       ddl_file_encoding: 'utf8', ddl_file_extensions: {}, storage_modes: {}, naming_convention: 'timestamp',
       code_folder_name: 'code', migration_folder_name: 'migration', migration_folder_mode: 'year',
-      migration_version_label: '', plsql_dev_path: '',
+      migration_version_label: '', ddl_line_endings: 'keep', naming_template: '', plsql_dev_path: '',
     }));
     clientLibDir = s.client_lib_dir;
     schemaRootFolder = s.schema_root_folder;
@@ -55,6 +57,8 @@
     migrationFolderName = s.migration_folder_name || 'migration';
     migrationFolderMode = s.migration_folder_mode || 'year';
     migrationVersionLabel = s.migration_version_label;
+    ddlLineEndings = s.ddl_line_endings || 'keep';
+    namingTemplate = s.naming_template;
     plsqlDevPath = s.plsql_dev_path;
   });
 
@@ -88,7 +92,7 @@
       const res = await saveSettings(
         '', clientLibDir, schemaRootFolder, ddlFileEncoding, ddlFileExtensions,
         storageModesToSave, namingConvention, codeFolderName, migrationFolderName,
-        migrationFolderMode, migrationVersionLabel, plsqlDevPath,
+        migrationFolderMode, migrationVersionLabel, ddlLineEndings, namingTemplate.trim(), plsqlDevPath,
       );
       await mcpCard?.saveIfDirty();
       notify(
@@ -199,6 +203,21 @@
               {/each}
             </select>
           </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <span>Line endings</span>
+            <select bind:value={ddlLineEndings}>
+              {#each LINE_ENDINGS as le}
+                <option value={le.value}>{le.label}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <span>Migration file name template <span class="hint-inline">(optional — overrides the naming above)</span></span>
+          <input bind:value={namingTemplate} placeholder={NAMING_TEMPLATE_PRESETS[namingConvention] ?? NAMING_TEMPLATE_PRESETS.timestamp} />
+          <span class="hint">{NAMING_TEMPLATE_HELP}</span>
         </div>
         <div class="field-row">
           <div class="field">

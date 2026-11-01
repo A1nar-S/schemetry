@@ -21,10 +21,29 @@ export const STORAGE_MODES: { value: string; label: string }[] = [
 
 // How saved-to-folder filenames are named. "flyway" names the migration file
 // `V<n>__schema_description.ext` and the code file `R__name.ext`, marking it as a
-// Flyway repeatable migration.
+// Flyway repeatable migration. A naming template (below) overrides the migration file name.
 export const NAMING_CONVENTIONS: { value: string; label: string }[] = [
   { value: 'timestamp', label: 'Timestamp' },
   { value: 'flyway', label: 'Flyway (V__ / R__)' },
+];
+
+// The templates the conventions stand for. Must mirror TIMESTAMP_TEMPLATE / FLYWAY_TEMPLATE in
+// core/src/services/ddl_save.rs.
+export const NAMING_TEMPLATE_PRESETS: Record<string, string> = {
+  timestamp: '{date}_{time}_{schema}${description}{ext}',
+  flyway: 'V{version}__{schema}_{description}{ext}',
+};
+
+export const NAMING_TEMPLATE_HELP =
+  'Placeholders: {date} YYMMDD, {time} HHMM, {schema}, {object}, {type}, {description}, {version}, ' +
+  '{ext} (includes the dot). An empty description leaves no dangling separator. ' +
+  'Example: {date}_{time}_{schema}${object}{ext}';
+
+// Line-ending handling applied to saved files before encoding.
+export const LINE_ENDINGS: { value: string; label: string }[] = [
+  { value: 'keep', label: 'Keep as-is' },
+  { value: 'lf', label: 'LF (Unix)' },
+  { value: 'crlf', label: 'CRLF (Windows)' },
 ];
 
 // Where migration files are filed: under a folder named for the current calendar year,

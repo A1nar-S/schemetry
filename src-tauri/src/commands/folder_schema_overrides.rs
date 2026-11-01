@@ -30,6 +30,8 @@ pub fn save_folder_schema_override(
         && data.migration_folder_name.trim().is_empty()
         && data.migration_folder_mode.trim().is_empty()
         && data.migration_version_label.trim().is_empty()
+        && data.line_endings.trim().is_empty()
+        && data.naming_template.trim().is_empty()
     {
         return Err("Set at least one field to override.".to_string());
     }
@@ -44,6 +46,8 @@ pub fn save_folder_schema_override(
         migration_folder_name: data.migration_folder_name.trim().to_string(),
         migration_folder_mode: data.migration_folder_mode.trim().to_string(),
         migration_version_label: data.migration_version_label.trim().to_string(),
+        line_endings: data.line_endings.trim().to_string(),
+        naming_template: data.naming_template.trim().to_string(),
         ..data
     };
     state

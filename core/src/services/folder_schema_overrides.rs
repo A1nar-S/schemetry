@@ -24,6 +24,13 @@ impl SchemaFolderOverrideService {
 
     /// Insert a new override (id == 0) or update an existing one.
     pub fn save_override(&self, data: &SchemaFolderOverride) -> Result<SchemaFolderOverride> {
+        if !data.naming_template.trim().is_empty() {
+            crate::services::ddl_save::validate_naming_template(data.naming_template.trim())
+                .map_err(anyhow::Error::msg)?;
+        }
+        crate::services::ddl_save::LineEnding::parse(&data.line_endings)
+            .map_err(anyhow::Error::msg)?;
+        crate::services::ddl_save::validate_encoding(&data.encoding).map_err(anyhow::Error::msg)?;
         if data.id == 0 {
             self.repo.insert_override(data)
         } else {
@@ -123,6 +130,45 @@ impl SchemaFolderOverrideService {
             Some(o) if !o.naming_convention.trim().is_empty() => Ok(o.naming_convention),
             _ => Ok(default_convention.to_string()),
         }
+    }
+
+    /// The line-ending handling (`keep`, `lf`, `crlf`) for a schema: its overridden value if
+    /// one is set, otherwise the global default.
+    pub fn resolve_line_endings(
+        &self,
+        schema_name: &str,
+        default_line_endings: &str,
+    ) -> Result<String> {
+        let over = self.repo.find_for_schema(schema_name)?;
+        match over {
+            Some(o) if !o.line_endings.trim().is_empty() => Ok(o.line_endings),
+            _ => Ok(default_line_endings.to_string()),
+        }
+    }
+
+    /// The effective migration file name template for a schema. Most specific wins:
+    /// the schema's template, then the schema's convention preset, then the global
+    /// template, then the global convention preset.
+    pub fn resolve_naming_template(
+        &self,
+        schema_name: &str,
+        default_convention: &str,
+        default_template: &str,
+    ) -> Result<String> {
+        use crate::services::ddl_save::preset_naming_template;
+        let over = self.repo.find_for_schema(schema_name)?;
+        if let Some(o) = over {
+            if !o.naming_template.trim().is_empty() {
+                return Ok(o.naming_template.trim().to_string());
+            }
+            if !o.naming_convention.trim().is_empty() {
+                return Ok(preset_naming_template(&o.naming_convention).to_string());
+            }
+        }
+        if !default_template.trim().is_empty() {
+            return Ok(default_template.trim().to_string());
+        }
+        Ok(preset_naming_template(default_convention).to_string())
     }
 
     /// The subfolder name for raw code DDL files for a schema: its overridden name if one
