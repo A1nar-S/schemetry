@@ -7,8 +7,10 @@ use anyhow::Result;
 use crate::models::SchemaFolderOverride;
 use crate::repositories::folder_schema_override_repository::SchemaFolderOverrideRepository;
 use crate::services::ddl_save::{
-    DdlSaveArgs, DdlSaveOptions, encode_content, next_migration_version, resolve_schema_dir,
-    save_ddl_to_folder as save_ddl_service,
+    DdlSaveArgs, DdlSaveOptions, PACKAGE_SPEC_AND_BODY, combine_package_spec_and_body,
+    encode_content, has_package_spec_and_body, is_package_spec_and_body, next_migration_version,
+    plan_ddl_save, resolve_schema_dir, save_ddl_to_folder as save_ddl_service,
+    settings_object_type,
 };
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
 
@@ -252,6 +254,109 @@ fn save_applies_per_schema_folder_storage_extension_and_encoding_overrides() {
     assert_eq!(code_path, custom_dir.join("source/app/R__ORDERS.sql"));
     assert!(result.migration_path.is_none());
     assert_eq!(fs::read(code_path).unwrap()[..3], [0xEF, 0xBB, 0xBF]);
+}
+
+const SPEC: &str = "CREATE OR REPLACE PACKAGE PKG AS\n  PROCEDURE p;\nEND PKG;";
+const BODY: &str = "CREATE OR REPLACE PACKAGE BODY PKG AS\n  PROCEDURE p IS BEGIN NULL; END;\nEND PKG;";
+
+fn package_args() -> DdlSaveArgs {
+    DdlSaveArgs {
+        object_name: "PKG".to_string(),
+        object_type: PACKAGE_SPEC_AND_BODY.to_string(),
+        ddl: combine_package_spec_and_body(SPEC, BODY),
+        ..args()
+    }
+}
+
+#[test]
+fn combine_puts_a_slash_line_after_spec_and_body_without_doubling_terminators() {
+    let expected = format!("{SPEC}\n/\n\n{BODY}\n/\n");
+    assert_eq!(combine_package_spec_and_body(SPEC, BODY), expected);
+    // DBMS_METADATA output already ends with a `/` line.
+    let with_slashes = combine_package_spec_and_body(&format!("{SPEC}\n/\n"), &format!("{BODY}\n/"));
+    assert_eq!(with_slashes, expected);
+    // A `/` inside code (division) is not a terminator.
+    let division = "BEGIN x := a /\n b; END;";
+    assert!(combine_package_spec_and_body(SPEC, division).contains("a /\n b"));
+}
+
+#[test]
+fn has_package_spec_and_body_needs_both_statements() {
+    assert!(has_package_spec_and_body(&combine_package_spec_and_body(SPEC, BODY)));
+    assert!(has_package_spec_and_body(
+        "create package a is end;\n/\ncreate or replace editionable package body a is begin null; end;"
+    ));
+    assert!(!has_package_spec_and_body(SPEC));
+    assert!(!has_package_spec_and_body(BODY));
+    assert!(!has_package_spec_and_body("CREATE TABLE PACKAGE_X (ID NUMBER);"));
+}
+
+#[test]
+fn combined_type_follows_the_package_settings() {
+    assert!(is_package_spec_and_body(" package spec and body "));
+    assert!(!is_package_spec_and_body("PACKAGE BODY"));
+    assert_eq!(settings_object_type(PACKAGE_SPEC_AND_BODY), "PACKAGE");
+    assert_eq!(settings_object_type("PACKAGE BODY"), "PACKAGE BODY");
+    assert_eq!(settings_object_type("TABLE"), "TABLE");
+    assert_eq!(crate::services::settings::default_ddl_extension("PACKAGE"), "pck");
+}
+
+#[test]
+fn combined_package_is_saved_as_one_file_with_the_package_extension() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut save_options = options("both");
+    save_options.extension = "pck".to_string();
+
+    let result = save(temp_dir.path(), &package_args(), &save_options).unwrap();
+
+    let code_path = result.code_path.unwrap();
+    assert!(code_path.ends_with("PKG.pck"), "{code_path}");
+    assert_eq!(fs::read_to_string(&code_path).unwrap(), package_args().ddl);
+    let migration = fs::read_to_string(result.migration_path.unwrap()).unwrap();
+    assert_eq!(migration, package_args().ddl.trim());
+}
+
+#[test]
+fn combined_package_uses_the_package_overrides_of_the_schema() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let overrides = SchemaFolderOverrideService::new(Arc::new(TestOverrideRepository {
+        override_row: Some(SchemaFolderOverride {
+            id: 1,
+            schema_name: "APP".to_string(),
+            folder_path: String::new(),
+            encoding: String::new(),
+            extensions: r#"{"PACKAGE":"pks"}"#.to_string(),
+            storage_modes: r#"{"PACKAGE":"code"}"#.to_string(),
+            naming_convention: String::new(),
+            code_folder_name: String::new(),
+            migration_folder_name: String::new(),
+            migration_folder_mode: String::new(),
+            migration_version_label: String::new(),
+        }),
+    }));
+
+    let plan = plan_ddl_save(
+        &overrides,
+        &temp_dir.path().to_string_lossy(),
+        &package_args(),
+        &options("both"),
+    )
+    .unwrap();
+
+    assert_eq!(plan.files.len(), 1);
+    assert!(plan.files[0].path.ends_with("PKG.pks"));
+}
+
+#[test]
+fn combined_package_is_rejected_for_postgres() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut pg_args = package_args();
+    pg_args.db_type = "postgres".to_string();
+
+    let error = save(temp_dir.path(), &pg_args, &options("both")).unwrap_err();
+
+    assert!(error.contains("Oracle") && error.contains("PostgreSQL"), "{error}");
+    assert_eq!(fs::read_dir(temp_dir.path()).unwrap().count(), 0);
 }
 
 struct TestOverrideRepository {

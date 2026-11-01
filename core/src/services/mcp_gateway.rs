@@ -103,7 +103,8 @@ tool_args! {
     pub struct GetObjectDdlArgs {
         pub connection_id: i64,
         pub object_name: String,
-        /// e.g. TABLE, VIEW, PROCEDURE, FUNCTION, PACKAGE, PACKAGE BODY, TRIGGER, SEQUENCE, TYPE.
+        /// e.g. TABLE, VIEW, PROCEDURE, FUNCTION, PACKAGE (spec only), PACKAGE BODY (body only),
+        /// PACKAGE SPEC AND BODY (Oracle: spec then body, each ended by a `/` line), TRIGGER, SEQUENCE, TYPE.
         pub object_type: String,
     }
 }
@@ -131,6 +132,8 @@ tool_args! {
     pub struct SaveMigrationScriptArgs {
         pub connection_id: i64,
         pub object_name: String,
+        /// e.g. TABLE, VIEW, PACKAGE, PACKAGE BODY, or PACKAGE SPEC AND BODY (Oracle: one .pck file
+        /// holding both, so `ddl` must contain CREATE PACKAGE and CREATE PACKAGE BODY).
         pub object_type: String,
         /// The DDL to save.
         pub ddl: String,
@@ -302,6 +305,21 @@ fn valid_object_type(value: &str) -> bool {
     !trimmed.is_empty()
         && trimmed.len() <= 30
         && trimmed.chars().all(|c| c.is_ascii_alphabetic() || c == ' ')
+}
+
+const PACKAGE_COMBINED_ORACLE_ONLY: &str =
+    "PACKAGE SPEC AND BODY applies to Oracle packages only; PostgreSQL has no packages.";
+
+/// Hiding rules apply per type, so the combined package type is hidden when either half
+/// (or the combined type itself) is.
+fn object_hidden(policy: &McpPolicy, name: &str, object_type: &str) -> bool {
+    if ddl_save::is_package_spec_and_body(object_type) {
+        ["PACKAGE", "PACKAGE BODY", object_type]
+            .iter()
+            .any(|t| policy.object_denied(name, t))
+    } else {
+        policy.object_denied(name, object_type)
+    }
 }
 
 fn truncate_chars(text: &str, max: usize) -> String {
@@ -581,13 +599,46 @@ impl McpGateway {
                 if !valid_object_type(&object_type) {
                     return denied("object_type is not a recognised object type.");
                 }
-                if policy.object_denied(name, &object_type) {
+                if ddl_save::is_package_spec_and_body(&object_type) && conn.db_type != DbType::Oracle {
+                    return denied(PACKAGE_COMBINED_ORACLE_ONLY);
+                }
+                if object_hidden(&policy, name, &object_type) {
                     return denied(format!("DDL for {object_type} {name} is hidden by policy."));
                 }
 
-                let ddl = self.diff_svc.fetch_object_ddl(&conn, name, &object_type)?;
+                let (ddl, includes): (String, &[&str]) = match object_type.as_str() {
+                    ddl_save::PACKAGE_SPEC_AND_BODY => {
+                        let spec = self.diff_svc.fetch_object_ddl(&conn, name, "PACKAGE")?;
+                        let body = self
+                            .diff_svc
+                            .fetch_object_ddl(&conn, name, "PACKAGE BODY")
+                            .map_err(|e| {
+                                ToolError::Failed(format!(
+                                    "Could not read the body of package {name}: {e}. \
+                                     If it has no body, request object_type PACKAGE."
+                                ))
+                            })?;
+                        (
+                            ddl_save::combine_package_spec_and_body(&spec, &body),
+                            &["spec", "body"],
+                        )
+                    }
+                    other => {
+                        let ddl = self.diff_svc.fetch_object_ddl(&conn, name, other)?;
+                        let includes: &[&str] = match other {
+                            "PACKAGE" => &["spec"],
+                            "PACKAGE BODY" => &["body"],
+                            _ => &[],
+                        };
+                        (ddl, includes)
+                    }
+                };
                 ctx.row_count = Some(1);
-                Ok(json!({ "object_name": name, "object_type": object_type, "ddl": ddl }))
+                let mut result = json!({ "object_name": name, "object_type": object_type, "ddl": ddl });
+                if !includes.is_empty() {
+                    result["includes"] = json!(includes);
+                }
+                Ok(result)
             },
         )
     }
@@ -735,8 +786,18 @@ impl McpGateway {
                 if args.ddl.trim().is_empty() || args.ddl.len() > MAX_DDL_BYTES || args.ddl.contains('\0') {
                     return denied("ddl must be non-empty text of at most 1 MB.");
                 }
-                if policy.object_denied(object_name, &object_type) {
+                if object_hidden(&policy, object_name, &object_type) {
                     return denied(format!("{object_type} {object_name} is hidden by policy."));
+                }
+                if ddl_save::is_package_spec_and_body(&object_type) {
+                    if conn.db_type != DbType::Oracle {
+                        return denied(PACKAGE_COMBINED_ORACLE_ONLY);
+                    }
+                    if !ddl_save::has_package_spec_and_body(&args.ddl) {
+                        return denied(
+                            "ddl for PACKAGE SPEC AND BODY must contain both a CREATE PACKAGE and a CREATE PACKAGE BODY statement.",
+                        );
+                    }
                 }
 
                 let schema_root = self.settings.schema_root().map_err(ToolError::Failed)?;

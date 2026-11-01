@@ -641,6 +641,174 @@ fn get_object_errors_refuses_hidden_and_malformed_requests_without_touching_the_
     assert_audit(&h, 3, McpOutcome::Denied);
 }
 
+// ΓöÇΓöÇ package spec / body ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+const PKG_SPEC: &str = "CREATE OR REPLACE PACKAGE ORDER_API AS\n  PROCEDURE run;\nEND ORDER_API;\n/";
+const PKG_BODY: &str =
+    "CREATE OR REPLACE PACKAGE BODY ORDER_API AS\n  PROCEDURE run IS BEGIN NULL; END;\nEND ORDER_API;\n/";
+
+fn package_harness() -> Harness {
+    let h = oracle();
+    h.set_policy(enabled_policy(1));
+    let mut ddls = h.db.ddls.lock().unwrap();
+    ddls.insert("PACKAGE:ORDER_API".into(), PKG_SPEC.into());
+    ddls.insert("PACKAGE BODY:ORDER_API".into(), PKG_BODY.into());
+    drop(ddls);
+    h
+}
+
+fn ddl_args(ty: &str) -> GetObjectDdlArgs {
+    GetObjectDdlArgs {
+        connection_id: 1,
+        object_name: "order_api".into(),
+        object_type: ty.into(),
+    }
+}
+
+#[test]
+fn package_types_state_which_parts_they_include() {
+    let h = package_harness();
+
+    let spec = h.gateway.get_object_ddl(CLIENT, ddl_args("package")).unwrap();
+    assert_eq!(spec["includes"], json!(["spec"]));
+    assert_eq!(spec["ddl"], PKG_SPEC);
+
+    let body = h
+        .gateway
+        .get_object_ddl(CLIENT, ddl_args("PACKAGE BODY"))
+        .unwrap();
+    assert_eq!(body["includes"], json!(["body"]));
+    assert_eq!(body["ddl"], PKG_BODY);
+
+    h.db.ddls
+        .lock()
+        .unwrap()
+        .insert("TABLE:ORDERS".into(), "CREATE TABLE ORDERS (ID NUMBER);".into());
+    let table = h
+        .gateway
+        .get_object_ddl(CLIENT, GetObjectDdlArgs { object_name: "ORDERS".into(), ..ddl_args("TABLE") })
+        .unwrap();
+    assert!(table.get("includes").is_none());
+}
+
+#[test]
+fn combined_package_type_returns_spec_then_body_separated_by_a_slash_line() {
+    let h = package_harness();
+    let out = h
+        .gateway
+        .get_object_ddl(CLIENT, ddl_args("package spec and body"))
+        .unwrap();
+
+    assert_eq!(out["object_type"], "PACKAGE SPEC AND BODY");
+    assert_eq!(out["includes"], json!(["spec", "body"]));
+    let ddl = out["ddl"].as_str().unwrap();
+    assert_eq!(
+        ddl,
+        format!(
+            "{}\n/\n\n{}\n/\n",
+            PKG_SPEC.trim_end_matches('/').trim_end(),
+            PKG_BODY.trim_end_matches('/').trim_end()
+        )
+    );
+    assert!(ddl.find("PACKAGE ORDER_API").unwrap() < ddl.find("PACKAGE BODY ORDER_API").unwrap());
+    assert!(crate::services::ddl_save::has_package_spec_and_body(ddl));
+}
+
+#[test]
+fn combined_package_type_explains_a_missing_body() {
+    let h = package_harness();
+    h.db.ddls.lock().unwrap().remove("PACKAGE BODY:ORDER_API");
+    let message = failed_message(
+        h.gateway
+            .get_object_ddl(CLIENT, ddl_args("PACKAGE SPEC AND BODY")),
+    );
+    assert!(message.contains("no body"), "{message}");
+    assert_audit(&h, 1, McpOutcome::Error);
+}
+
+#[test]
+fn combined_package_type_is_rejected_for_postgres() {
+    let h = postgres();
+    h.set_policy(McpPolicy {
+        allow_save_scripts: true,
+        ..enabled_policy(1)
+    });
+    let root = tempfile::tempdir().unwrap();
+    *h.settings.schema_root.lock().unwrap() = Some(root.path().to_string_lossy().into_owned());
+
+    let read = denied_message(
+        h.gateway
+            .get_object_ddl(CLIENT, ddl_args("PACKAGE SPEC AND BODY")),
+    );
+    assert!(read.contains("Oracle") && read.contains("PostgreSQL"), "{read}");
+    let mut save = save_args("ORDER_API", "pkg");
+    save.object_type = "PACKAGE SPEC AND BODY".into();
+    save.ddl = format!("{PKG_SPEC}\n{PKG_BODY}");
+    let saved = denied_message(h.gateway.save_migration_script(CLIENT, save));
+    assert!(saved.contains("Oracle"), "{saved}");
+    assert_eq!(h.db_calls(), 0);
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn hiding_either_package_half_hides_the_combined_type() {
+    for hidden_type in ["PACKAGE", "PACKAGE BODY", "PACKAGE SPEC AND BODY"] {
+        let h = package_harness();
+        h.set_policy(McpPolicy {
+            object_deny: vec![McpObjectDenyRule {
+                object_type: hidden_type.into(),
+                name: "ORDER_API".into(),
+            }],
+            ..enabled_policy(1)
+        });
+        let message = denied_message(
+            h.gateway
+                .get_object_ddl(CLIENT, ddl_args("PACKAGE SPEC AND BODY")),
+        );
+        assert!(message.contains("hidden"), "{hidden_type}: {message}");
+        assert_eq!(h.db_calls(), 0);
+    }
+}
+
+#[test]
+fn saving_the_combined_package_type_writes_one_pck_file() {
+    let (h, root) = save_harness();
+    let mut args = save_args("ORDER_API", "pkg");
+    args.object_type = "package spec and body".into();
+    args.ddl = crate::services::ddl_save::combine_package_spec_and_body(PKG_SPEC, PKG_BODY);
+    args.dry_run = true;
+    let out = h.gateway.save_migration_script(CLIENT, args.clone()).unwrap();
+    let code = out["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["kind"] == "code")
+        .unwrap();
+    assert_eq!(code["content"], args.ddl);
+    assert!(code["path"].as_str().unwrap().ends_with("ORDER_API.sql"));
+
+    args.dry_run = false;
+    h.gateway.save_migration_script(CLIENT, args.clone()).unwrap();
+    let saved = std::fs::read_to_string(
+        root.path().join("app").join("code").join("app").join("ORDER_API.sql"),
+    )
+    .unwrap();
+    assert_eq!(saved, args.ddl);
+}
+
+#[test]
+fn saving_the_combined_package_type_requires_spec_and_body() {
+    let (h, root) = save_harness();
+    for ddl in [PKG_SPEC, PKG_BODY, "CREATE TABLE ORDERS (ID NUMBER);"] {
+        let mut args = save_args("ORDER_API", "pkg");
+        args.object_type = "PACKAGE SPEC AND BODY".into();
+        args.ddl = ddl.into();
+        let message = denied_message(h.gateway.save_migration_script(CLIENT, args));
+        assert!(message.contains("CREATE PACKAGE BODY"), "{message}");
+    }
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
 // ── query_table ─────────────────────────────────────────────────────────────────
 
 #[test]

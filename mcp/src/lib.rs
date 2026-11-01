@@ -144,7 +144,9 @@ impl SchemetryMcp {
         run_blocking(move || gateway.list_schema_objects(&client, args)).await
     }
 
-    #[tool(description = "Read the DDL of one schema object (no table data).")]
+    #[tool(
+        description = "Read the DDL of one schema object (no table data). For packages the type matters: PACKAGE returns the specification only, PACKAGE BODY the body only, and on Oracle PACKAGE SPEC AND BODY returns both as one script (spec, a `/` line, body, a `/` line). The response's `includes` lists which parts are present."
+    )]
     async fn get_object_ddl(
         &self,
         Parameters(args): Parameters<GetObjectDdlArgs>,
@@ -179,7 +181,7 @@ impl SchemetryMcp {
     }
 
     #[tool(
-        description = "Save DDL as code and/or migration files in the schema's configured folder, using the app's naming and folder rules. Use dry_run to preview paths and content first."
+        description = "Save DDL as code and/or migration files in the schema's configured folder, using the app's naming and folder rules. Use dry_run to preview paths and content first. To keep an Oracle package's spec and body in one .pck file, use object_type PACKAGE SPEC AND BODY with ddl holding CREATE PACKAGE, a `/` line, then CREATE PACKAGE BODY (the output of get_object_ddl for that type); PACKAGE and PACKAGE BODY save each part on its own."
     )]
     async fn save_migration_script(
         &self,

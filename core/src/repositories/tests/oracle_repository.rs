@@ -418,3 +418,25 @@ fn clean_sequence_ddl_collapses_extra_spaces() {
     let result = clean_sequence_ddl(ddl, "MY_SEQ");
     assert!(!result.contains("  "), "double space found in: {result}");
 }
+
+// -- metadata_object_type -----------------------------------------
+
+#[test]
+fn metadata_object_type_keeps_package_spec_and_body_separate() {
+    // DBMS_METADATA's own PACKAGE type returns spec *and* body.
+    assert_eq!(metadata_object_type("PACKAGE"), "PACKAGE_SPEC");
+    assert_eq!(metadata_object_type("PACKAGE BODY"), "PACKAGE_BODY");
+    assert_eq!(metadata_object_type("TYPE BODY"), "TYPE_BODY");
+    assert_eq!(metadata_object_type("MATERIALIZED VIEW"), "MATERIALIZED_VIEW");
+    assert_eq!(metadata_object_type("JOB"), "PROCOBJ");
+    assert_eq!(metadata_object_type("VIEW"), "VIEW");
+}
+
+#[test]
+fn build_deploy_script_keeps_a_combined_package_script_unchanged() {
+    let script = "CREATE OR REPLACE PACKAGE P AS\nEND P;\n/\n\nCREATE OR REPLACE PACKAGE BODY P AS\nEND P;\n/\n";
+    assert_eq!(
+        build_deploy_script("PACKAGE SPEC AND BODY", "P", script),
+        script.trim()
+    );
+}

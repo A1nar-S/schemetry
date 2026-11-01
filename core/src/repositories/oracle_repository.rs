@@ -613,14 +613,7 @@ impl DbRepository for DbOracleRepository {
 
         let _ = db.execute(DDL_TRANSFORM_SQL, &[]);
 
-        // DBMS_METADATA uses underscored names for some types
-        let metadata_type = match upper_type.as_str() {
-            "PACKAGE BODY" => "PACKAGE_BODY",
-            "TYPE BODY" => "TYPE_BODY",
-            "MATERIALIZED VIEW" => "MATERIALIZED_VIEW",
-            "JOB" => "PROCOBJ",
-            other => other,
-        };
+        let metadata_type = metadata_object_type(&upper_type);
 
         let mut rows = db
             .query(
@@ -1558,6 +1551,20 @@ fn indent_lines(s: &str, spaces: usize) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The DBMS_METADATA object type for a schema object type. Names differ for some types,
+/// and `PACKAGE` must map to `PACKAGE_SPEC`: DBMS_METADATA's own `PACKAGE` type returns the
+/// spec *and* body, which would make PACKAGE and PACKAGE BODY overlap.
+fn metadata_object_type(object_type: &str) -> &str {
+    match object_type {
+        "PACKAGE" => "PACKAGE_SPEC",
+        "PACKAGE BODY" => "PACKAGE_BODY",
+        "TYPE BODY" => "TYPE_BODY",
+        "MATERIALIZED VIEW" => "MATERIALIZED_VIEW",
+        "JOB" => "PROCOBJ",
+        other => other,
+    }
 }
 
 /// Produce the raw DDL shown in the preview and written to the code file. Code objects are
