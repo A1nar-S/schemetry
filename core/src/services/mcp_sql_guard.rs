@@ -155,11 +155,27 @@ const POSTGRES_FUNCTIONS: &[&str] = &[
 #[rustfmt::skip]
 const NON_FUNCTION_KEYWORDS: &[&str] = &[
     "IN", "AND", "OR", "NOT", "EXISTS", "ON", "WHERE", "SELECT", "FROM", "AS", "WHEN", "THEN",
-    "ELSE", "CASE", "VALUES", "OVER", "BY", "UNION", "INTERSECT", "EXCEPT", "MINUS", "ALL", "ANY",
-    "SOME", "DISTINCT", "USING", "BETWEEN", "LIKE", "ILIKE", "IS", "JOIN", "WITH", "HAVING", "TO",
-    "OF", "FILTER", "GROUP", "SETS", "LIMIT", "OFFSET", "ROWS", "RANGE", "GROUPS", "ESCAPE",
-    "PRIOR", "START", "CONNECT", "ARRAY", "ROW", "KEEP", "RECURSIVE", "MATERIALIZED", "LATERAL",
+    "ELSE", "CASE", "VALUES", "UNION", "INTERSECT", "EXCEPT", "MINUS", "ALL", "ANY",
+    "SOME", "DISTINCT", "USING", "BETWEEN", "IS", "JOIN", "WITH", "HAVING", "GROUP",
+    "ARRAY", "ROW",
 ];
+
+/// Whether the word at `i` is a keyword rather than a call. Words that are not reserved in
+/// both engines (`FILTER`, `OVER`, `KEEP`, `BY`, …) only count in the position where the
+/// syntax uses them, so a user function of that name is still checked.
+fn is_keyword_before_paren(tokens: &[Token], i: usize, word: &str, db_type: DbType) -> bool {
+    let prev = i.checked_sub(1).and_then(|p| tokens.get(p));
+    match word.to_ascii_uppercase().as_str() {
+        // Reserved in Postgres only; an Oracle function may carry these names.
+        "LIMIT" | "OFFSET" => db_type == DbType::Postgres,
+        "OVER" | "FILTER" | "KEEP" => matches!(prev, Some(Token::Symbol(')'))),
+        "SETS" => word_is(prev, "GROUPING"),
+        "BY" => word_in(prev, &["ORDER", "GROUP", "PARTITION", "SIBLINGS"]),
+        "PRIOR" => word_is(prev, "BY"),
+        "MATERIALIZED" => word_in(prev, &["AS", "NOT"]),
+        upper => NON_FUNCTION_KEYWORDS.contains(&upper),
+    }
+}
 
 /// Keywords that end an alias position when scanning FROM lists.
 const CLAUSE_ENDERS: &[&str] = &[
@@ -218,7 +234,8 @@ fn tokenize(sql: &str, db_type: DbType) -> Result<Vec<Token>, String> {
         if c.is_whitespace() {
             i += 1;
         } else if c == '-' && chars.get(i + 1) == Some(&'-') {
-            while i < chars.len() && chars[i] != '\n' {
+            // Postgres also ends a line comment at a lone `\r`; ending early only exposes more tokens.
+            while i < chars.len() && chars[i] != '\n' && chars[i] != '\r' {
                 i += 1;
             }
         } else if c == '/' && chars.get(i + 1) == Some(&'*') {
@@ -305,8 +322,36 @@ fn tokenize(sql: &str, db_type: DbType) -> Result<Vec<Token>, String> {
             }
             tokens.push(Token::Word(word));
         } else if c.is_ascii_digit() {
-            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '.') {
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
                 i += 1;
+            }
+            if matches!(chars.get(i), Some('e' | 'E')) {
+                let mut j = i + 1;
+                if matches!(chars.get(j), Some('+' | '-')) {
+                    j += 1;
+                }
+                if chars.get(j).is_some_and(|ch| ch.is_ascii_digit()) {
+                    i = j;
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                }
+            }
+            // Oracle's f/d suffixes (1.5f); anything else glued to a number could swallow
+            // a keyword (`2FROM secret`) so it is refused.
+            if db_type == DbType::Oracle
+                && matches!(chars.get(i), Some('f' | 'F' | 'd' | 'D'))
+                && !chars
+                    .get(i + 1)
+                    .is_some_and(|ch| ch.is_alphanumeric() || *ch == '_')
+            {
+                i += 1;
+            }
+            if chars
+                .get(i)
+                .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$' | '#'))
+            {
+                return Err("A number may not be directly followed by letters.".to_string());
             }
             tokens.push(Token::Number);
         } else if c == '$' {
@@ -486,9 +531,7 @@ fn check_function_calls(
 
         if start == i {
             if let Token::Word(w) = token
-                && NON_FUNCTION_KEYWORDS
-                    .iter()
-                    .any(|k| w.eq_ignore_ascii_case(k))
+                && is_keyword_before_paren(tokens, i, w, db_type)
             {
                 continue;
             }
@@ -517,8 +560,37 @@ fn check_function_calls(
 /// expressions. A `WITH` nested inside a subquery is not recognised on purpose: its names
 /// are only in scope there, so treating them as global could hide a real table of the
 /// same name elsewhere. (Its inner references then fail the allowlist, which is safe.)
-fn cte_names(tokens: &[Token], cte_headers: &[usize], db_type: DbType) -> Vec<String> {
-    let mut names = Vec::new();
+///
+/// Only the leading WITH clause counts (a `WINDOW secret AS (…)` is not a CTE). A CTE name
+/// is in scope for later CTEs and the main query only: a body that mentions its own name
+/// or a later CTE's would read the real table of that name (or, in Oracle, a recursive
+/// reference), so it is refused rather than letting the name hide the table.
+fn cte_names(
+    tokens: &[Token],
+    cte_headers: &[usize],
+    db_type: DbType,
+) -> Result<Vec<String>, String> {
+    let close_of = |open: usize| -> Option<usize> {
+        if !matches!(tokens.get(open), Some(Token::Symbol('('))) {
+            return None;
+        }
+        let mut depth = 0usize;
+        for (k, t) in tokens.iter().enumerate().skip(open) {
+            match t {
+                Token::Symbol('(') => depth += 1,
+                Token::Symbol(')') => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(k);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    };
+
+    let mut defs: Vec<(String, usize, usize, bool)> = Vec::new();
     let mut depth = 0usize;
     for (i, token) in tokens.iter().enumerate() {
         match token {
@@ -526,16 +598,63 @@ fn cte_names(tokens: &[Token], cte_headers: &[usize], db_type: DbType) -> Vec<St
             Token::Symbol(')') => depth = depth.saturating_sub(1),
             _ => {}
         }
-        if depth == 0
-            && (cte_headers.contains(&i)
+        if depth == 0 && word_is(Some(token), "SELECT") {
+            break;
+        }
+        let is_header = cte_headers.contains(&i);
+        if depth != 0
+            || !(is_header
                 || (word_is(tokens.get(i + 1), "AS")
                     && matches!(tokens.get(i + 2), Some(Token::Symbol('(')))))
-            && let Some(name) = name_of(token, db_type)
         {
-            names.push(name);
+            continue;
+        }
+        let Some(name) = name_of(token, db_type) else {
+            continue;
+        };
+        let after_columns = if is_header {
+            close_of(i + 1).map(|c| c + 1)
+        } else {
+            Some(i + 1)
+        };
+        let open = after_columns.map(|a| a + 1);
+        let Some((open, close)) = open.and_then(|o| close_of(o).map(|c| (o, c))) else {
+            return Err("Could not understand a WITH clause.".to_string());
+        };
+        defs.push((name, open + 1, close, is_header));
+    }
+
+    // `WITH RECURSIVE` puts every CTE in scope everywhere (Postgres).
+    if db_type == DbType::Postgres && word_is(tokens.get(1), "RECURSIVE") {
+        return Ok(defs.into_iter().map(|(name, ..)| name).collect());
+    }
+
+    for (k, (name, from, to, is_header)) in defs.iter().enumerate() {
+        let body = &tokens[*from..*to];
+        // Oracle recursion needs a column list and a UNION ALL, so only then is a
+        // self-reference the CTE itself rather than the table of that name.
+        let recursive_oracle = db_type == DbType::Oracle
+            && *is_header
+            && body.iter().any(|t| word_is(Some(t), "UNION"));
+        let first = if recursive_oracle { k + 1 } else { k };
+        for token in body {
+            let Some(used) = name_of(token, db_type) else {
+                continue;
+            };
+            let same_as_self = recursive_oracle && used.eq_ignore_ascii_case(name);
+            if !same_as_self
+                && defs[first..]
+                    .iter()
+                    .any(|(later, ..)| later.eq_ignore_ascii_case(&used))
+            {
+                return Err(format!(
+                    "The WITH query {name} refers to {used}, which is not allowed \
+                     (self-referencing and forward references are not supported)."
+                ));
+            }
         }
     }
-    names
+    Ok(defs.into_iter().map(|(name, ..)| name).collect())
 }
 
 /// Validates `raw` as a single read-only SELECT and lists the tables it reads.
@@ -592,7 +711,7 @@ pub fn analyze(raw: &str, db_type: DbType) -> Result<AnalyzedSql, String> {
     let cte_headers = cte_column_list_headers(body);
     check_function_calls(body, &cte_headers, db_type)?;
 
-    let ctes = cte_names(body, &cte_headers, db_type);
+    let ctes = cte_names(body, &cte_headers, db_type)?;
     let tables = extract_tables(body, &ctes, db_type)?;
 
     // The text is run as given minus the trailing semicolon, so what was analysed is

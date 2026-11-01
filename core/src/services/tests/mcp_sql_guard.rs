@@ -558,3 +558,58 @@ fn the_oracle_package_families_are_blocked_even_without_parentheses() {
         rejected(sql, ORA);
     }
 }
+
+#[test]
+fn a_number_cannot_swallow_the_keyword_after_it() {
+    for db in [ORA, PG] {
+        rejected("SELECT 2FROM secret", db);
+        rejected("SELECT 1.FROM secret", db);
+        rejected("SELECT 1e5FROM secret", db);
+    }
+    assert_eq!(tables("SELECT 1e5, 2.5E-3, 7 FROM t", PG), ["t"]);
+    assert_eq!(tables("SELECT 1.5f, 2d FROM t", ORA), ["T"]);
+}
+
+#[test]
+fn a_lone_carriage_return_ends_a_line_comment() {
+    for db in [ORA, PG] {
+        rejected("SELECT 1 FROM t -- x\r; DROP TABLE t", db);
+    }
+}
+
+#[test]
+fn a_cte_cannot_hide_the_real_table_it_reads() {
+    for db in [ORA, PG] {
+        rejected(
+            "WITH secret AS (SELECT * FROM secret) SELECT * FROM secret",
+            db,
+        );
+        rejected(
+            "WITH a AS (SELECT * FROM b), b AS (SELECT 1 AS x FROM dual) SELECT * FROM a",
+            db,
+        );
+        rejected("WITH a(x) AS (SELECT x FROM a) SELECT * FROM a", db);
+    }
+    assert_eq!(
+        tables(
+            "WITH a AS (SELECT * FROM t), b AS (SELECT * FROM a) SELECT * FROM b",
+            PG
+        ),
+        ["t"]
+    );
+}
+
+#[test]
+fn a_window_name_does_not_hide_a_table() {
+    let sql = "SELECT count(*) OVER secret FROM secret WINDOW secret AS ()";
+    assert_eq!(tables(sql, PG), ["secret"]);
+}
+
+#[test]
+fn user_functions_named_like_soft_keywords_are_checked() {
+    rejected("SELECT filter('x') FROM t", PG);
+    rejected("SELECT range('x') FROM t", PG);
+    rejected("SELECT start('x') FROM t", ORA);
+    ok("SELECT count(*) FILTER (WHERE x > 1) FROM t", PG);
+    ok("SELECT SUM(x) OVER (PARTITION BY y ORDER BY z) FROM t", ORA);
+}
