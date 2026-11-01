@@ -69,11 +69,27 @@ impl QueryService {
         for conn in connections.iter().cloned() {
             let repo = Arc::clone(&self.repo);
             let script = script.to_string();
-            handles.push(cancel::spawn(move || {
-                run_script(repo.as_ref(), &conn, &script)
-            }));
+            let (id, name) = (conn.id, conn.name.clone());
+            handles.push((
+                id,
+                name,
+                cancel::spawn(move || run_script(repo.as_ref(), &conn, &script)),
+            ));
         }
-        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+        handles
+            .into_iter()
+            .map(|(id, name, handle)| {
+                handle.join().unwrap_or_else(|_| ScriptServerResult {
+                    server_id: id,
+                    server_name: name,
+                    statement_count: 0,
+                    executed: 0,
+                    error: Some("The script worker stopped unexpectedly.".to_string()),
+                    compile_errors: Vec::new(),
+                    duration_ms: 0,
+                })
+            })
+            .collect()
     }
 
     pub fn run_query_on_servers(
@@ -214,6 +230,26 @@ fn run_script(
     };
 
     if conn.db_type == DbType::Postgres {
+        // The script is one transaction; its own transaction control would break that.
+        if let Some(bad) = statements.iter().position(|s| {
+            let first = s
+                .sql
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_ascii_uppercase();
+            matches!(
+                first.as_str(),
+                "BEGIN" | "COMMIT" | "ROLLBACK" | "START" | "END" | "SAVEPOINT" | "ABORT"
+            )
+        }) {
+            result.error = Some(format!(
+                "Statement {}: transaction control is not allowed; the script already runs in one transaction.",
+                bad + 1
+            ));
+            result.duration_ms = started.elapsed().as_millis() as u64;
+            return result;
+        }
         let request = ApplyDdlRequest {
             object_name: String::new(),
             statements: statements.iter().map(to_ddl).collect(),

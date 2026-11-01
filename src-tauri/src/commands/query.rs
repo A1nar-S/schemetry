@@ -45,6 +45,9 @@ pub async fn apply_script(
     server_ids: Vec<i64>,
 ) -> Result<Vec<ScriptServerResult>, String> {
     let selected = super::selected_connections(&state.catalog, &server_ids)?;
+    if server_ids.is_empty() {
+        return Err("Select at least one server.".to_string());
+    }
     if sql.trim().is_empty() {
         return Err("The script cannot be empty.".to_string());
     }

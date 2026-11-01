@@ -20,6 +20,8 @@
 
   $: groups = buildGroups(connections);
   $: selectedConns = connections.filter(c => $selected.has(c.id));
+  // Drop ids of connections that no longer exist so counts and the confirm dialog agree.
+  $: if ($selected.size !== selectedConns.length) selected.set(new Set(selectedConns.map(c => c.id)));
   $: dialect = selectedConns[0]?.db_type ?? 'oracle';
   $: mixedEngines = new Set(selectedConns.map(c => c.db_type)).size > 1;
   $: lineCount = $script.trim() ? $script.trim().split('\n').length : 0;
@@ -111,9 +113,10 @@
   <div style="display:flex;flex-direction:column;overflow:hidden;flex:1;">
     <div style="padding:10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;flex-shrink:0;">
       <div class="hint" style="margin:0;">
-        Runs the script on each selected server with that connection's own account. Oracle commits every
-        statement as it runs; PostgreSQL applies the whole script in one transaction. PL/SQL units end with a
-        line holding only <code>/</code>.
+        Runs the script on each selected server with that connection's own account. Oracle runs each
+        statement in its own session and commits it (so <code>COMMIT</code> and <code>ALTER SESSION</code> do not carry
+        over); PostgreSQL applies the whole script in one transaction. PL/SQL units end with a line holding only
+        <code>/</code>.
       </div>
       <SqlEditor bind:value={$script} {dialect} height="240px" />
       <div class="row">

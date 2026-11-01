@@ -80,7 +80,13 @@ pub fn split_script(script: &str, db_type: DbType) -> Vec<ScriptStatement> {
 
         if c == '\'' || c == '"' {
             has_code = true;
-            let end = skip_quoted(&chars, i, c);
+            // Postgres E'..' strings also escape a quote with a backslash.
+            let backslash = !oracle
+                && c == '\''
+                && i > 0
+                && matches!(chars[i - 1], 'e' | 'E')
+                && !(i > 1 && prev_is_word_char(&chars, i - 1));
+            let end = skip_quoted(&chars, i, c, backslash);
             buf.extend(&chars[i..end]);
             i = end;
             continue;
@@ -99,7 +105,7 @@ pub fn split_script(script: &str, db_type: DbType) -> Vec<ScriptStatement> {
             continue;
         }
         // Postgres dollar quoting.
-        if !oracle && c == '$' {
+        if !oracle && c == '$' && !prev_is_word_char(&chars, i) {
             if let Some(tag_end) = dollar_tag_end(&chars, i) {
                 has_code = true;
                 let end = skip_dollar_quoted(&chars, i, tag_end);
@@ -109,7 +115,7 @@ pub fn split_script(script: &str, db_type: DbType) -> Vec<ScriptStatement> {
             }
         }
 
-        if c == ';' && !(oracle && is_plsql_unit(&buf)) {
+        if c == ';' && !(oracle && is_plsql_unit(&buf)) && !(!oracle && in_atomic_body(&buf)) {
             flush(&mut buf, &mut has_code, &mut out);
             i += 1;
             continue;
@@ -137,9 +143,13 @@ fn prev_is_word_char(chars: &[char], i: usize) -> bool {
     i > 0 && (chars[i - 1].is_alphanumeric() || matches!(chars[i - 1], '_' | '$' | '#'))
 }
 
-fn skip_quoted(chars: &[char], start: usize, quote: char) -> usize {
+fn skip_quoted(chars: &[char], start: usize, quote: char, backslash: bool) -> usize {
     let mut i = start + 1;
     while i < chars.len() {
+        if backslash && chars[i] == '\\' {
+            i += 2;
+            continue;
+        }
         if chars[i] == quote {
             if chars.get(i + 1) == Some(&quote) {
                 i += 2;
@@ -233,17 +243,49 @@ fn leading_words(sql: &str, max: usize) -> Vec<String> {
     words
 }
 
+/// Inside a Postgres `BEGIN ATOMIC … END` body, whose inner `;` do not end the statement.
+fn in_atomic_body(sql: &str) -> bool {
+    let words: Vec<String> = leading_words(sql, 4000)
+        .iter()
+        .map(|w| w.to_ascii_uppercase())
+        .collect();
+    let Some(at) = words
+        .windows(2)
+        .position(|w| w[0] == "BEGIN" && w[1] == "ATOMIC")
+    else {
+        return false;
+    };
+    !words[at + 2..].iter().any(|w| w == "END")
+}
+
 fn is_plsql_unit(sql: &str) -> bool {
-    let words = leading_words(sql, 8);
+    let words = leading_words(sql, 12);
     let upper: Vec<String> = words.iter().map(|w| w.to_ascii_uppercase()).collect();
     match upper.first().map(String::as_str) {
         Some("BEGIN" | "DECLARE") => true,
-        Some("CREATE") => upper.iter().skip(1).any(|w| {
-            matches!(
-                w.as_str(),
-                "PACKAGE" | "PROCEDURE" | "FUNCTION" | "TRIGGER" | "TYPE"
-            )
-        }),
+        // The object kind is the first word after CREATE and its modifiers; a column
+        // named `type` further on must not count.
+        Some("CREATE") => upper
+            .iter()
+            .skip(1)
+            .find(|w| {
+                !matches!(
+                    w.as_str(),
+                    "OR" | "REPLACE"
+                        | "EDITIONABLE"
+                        | "NONEDITIONABLE"
+                        | "FORCE"
+                        | "NOFORCE"
+                        | "EDITIONING"
+                        | "NO"
+                )
+            })
+            .is_some_and(|kind| {
+                matches!(
+                    kind.as_str(),
+                    "PACKAGE" | "PROCEDURE" | "FUNCTION" | "TRIGGER" | "TYPE"
+                )
+            }),
         _ => false,
     }
 }

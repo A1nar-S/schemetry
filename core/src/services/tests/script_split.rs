@@ -53,3 +53,29 @@ fn empty_and_comment_only_scripts_have_no_statements() {
     assert!(split_script("  \n-- nothing\n/* x */ ;\n", DbType::Postgres).is_empty());
     assert!(split_script("", DbType::Oracle).is_empty());
 }
+
+#[test]
+fn a_column_named_type_does_not_make_a_table_a_plsql_unit() {
+    let script = "CREATE TABLE t (id NUMBER, type VARCHAR2(10));\nCREATE TABLE u (a NUMBER);";
+    assert_eq!(split_script(script, DbType::Oracle).len(), 2);
+    assert_eq!(
+        split_script(
+            "CREATE INDEX i ON t(type);\nSELECT 1 FROM dual;",
+            DbType::Oracle
+        )
+        .len(),
+        2
+    );
+}
+
+#[test]
+fn postgres_escape_strings_dollar_identifiers_and_atomic_bodies() {
+    let e = "SELECT E'it\\'s;a'; SELECT 2;";
+    assert_eq!(split_script(e, DbType::Postgres).len(), 2);
+    assert_eq!(
+        split_script("SELECT a$b$ FROM t; SELECT 2;", DbType::Postgres).len(),
+        2
+    );
+    let atomic = "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; SELECT 2; END; SELECT 3;";
+    assert_eq!(split_script(atomic, DbType::Postgres).len(), 2);
+}

@@ -1216,12 +1216,17 @@ impl DbRepository for DbPostgresRepository {
                 .batch_execute("BEGIN")
                 .await
                 .map_err(|e| describe_pg_error(e, timeout_secs))?;
-            for statement in &request.statements {
+            for (index, statement) in request.statements.iter().enumerate() {
                 // The extended protocol takes exactly one statement, so even a lexing
                 // difference between the guard and Postgres can't smuggle a second one in.
                 if let Err(e) = client.execute(statement.sql.as_str(), &[]).await {
                     let _ = client.batch_execute("ROLLBACK").await;
-                    return Err(describe_pg_error(e, timeout_secs));
+                    let message = describe_pg_error(e, timeout_secs);
+                    return Err(if request.statements.len() > 1 {
+                        anyhow!("Statement {}: {message}", index + 1)
+                    } else {
+                        message
+                    });
                 }
             }
             client

@@ -502,18 +502,26 @@ impl DbRepository for DbOracleRepository {
         let result = (|| -> Result<ApplyDdlResult> {
             for statement in &request.statements {
                 match db.execute(&statement.sql, &[]) {
-                    Ok(_) => {}
+                    // DDL commits itself; this keeps any DML a script carries.
+                    Ok(_) => db.commit().map_err(|e| anyhow!(e.to_string()))?,
                     // The unit was created but does not compile; ALL_ERRORS tells why.
                     Err(e) if e.to_string().contains("ORA-24344") => {}
                     Err(e) => return Err(anyhow!(e.to_string())),
                 }
             }
             let owner = conn.username.to_ascii_uppercase();
+            // One statement names its object type, so a spec's errors don't show up again
+            // for its body; several statements (spec + body) are read together.
+            let type_filter = match request.statements.as_slice() {
+                [only] if !only.object_type.is_empty() => Some(only.object_type.clone()),
+                _ => None,
+            };
             let rows = db
                 .query(
                     "SELECT TYPE, ATTRIBUTE, LINE, POSITION, TEXT FROM ALL_ERRORS \
-                     WHERE OWNER = :1 AND NAME = :2 ORDER BY TYPE, SEQUENCE",
-                    &[&owner, &request.object_name],
+                     WHERE OWNER = :1 AND NAME = :2 AND (:3 IS NULL OR TYPE = :3) \
+                     ORDER BY TYPE, SEQUENCE",
+                    &[&owner, &request.object_name, &type_filter],
                 )
                 .map_err(|e| anyhow!(e.to_string()))?;
             let mut compile_errors = Vec::new();
