@@ -14,6 +14,16 @@ use crate::repositories::mcp_policy_repository::McpPolicyRepository;
 const MAX_RULES: usize = 500;
 const MAX_PATTERN_LEN: usize = 128;
 
+/// Told to agents so they can relay to a user how to unblock a tool.
+pub const ENABLE_HINT: &str = "A user can enable a blocked tool in Schemetry under Connections > MCP policy (the global data-tools kill switch is in Settings > MCP server).";
+
+/// Why a tool is unavailable: a stable `code` for programs, a short `reason` for people.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolBlock {
+    pub code: &'static str,
+    pub reason: String,
+}
+
 /// The MCP tools that act on a connection; each maps to one policy capability.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum McpTool {
@@ -126,44 +136,97 @@ impl McpPolicy {
         self
     }
 
+    /// Why this connection's policy itself rules `tool` out, if it does. The single
+    /// source of truth for both enforcement (`check_tool`) and what agents are told
+    /// (`agent_view`); the exhaustive match makes every new `McpTool` pick a rule.
+    pub fn tool_block(&self, tool: McpTool) -> Option<ToolBlock> {
+        if !self.mcp_enabled {
+            return Some(ToolBlock {
+                code: "mcp_disabled",
+                reason: "MCP access is not enabled for this connection.".to_string(),
+            });
+        }
+        let setting_off = |setting: &str| ToolBlock {
+            code: "policy_disabled",
+            reason: format!("disabled in this connection's MCP policy ({setting}=off)"),
+        };
+        let no_data_access = || ToolBlock {
+            code: "data_access_none",
+            reason: "data_access is none in this connection's MCP policy (needs allowlist)"
+                .to_string(),
+        };
+        match tool {
+            McpTool::ListSchemaObjects => {
+                (!self.allow_schema_list).then(|| setting_off("allow_schema_list"))
+            }
+            McpTool::GetObjectDdl => (!self.allow_ddl_read).then(|| setting_off("allow_ddl_read")),
+            McpTool::SaveMigrationScript => {
+                (!self.allow_save_scripts).then(|| setting_off("allow_save_scripts"))
+            }
+            McpTool::CompareSchemas | McpTool::GenerateFixScript => {
+                (!self.allow_compare_fix).then(|| setting_off("allow_compare_fix"))
+            }
+            McpTool::ListInvalidObjects => (!(self.allow_invalid_objects && self.allow_schema_list))
+                .then(|| setting_off("allow_invalid_objects and allow_schema_list")),
+            McpTool::GetObjectErrors => (!(self.allow_invalid_objects && self.allow_ddl_read))
+                .then(|| setting_off("allow_invalid_objects and allow_ddl_read")),
+            McpTool::QueryTable => {
+                (self.data_access != McpDataAccess::Allowlist).then(no_data_access)
+            }
+            McpTool::RunQuery => {
+                if self.data_access != McpDataAccess::Allowlist {
+                    Some(no_data_access())
+                } else {
+                    (!self.allow_raw_sql).then(|| setting_off("allow_raw_sql"))
+                }
+            }
+        }
+    }
+
     /// Whether the policy permits `tool` at all; table/object rules are checked
     /// separately, per object.
     pub fn check_tool(&self, tool: McpTool) -> Result<(), String> {
-        if !self.mcp_enabled {
-            return Err("MCP access is not enabled for this connection.".to_string());
+        match self.tool_block(tool) {
+            None => Ok(()),
+            Some(block) if block.code == "mcp_disabled" => Err(block.reason),
+            Some(block) => Err(format!(
+                "{} is not permitted by this connection's MCP policy: {}.",
+                tool.name(),
+                block.reason
+            )),
         }
-        let (allowed, setting) = match tool {
-            McpTool::ListSchemaObjects => (self.allow_schema_list, "allow_schema_list"),
-            McpTool::GetObjectDdl => (self.allow_ddl_read, "allow_ddl_read"),
-            McpTool::SaveMigrationScript => (self.allow_save_scripts, "allow_save_scripts"),
-            McpTool::CompareSchemas | McpTool::GenerateFixScript => {
-                (self.allow_compare_fix, "allow_compare_fix")
-            }
-            McpTool::ListInvalidObjects => (
-                self.allow_invalid_objects && self.allow_schema_list,
-                "allow_invalid_objects and allow_schema_list",
-            ),
-            McpTool::GetObjectErrors => (
-                self.allow_invalid_objects && self.allow_ddl_read,
-                "allow_invalid_objects and allow_ddl_read",
-            ),
-            McpTool::QueryTable => (
-                self.data_access == McpDataAccess::Allowlist,
-                "data_access = allowlist",
-            ),
-            McpTool::RunQuery => (
-                self.data_access == McpDataAccess::Allowlist && self.allow_raw_sql,
-                "data_access = allowlist and allow_raw_sql",
-            ),
-        };
-        if allowed {
-            Ok(())
-        } else {
-            Err(format!(
-                "{} is not permitted by this connection's MCP policy ({setting} is off).",
-                tool.name()
-            ))
+    }
+
+    /// `tool_block` plus what only matters at the point of use: the global kill switch
+    /// and a data tool whose allowlist has no allow rule (so nothing can be read).
+    pub fn effective_block(&self, tool: McpTool, data_tools_disabled: bool) -> Option<ToolBlock> {
+        if let Some(block) = self.tool_block(tool) {
+            return Some(block);
         }
+        if !tool.is_data_tool() {
+            return None;
+        }
+        if data_tools_disabled {
+            return Some(ToolBlock {
+                code: "kill_switch",
+                reason:
+                    "global kill switch on: data tools are switched off in Schemetry's settings"
+                        .to_string(),
+            });
+        }
+        if !self
+            .table_rules
+            .iter()
+            .any(|rule| rule.action == McpRuleAction::Allow)
+        {
+            return Some(ToolBlock {
+                code: "table_allowlist_empty",
+                reason:
+                    "table allowlist empty: no allow rule is configured, so no table can be read"
+                        .to_string(),
+            });
+        }
+        None
     }
 
     /// Whether DDL/listing/compare output for this object must be hidden.
@@ -232,6 +295,27 @@ impl McpPolicy {
     /// The policy as an agent sees it: capabilities and limits, never the dedicated
     /// account's name.
     pub fn agent_view(&self) -> Value {
+        self.agent_view_with(false)
+    }
+
+    /// `agent_view` given the global data-tools kill switch. Besides the original flat
+    /// fields it carries `tools`: one entry per `McpTool` with `allowed` and, when not,
+    /// a machine-readable `reason_code` and a human-readable `reason`.
+    pub fn agent_view_with(&self, data_tools_disabled: bool) -> Value {
+        let tools: serde_json::Map<String, Value> = McpTool::ALL
+            .iter()
+            .map(|&tool| {
+                let entry = match self.effective_block(tool, data_tools_disabled) {
+                    None => json!({ "allowed": true }),
+                    Some(block) => json!({
+                        "allowed": false,
+                        "reason_code": block.code,
+                        "reason": block.reason,
+                    }),
+                };
+                (tool.name().to_string(), entry)
+            })
+            .collect();
         let rules: Vec<Value> = self
             .table_rules
             .iter()
@@ -254,6 +338,9 @@ impl McpPolicy {
             "table_rules": rules,
             "max_rows": self.max_rows,
             "query_timeout_secs": self.query_timeout_secs,
+            "tools": tools,
+            "data_tools_disabled_globally": data_tools_disabled,
+            "hint": ENABLE_HINT,
         })
     }
 }

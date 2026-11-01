@@ -294,6 +294,187 @@ fn agent_view_never_includes_the_account_name() {
     assert!(view.contains("ORDERS"));
 }
 
+fn tool_entry(view: &Value, tool: McpTool) -> &Value {
+    &view["tools"][tool.name()]
+}
+
+#[test]
+fn agent_view_covers_every_tool_with_a_reason_when_blocked() {
+    let view = enabled_policy(1).agent_view();
+    for tool in McpTool::ALL {
+        let entry = tool_entry(&view, tool);
+        let allowed = entry["allowed"].as_bool().expect("allowed flag");
+        assert_eq!(allowed, entry.get("reason").is_none(), "{tool:?}");
+        assert_eq!(allowed, entry.get("reason_code").is_none(), "{tool:?}");
+        if !allowed {
+            assert!(!entry["reason"].as_str().unwrap().is_empty(), "{tool:?}");
+        }
+    }
+    assert_eq!(tool_entry(&view, McpTool::GetObjectDdl)["allowed"], true);
+}
+
+#[test]
+fn agent_view_names_the_setting_that_blocks_a_capability() {
+    let view = enabled_policy(1).agent_view();
+    let save = tool_entry(&view, McpTool::SaveMigrationScript);
+    assert_eq!(save["allowed"], false);
+    assert_eq!(save["reason_code"], "policy_disabled");
+    assert_eq!(
+        save["reason"],
+        "disabled in this connection's MCP policy (allow_save_scripts=off)"
+    );
+    let compare = tool_entry(&view, McpTool::CompareSchemas);
+    assert!(
+        compare["reason"]
+            .as_str()
+            .unwrap()
+            .contains("allow_compare_fix=off")
+    );
+    let fix = tool_entry(&view, McpTool::GenerateFixScript);
+    assert!(
+        fix["reason"]
+            .as_str()
+            .unwrap()
+            .contains("allow_compare_fix=off")
+    );
+}
+
+#[test]
+fn agent_view_explains_data_access_none_and_raw_sql_off() {
+    let view = enabled_policy(1).agent_view();
+    for tool in [McpTool::QueryTable, McpTool::RunQuery] {
+        let entry = tool_entry(&view, tool);
+        assert_eq!(entry["reason_code"], "data_access_none", "{tool:?}");
+        assert!(
+            entry["reason"]
+                .as_str()
+                .unwrap()
+                .contains("data_access is none")
+        );
+    }
+
+    let view = policy_with(vec![allow("ORDERS", "")]).agent_view();
+    assert_eq!(tool_entry(&view, McpTool::QueryTable)["allowed"], true);
+    let run = tool_entry(&view, McpTool::RunQuery);
+    assert_eq!(run["reason_code"], "policy_disabled");
+    assert!(
+        run["reason"]
+            .as_str()
+            .unwrap()
+            .contains("allow_raw_sql=off")
+    );
+}
+
+#[test]
+fn agent_view_reports_an_empty_table_allowlist() {
+    for rules in [vec![], vec![deny("SECRETS", "")]] {
+        let view = McpPolicy {
+            allow_raw_sql: true,
+            ..policy_with(rules)
+        }
+        .agent_view();
+        for tool in [McpTool::QueryTable, McpTool::RunQuery] {
+            let entry = tool_entry(&view, tool);
+            assert_eq!(entry["allowed"], false, "{tool:?}");
+            assert_eq!(entry["reason_code"], "table_allowlist_empty");
+            assert!(
+                entry["reason"]
+                    .as_str()
+                    .unwrap()
+                    .contains("table allowlist empty")
+            );
+        }
+        assert_eq!(
+            tool_entry(&view, McpTool::ListSchemaObjects)["allowed"],
+            true
+        );
+    }
+}
+
+#[test]
+fn agent_view_reports_the_global_kill_switch_for_data_tools_only() {
+    let policy = McpPolicy {
+        allow_raw_sql: true,
+        ..policy_with(vec![allow("ORDERS", "")])
+    };
+    let off = policy.agent_view_with(false);
+    assert_eq!(off["data_tools_disabled_globally"], false);
+    assert_eq!(tool_entry(&off, McpTool::RunQuery)["allowed"], true);
+
+    let on = policy.agent_view_with(true);
+    assert_eq!(on["data_tools_disabled_globally"], true);
+    for tool in McpTool::ALL {
+        let entry = tool_entry(&on, tool);
+        if tool.is_data_tool() {
+            assert_eq!(entry["allowed"], false, "{tool:?}");
+            assert_eq!(entry["reason_code"], "kill_switch");
+            assert!(
+                entry["reason"]
+                    .as_str()
+                    .unwrap()
+                    .contains("global kill switch on")
+            );
+        } else if policy.tool_block(tool).is_none() {
+            assert_eq!(entry["allowed"], true, "{tool:?}");
+        }
+    }
+}
+
+#[test]
+fn agent_view_keeps_the_legacy_fields_and_adds_a_hint() {
+    let view = policy_with(vec![allow("ORDERS", "")]).agent_view();
+    for key in [
+        "list_schema_objects",
+        "get_object_ddl",
+        "save_migration_script",
+        "compare_and_fix",
+        "data_access",
+        "run_query",
+        "table_rules",
+        "max_rows",
+        "query_timeout_secs",
+    ] {
+        assert!(view.get(key).is_some(), "{key} missing");
+    }
+    assert_eq!(view["data_access"], "allowlist");
+    assert!(
+        view["hint"]
+            .as_str()
+            .unwrap()
+            .contains("Connections > MCP policy")
+    );
+    assert!(!view["hint"].as_str().unwrap().contains('\n'));
+}
+
+#[test]
+fn check_tool_messages_carry_the_same_reason_as_the_agent_view() {
+    let policy = enabled_policy(1);
+    let message = policy.check_tool(McpTool::SaveMigrationScript).unwrap_err();
+    let reason = policy
+        .tool_block(McpTool::SaveMigrationScript)
+        .unwrap()
+        .reason;
+    assert!(message.contains("not permitted"));
+    assert!(message.contains(&reason));
+    assert_eq!(
+        McpPolicy::default()
+            .check_tool(McpTool::GetObjectDdl)
+            .unwrap_err(),
+        "MCP access is not enabled for this connection."
+    );
+}
+
+#[test]
+fn agent_view_reasons_never_leak_rule_contents() {
+    let policy = McpPolicy {
+        mcp_username: "svc_mcp".into(),
+        ..policy_with(vec![deny("TOP_SECRET_TABLE", "")])
+    };
+    let blocked: String = policy.agent_view()["tools"].to_string();
+    assert!(!blocked.contains("TOP_SECRET_TABLE"));
+    assert!(!blocked.contains("svc_mcp"));
+}
+
 // ── service ─────────────────────────────────────────────────────────────────────
 
 fn service() -> (McpPolicyService, Arc<MemoryPolicies>) {

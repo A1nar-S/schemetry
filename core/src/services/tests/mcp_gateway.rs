@@ -128,6 +128,97 @@ fn list_connections_shows_only_enabled_connections_and_never_credentials() {
 }
 
 #[test]
+fn list_connections_explains_why_each_tool_is_unavailable() {
+    let h = Harness::new(vec![
+        connection(53, "Reader", DbType::Oracle),
+        connection(54, "Saver", DbType::Oracle),
+    ]);
+    h.set_policy(enabled_policy(53));
+    h.set_policy(McpPolicy {
+        allow_save_scripts: true,
+        ..enabled_policy(54)
+    });
+
+    let listed = h.gateway.list_connections(CLIENT).unwrap();
+    let policy_of = |id: i64| {
+        listed["connections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == id)
+            .unwrap()["policy"]
+            .clone()
+    };
+    let reader = policy_of(53);
+    assert_eq!(reader["tools"]["get_object_ddl"]["allowed"], true);
+    assert_eq!(reader["tools"]["save_migration_script"]["allowed"], false);
+    assert!(
+        reader["tools"]["save_migration_script"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("allow_save_scripts=off")
+    );
+    let saver = policy_of(54);
+    assert_eq!(saver["tools"]["save_migration_script"]["allowed"], true);
+    assert_eq!(
+        saver["tools"]["query_table"]["reason_code"],
+        "data_access_none"
+    );
+    assert_eq!(saver["data_access"], "none");
+
+    assert_eq!(listed["data_tools_disabled_globally"], false);
+    assert!(
+        listed["hint"]
+            .as_str()
+            .unwrap()
+            .contains("Connections > MCP policy")
+    );
+}
+
+#[test]
+fn list_connections_reflects_the_global_kill_switch() {
+    let h = oracle();
+    h.set_policy(McpPolicy {
+        allow_raw_sql: true,
+        ..data_policy(1, vec![allow("*", "")])
+    });
+    h.settings.data_tools_disabled.store(true, Ordering::SeqCst);
+
+    let listed = h.gateway.list_connections(CLIENT).unwrap();
+    assert_eq!(listed["data_tools_disabled_globally"], true);
+    let tools = &listed["connections"][0]["policy"]["tools"];
+    assert_eq!(tools["query_table"]["reason_code"], "kill_switch");
+    assert_eq!(tools["run_query"]["allowed"], false);
+    assert_eq!(tools["list_schema_objects"]["allowed"], true);
+
+    h.settings
+        .data_tools_disabled
+        .store(false, Ordering::SeqCst);
+    let listed = h.gateway.list_connections(CLIENT).unwrap();
+    assert_eq!(
+        listed["connections"][0]["policy"]["tools"]["run_query"]["allowed"],
+        true
+    );
+}
+
+#[test]
+fn list_connections_view_agrees_with_what_the_gateway_enforces() {
+    let h = oracle();
+    h.set_policy(data_policy(1, vec![allow("ORDERS", "")]));
+    prepare_orders(&h);
+    let listed = h.gateway.list_connections(CLIENT).unwrap();
+    let tools = &listed["connections"][0]["policy"]["tools"];
+    assert_eq!(tools["query_table"]["allowed"], true);
+    assert!(h.gateway.query_table(CLIENT, query("ORDERS")).is_ok());
+    assert_eq!(tools["run_query"]["allowed"], false);
+    assert!(
+        h.gateway
+            .run_query(CLIENT, raw("SELECT 1 FROM DUAL"))
+            .is_err()
+    );
+}
+
+#[test]
 fn existing_connections_without_a_policy_are_invisible() {
     let h = oracle();
     let listed = h.gateway.list_connections(CLIENT).unwrap();

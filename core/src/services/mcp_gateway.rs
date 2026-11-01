@@ -21,7 +21,7 @@ use crate::services::fix::{self, Dialect};
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
 use crate::services::mcp_audit::{McpAuditDraft, McpAuditService};
 use crate::services::mcp_audit_target::{self, TARGET_KEY};
-use crate::services::mcp_policy::{McpPolicyService, McpTool};
+use crate::services::mcp_policy::{ENABLE_HINT, McpPolicyService, McpTool};
 use crate::services::mcp_query_builder::{self, Filter, OrderBy, TableQuery};
 use crate::services::mcp_sql_guard;
 use crate::services::query::QueryService;
@@ -494,6 +494,7 @@ impl McpGateway {
     pub fn list_connections(&self, client: &str) -> ToolResult {
         self.audited(client, "list_connections", None, json!({}), |ctx| {
             let policies = self.policy_svc.list_all()?;
+            let kill_switch = self.settings.data_tools_disabled();
             let mut out = Vec::new();
             for conn in self.catalog.list_connection_summaries()? {
                 let Some(policy) = policies.get(&conn.id).filter(|p| p.mcp_enabled) else {
@@ -505,11 +506,15 @@ impl McpGateway {
                     "group": conn.group_name,
                     "db_type": db_type_name(conn.db_type),
                     "schema": schema_of(&conn),
-                    "policy": policy.agent_view(),
+                    "policy": policy.agent_view_with(kill_switch),
                 }));
             }
             ctx.row_count = Some(out.len() as i64);
-            Ok(json!({ "connections": out }))
+            Ok(json!({
+                "connections": out,
+                "data_tools_disabled_globally": kill_switch,
+                "hint": ENABLE_HINT,
+            }))
         })
     }
 

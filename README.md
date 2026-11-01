@@ -119,7 +119,7 @@ A stdio [MCP](https://modelcontextprotocol.io) server that lets AI agents (Claud
 
 | Tool | Needs (in the connection's policy) | Notes |
 |---|---|---|
-| `list_connections` | connection has MCP enabled | id, name, engine, schema and the effective policy. Never passwords or hosts. |
+| `list_connections` | connection has MCP enabled | id, name, engine, schema and the effective policy, including why each tool is or is not available (see below). Never passwords or hosts. |
 | `list_schema_objects` | `allow_schema_list` | Active compare filter rules and the policy's hidden objects are applied. |
 | `get_object_ddl` | `allow_ddl_read` | DDL only, never data. Hidden objects are refused. |
 | `list_invalid_objects`, `get_object_errors` | `allow_invalid_objects` (off by default; also needs `allow_schema_list`, and `allow_ddl_read` for `get_object_errors`) | Oracle: objects with `STATUS = 'INVALID'` and their compile errors/warnings (line, position, message) so an agent can fix code and verify it compiles. Bounded; hidden objects are omitted/refused. PostgreSQL returns a "not applicable" result. |
@@ -129,6 +129,20 @@ A stdio [MCP](https://modelcontextprotocol.io) server that lets AI agents (Claud
 | `run_query` | `data_access = allowlist` **and** `allow_raw_sql` | One read-only `SELECT`, see the caveat below. |
 
 Policy options (edit them in **Connections → MCP**): per-capability toggles, a table/column allow/deny list with `*`/`?` wildcards (deny wins; Oracle matches case-insensitively, Postgres allow-rules are case-sensitive), hidden objects, `max_rows` (default 200), `query_timeout_secs` (default 30), and an optional dedicated database account. **Test as MCP** shows what an agent would see. A global kill switch in **Settings** disables all data tools regardless of policy.
+
+**Why is a tool unavailable?** Each connection's `policy` in `list_connections` keeps the flat fields (`list_schema_objects`, `get_object_ddl`, `save_migration_script`, `compare_and_fix`, `data_access`, `run_query`, `table_rules`, limits) and adds `tools`: one entry per MCP tool, generated from the tool list so new tools appear automatically.
+
+```json
+"tools": {
+  "get_object_ddl":        { "allowed": true },
+  "save_migration_script": { "allowed": false, "reason_code": "policy_disabled",
+                            "reason": "disabled in this connection's MCP policy (allow_save_scripts=off)" },
+  "query_table":           { "allowed": false, "reason_code": "data_access_none",
+                            "reason": "data_access is none in this connection's MCP policy (needs allowlist)" }
+}
+```
+
+`reason_code` is one of `policy_disabled`, `data_access_none`, `kill_switch`, `table_allowlist_empty`. The policy and the response also carry `data_tools_disabled_globally` (the global kill switch state) and a one-line `hint` telling the user where to enable a tool (Connections > MCP policy). Reasons name settings only, never table rules, accounts or hosts.
 
 **Table data and raw SQL.** `query_table` builds the SQL itself, so its allowlist is exact. `run_query` is best-effort: statements are checked against the allowlist (every referenced table must exist in the connection's own schema, so catalog views are out of reach), and run in a read-only transaction with a row cap and timeout, but views, synonyms, functions that read tables internally and dynamic SQL can't be seen statically — this is *not* a hard guarantee. The hard boundary is a **dedicated database account** (set it per connection; its password lives in the OS keychain and is used only for table-data reads) that the DBA grants `SELECT` on the allowed tables only.
 
