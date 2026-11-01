@@ -643,9 +643,9 @@ fn get_object_errors_refuses_hidden_and_malformed_requests_without_touching_the_
 
 // ΓöÇΓöÇ package spec / body ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
-const PKG_SPEC: &str = "CREATE OR REPLACE PACKAGE ORDER_API AS\n  PROCEDURE run;\nEND ORDER_API;\n/";
-const PKG_BODY: &str =
-    "CREATE OR REPLACE PACKAGE BODY ORDER_API AS\n  PROCEDURE run IS BEGIN NULL; END;\nEND ORDER_API;\n/";
+const PKG_SPEC: &str =
+    "CREATE OR REPLACE PACKAGE ORDER_API AS\n  PROCEDURE run;\nEND ORDER_API;\n/";
+const PKG_BODY: &str = "CREATE OR REPLACE PACKAGE BODY ORDER_API AS\n  PROCEDURE run IS BEGIN NULL; END;\nEND ORDER_API;\n/";
 
 fn package_harness() -> Harness {
     let h = oracle();
@@ -669,7 +669,10 @@ fn ddl_args(ty: &str) -> GetObjectDdlArgs {
 fn package_types_state_which_parts_they_include() {
     let h = package_harness();
 
-    let spec = h.gateway.get_object_ddl(CLIENT, ddl_args("package")).unwrap();
+    let spec = h
+        .gateway
+        .get_object_ddl(CLIENT, ddl_args("package"))
+        .unwrap();
     assert_eq!(spec["includes"], json!(["spec"]));
     assert_eq!(spec["ddl"], PKG_SPEC);
 
@@ -680,13 +683,19 @@ fn package_types_state_which_parts_they_include() {
     assert_eq!(body["includes"], json!(["body"]));
     assert_eq!(body["ddl"], PKG_BODY);
 
-    h.db.ddls
-        .lock()
-        .unwrap()
-        .insert("TABLE:ORDERS".into(), "CREATE TABLE ORDERS (ID NUMBER);".into());
+    h.db.ddls.lock().unwrap().insert(
+        "TABLE:ORDERS".into(),
+        "CREATE TABLE ORDERS (ID NUMBER);".into(),
+    );
     let table = h
         .gateway
-        .get_object_ddl(CLIENT, GetObjectDdlArgs { object_name: "ORDERS".into(), ..ddl_args("TABLE") })
+        .get_object_ddl(
+            CLIENT,
+            GetObjectDdlArgs {
+                object_name: "ORDERS".into(),
+                ..ddl_args("TABLE")
+            },
+        )
         .unwrap();
     assert!(table.get("includes").is_none());
 }
@@ -740,7 +749,10 @@ fn combined_package_type_is_rejected_for_postgres() {
         h.gateway
             .get_object_ddl(CLIENT, ddl_args("PACKAGE SPEC AND BODY")),
     );
-    assert!(read.contains("Oracle") && read.contains("PostgreSQL"), "{read}");
+    assert!(
+        read.contains("Oracle") && read.contains("PostgreSQL"),
+        "{read}"
+    );
     let mut save = save_args("ORDER_API", "pkg");
     save.object_type = "PACKAGE SPEC AND BODY".into();
     save.ddl = format!("{PKG_SPEC}\n{PKG_BODY}");
@@ -777,7 +789,10 @@ fn saving_the_combined_package_type_writes_one_pck_file() {
     args.object_type = "package spec and body".into();
     args.ddl = crate::services::ddl_save::combine_package_spec_and_body(PKG_SPEC, PKG_BODY);
     args.dry_run = true;
-    let out = h.gateway.save_migration_script(CLIENT, args.clone()).unwrap();
+    let out = h
+        .gateway
+        .save_migration_script(CLIENT, args.clone())
+        .unwrap();
     let code = out["files"]
         .as_array()
         .unwrap()
@@ -788,9 +803,15 @@ fn saving_the_combined_package_type_writes_one_pck_file() {
     assert!(code["path"].as_str().unwrap().ends_with("ORDER_API.sql"));
 
     args.dry_run = false;
-    h.gateway.save_migration_script(CLIENT, args.clone()).unwrap();
+    h.gateway
+        .save_migration_script(CLIENT, args.clone())
+        .unwrap();
     let saved = std::fs::read_to_string(
-        root.path().join("app").join("code").join("app").join("ORDER_API.sql"),
+        root.path()
+            .join("app")
+            .join("code")
+            .join("app")
+            .join("ORDER_API.sql"),
     )
     .unwrap();
     assert_eq!(saved, args.ddl);
@@ -1757,4 +1778,393 @@ fn when_the_audit_log_cannot_be_written_the_result_is_withheld() {
     // Denials fail closed too: the agent learns nothing beyond the audit failure.
     let message = failed_message(h.gateway.query_table(CLIENT, query("CUSTOMERS")));
     assert!(message.contains("audit log could not be written"));
+}
+
+// ── compare_object ──────────────────────────────────────────────────────────────
+
+const SERVER_VIEW_DDL: &str = "\n  CREATE OR REPLACE FORCE EDITIONABLE VIEW \"APP\".\"ORDERS_V\" (\"ID\") AS \n  SELECT id FROM orders\n";
+
+fn compare_object_args(file_path: &str) -> CompareObjectArgs {
+    CompareObjectArgs {
+        connection_id: 1,
+        object_name: "ORDERS_V".into(),
+        object_type: "VIEW".into(),
+        file_path: file_path.into(),
+    }
+}
+
+/// An Oracle connection with compare enabled, a schema folder and the server DDL of
+/// `ORDERS_V` (which the fake database reports as `ddl`).
+fn compare_object_harness(ddl: &str) -> (Harness, tempfile::TempDir) {
+    let h = oracle();
+    h.set_policy(McpPolicy {
+        allow_compare_object: true,
+        ..enabled_policy(1)
+    });
+    h.db.ddls
+        .lock()
+        .unwrap()
+        .insert("VIEW:ORDERS_V".into(), ddl.into());
+    let root = tempfile::tempdir().unwrap();
+    *h.settings.schema_root.lock().unwrap() = Some(root.path().to_string_lossy().into_owned());
+    std::fs::create_dir_all(root.path().join("app").join("code")).unwrap();
+    (h, root)
+}
+
+fn write_schema_file(root: &tempfile::TempDir, relative: &str, bytes: &[u8]) {
+    std::fs::write(root.path().join("app").join(relative), bytes).unwrap();
+}
+
+#[test]
+fn compare_object_is_off_by_default_and_needs_ddl_read() {
+    let (h, root) = compare_object_harness(SERVER_VIEW_DDL);
+    write_schema_file(&root, "code/v.sql", b"x");
+
+    h.set_policy(enabled_policy(1));
+    denied_message(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("code/v.sql")),
+    );
+    h.set_policy(McpPolicy {
+        allow_compare_object: true,
+        allow_ddl_read: false,
+        ..enabled_policy(1)
+    });
+    denied_message(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("code/v.sql")),
+    );
+
+    assert_eq!(h.db_calls(), 0);
+    assert_eq!(h.entries().len(), 2);
+    assert!(h.entries().iter().all(|e| e.tool == "compare_object"));
+    assert!(!McpPolicy::default().allow_compare_object);
+}
+
+#[test]
+fn identical_files_report_identical_despite_cosmetic_noise() {
+    let (h, root) = compare_object_harness(SERVER_VIEW_DDL);
+    write_schema_file(
+        &root,
+        "code/v.sql",
+        b"create or replace force view orders_v (\"ID\") AS\r\n  SELECT id FROM orders  \r\n\r\n",
+    );
+    let out = h
+        .gateway
+        .compare_object(CLIENT, compare_object_args("code/v.sql"))
+        .unwrap();
+    assert_eq!(out, json!({ "identical": true }));
+
+    let entries = h.entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].tool, "compare_object");
+    assert_eq!(entries[0].outcome, McpOutcome::Allowed);
+    let arguments: Value = serde_json::from_str(&entries[0].arguments).unwrap();
+    assert_eq!(arguments["object_name"], "ORDERS_V");
+    assert_eq!(arguments["file_path"], "code/v.sql");
+    assert_eq!(arguments["result"], "identical");
+}
+
+#[test]
+fn differences_come_back_as_a_bounded_diff_and_the_audit_keeps_only_counts() {
+    let (h, root) = compare_object_harness(SERVER_VIEW_DDL);
+    write_schema_file(
+        &root,
+        "code/v.sql",
+        b"CREATE FORCE VIEW ORDERS_V (\"ID\") AS\n  SELECT id, SECRET_FILE_COLUMN FROM orders\n",
+    );
+    let out = h
+        .gateway
+        .compare_object(CLIENT, compare_object_args("code/v.sql"))
+        .unwrap();
+    assert_eq!(out["identical"], false);
+    assert_eq!(
+        (out["added"].as_u64(), out["removed"].as_u64()),
+        (Some(1), Some(1))
+    );
+    assert_eq!(out["hunks"], 1);
+    assert_eq!(out["truncated"], false);
+    let diff = out["diff"].as_str().unwrap();
+    assert!(diff.contains("-  SELECT id FROM orders"), "{diff}");
+    assert!(
+        diff.contains("+  SELECT id, SECRET_FILE_COLUMN FROM orders"),
+        "{diff}"
+    );
+
+    let entries = h.entries();
+    assert_eq!(entries.len(), 1);
+    let arguments: Value = serde_json::from_str(&entries[0].arguments).unwrap();
+    assert_eq!(arguments["result"], "different");
+    assert_eq!(arguments["diff_added"], 1);
+    assert_eq!(arguments["diff_removed"], 1);
+    assert!(arguments["diff_lines"].as_u64().unwrap() > 0);
+    let logged = format!("{:?}", entries[0]);
+    assert!(!logged.contains("SECRET_FILE_COLUMN"));
+    assert!(!logged.contains("SELECT id FROM orders"));
+}
+
+#[test]
+fn compare_object_refuses_paths_that_leave_the_schema_folder() {
+    let (h, root) = compare_object_harness(SERVER_VIEW_DDL);
+    std::fs::write(root.path().join("outside.sql"), "secret").unwrap();
+    write_schema_file(&root, "code/v.sql", b"x");
+    let absolute = root
+        .path()
+        .join("outside.sql")
+        .to_string_lossy()
+        .into_owned();
+
+    let bad = [
+        "../outside.sql".to_string(),
+        "code/../../outside.sql".to_string(),
+        "code\\..\\..\\outside.sql".to_string(),
+        absolute,
+        "/etc/passwd".to_string(),
+        "C:\\Windows\\win.ini".to_string(),
+        String::new(),
+    ];
+    for path in &bad {
+        let message = denied_message(h.gateway.compare_object(CLIENT, compare_object_args(path)));
+        assert!(!message.contains("secret"));
+    }
+    assert_eq!(h.db_calls(), 0);
+    assert_eq!(h.entries().len(), bad.len());
+    assert!(h.entries().iter().all(|e| e.outcome == McpOutcome::Denied));
+}
+
+#[cfg(unix)]
+#[test]
+fn compare_object_refuses_symlinks_that_escape_the_schema_folder() {
+    let (h, root) = compare_object_harness(SERVER_VIEW_DDL);
+    let outside = root.path().join("outside.sql");
+    std::fs::write(&outside, "secret").unwrap();
+    std::os::unix::fs::symlink(&outside, root.path().join("app").join("link.sql")).unwrap();
+    denied_message(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("link.sql")),
+    );
+    assert_eq!(h.db_calls(), 0);
+}
+
+#[test]
+fn compare_object_respects_hidden_objects_and_validates_names() {
+    let (h, root) = compare_object_harness(SERVER_VIEW_DDL);
+    write_schema_file(&root, "code/v.sql", b"x");
+    h.set_policy(McpPolicy {
+        allow_compare_object: true,
+        object_deny: vec![McpObjectDenyRule {
+            object_type: "VIEW".into(),
+            name: "ORDERS_*".into(),
+        }],
+        ..enabled_policy(1)
+    });
+    let message = denied_message(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("code/v.sql")),
+    );
+    assert!(message.contains("hidden by policy"));
+
+    let mut args = compare_object_args("code/v.sql");
+    args.object_name = "ORDERS_V; DROP".into();
+    denied_message(h.gateway.compare_object(CLIENT, args));
+    assert_eq!(h.db_calls(), 0);
+}
+
+#[test]
+fn compare_object_caps_the_file_size_and_reports_missing_files() {
+    let (h, root) = compare_object_harness(SERVER_VIEW_DDL);
+    write_schema_file(&root, "code/big.sql", &vec![b'x'; 1_000_001]);
+    let message = denied_message(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("code/big.sql")),
+    );
+    assert!(message.contains("larger than"));
+
+    let message = failed_message(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("code/none.sql")),
+    );
+    assert!(message.contains("not found"));
+    assert_eq!(h.db_calls(), 0);
+    assert_eq!(h.entries().len(), 2);
+}
+
+#[test]
+fn compare_object_without_a_schema_folder_fails_cleanly() {
+    let (h, _root) = compare_object_harness(SERVER_VIEW_DDL);
+    *h.settings.schema_root.lock().unwrap() = None;
+    failed_message(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("code/v.sql")),
+    );
+    assert_eq!(h.db_calls(), 0);
+}
+
+#[test]
+fn compare_object_decodes_the_file_with_the_configured_encoding() {
+    let ddl = "CREATE VIEW ORDERS_V AS SELECT 'ā' FROM dual";
+    let (h, root) = compare_object_harness(ddl);
+    // "ā" is 0xE2 in Windows-1257.
+    let mut bytes = b"CREATE VIEW ORDERS_V AS SELECT '".to_vec();
+    bytes.push(0xE2);
+    bytes.extend_from_slice(b"' FROM dual\r\n");
+    write_schema_file(&root, "code/v.sql", &bytes);
+
+    // Read as UTF-8 the file is invalid.
+    failed_message(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("code/v.sql")),
+    );
+
+    h.settings.options.lock().unwrap().encoding = "windows-1257".into();
+    let out = h
+        .gateway
+        .compare_object(CLIENT, compare_object_args("code/v.sql"))
+        .unwrap();
+    assert_eq!(out, json!({ "identical": true }));
+
+    // A BOM-prefixed UTF-8 file matches too.
+    h.settings.options.lock().unwrap().encoding = "utf8-bom".into();
+    let mut bom = b"\xEF\xBB\xBF".to_vec();
+    bom.extend_from_slice(ddl.as_bytes());
+    write_schema_file(&root, "code/v.sql", &bom);
+    assert_eq!(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("code/v.sql"))
+            .unwrap(),
+        json!({ "identical": true })
+    );
+}
+
+#[test]
+fn compare_object_uses_the_connections_schema_folder_on_postgres() {
+    let h = postgres();
+    h.set_policy(McpPolicy {
+        allow_compare_object: true,
+        ..enabled_policy(1)
+    });
+    h.db.ddls.lock().unwrap().insert(
+        "VIEW:ORDERS_V".into(),
+        "CREATE OR REPLACE VIEW sales.orders_v AS SELECT 1;\n".into(),
+    );
+    let root = tempfile::tempdir().unwrap();
+    *h.settings.schema_root.lock().unwrap() = Some(root.path().to_string_lossy().into_owned());
+    std::fs::create_dir_all(root.path().join("sales")).unwrap();
+    std::fs::write(
+        root.path().join("sales").join("v.sql"),
+        "CREATE OR REPLACE VIEW sales.orders_v AS SELECT 1\r\n",
+    )
+    .unwrap();
+    assert_eq!(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("v.sql"))
+            .unwrap(),
+        json!({ "identical": true })
+    );
+
+    // Postgres headers are not normalised: dropping OR REPLACE is a real difference.
+    std::fs::write(
+        root.path().join("sales").join("v.sql"),
+        "CREATE VIEW sales.orders_v AS SELECT 1\n",
+    )
+    .unwrap();
+    let out = h
+        .gateway
+        .compare_object(CLIENT, compare_object_args("v.sql"))
+        .unwrap();
+    assert_eq!(out["identical"], false);
+}
+
+#[test]
+fn compare_object_reports_truncation_of_long_diffs() {
+    let server: String = (0..600).map(|i| format!("server line {i}\n")).collect();
+    let (h, root) = compare_object_harness(&server);
+    let file: String = (0..600).map(|i| format!("file line {i}\n")).collect();
+    write_schema_file(&root, "code/v.sql", file.as_bytes());
+    let out = h
+        .gateway
+        .compare_object(CLIENT, compare_object_args("code/v.sql"))
+        .unwrap();
+    assert_eq!(out["truncated"], true);
+    assert_eq!(out["diff_lines"], 400);
+    assert_eq!(
+        (out["added"].as_u64(), out["removed"].as_u64()),
+        (Some(600), Some(600))
+    );
+}
+
+#[test]
+fn compare_object_on_a_missing_server_object_is_an_audited_error() {
+    let (h, root) = compare_object_harness(SERVER_VIEW_DDL);
+    write_schema_file(&root, "code/v.sql", b"x");
+    let mut args = compare_object_args("code/v.sql");
+    args.object_name = "GHOST".into();
+    failed_message(h.gateway.compare_object(CLIENT, args));
+    assert_audit(&h, 1, McpOutcome::Error);
+}
+
+#[test]
+fn a_file_named_after_a_hidden_object_cannot_be_compared() {
+    let (h, root) = compare_object_harness(SERVER_VIEW_DDL);
+    h.set_policy(McpPolicy {
+        allow_compare_object: true,
+        object_deny: vec![McpObjectDenyRule {
+            object_type: "*".into(),
+            name: "SECRET_PKG".into(),
+        }],
+        ..enabled_policy(1)
+    });
+    write_schema_file(&root, "code/SECRET_PKG.sql", b"CREATE VIEW x AS SELECT 1");
+    write_schema_file(
+        &root,
+        "code/260101_1200_app$SECRET_PKG.sql",
+        b"CREATE VIEW x AS SELECT 1",
+    );
+    for file in ["code/SECRET_PKG.sql", "code/260101_1200_app$SECRET_PKG.sql"] {
+        let message = denied_message(h.gateway.compare_object(CLIENT, compare_object_args(file)));
+        assert!(message.contains("hidden"), "{message}");
+    }
+}
+
+#[test]
+fn a_file_that_mentions_a_hidden_object_cannot_be_compared() {
+    let (h, root) = compare_object_harness(SERVER_VIEW_DDL);
+    h.set_policy(McpPolicy {
+        allow_compare_object: true,
+        object_deny: vec![McpObjectDenyRule {
+            object_type: "*".into(),
+            name: "SECRET_PKG".into(),
+        }],
+        ..enabled_policy(1)
+    });
+    write_schema_file(
+        &root,
+        "code/everything.sql",
+        b"CREATE VIEW orders_v AS SELECT id FROM orders;\nCREATE PACKAGE secret_pkg AS END;",
+    );
+    let message = denied_message(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("code/everything.sql")),
+    );
+    assert!(message.contains("hidden"), "{message}");
+    assert!(!message.contains("secret_pkg"), "{message}");
+}
+
+#[test]
+fn hidden_names_match_whatever_their_object_type() {
+    let (h, root) = compare_object_harness(SERVER_VIEW_DDL);
+    h.set_policy(McpPolicy {
+        allow_compare_object: true,
+        object_deny: vec![McpObjectDenyRule {
+            object_type: "INDEX".into(),
+            name: "SECRET_IX".into(),
+        }],
+        ..enabled_policy(1)
+    });
+    write_schema_file(&root, "code/a.sql", b"CREATE INDEX secret_ix ON t(a);");
+    let message = denied_message(
+        h.gateway
+            .compare_object(CLIENT, compare_object_args("code/a.sql")),
+    );
+    assert!(message.contains("hidden"), "{message}");
 }

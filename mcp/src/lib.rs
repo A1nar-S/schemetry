@@ -17,9 +17,9 @@ use rmcp::{
     transport::stdio,
 };
 use schemetry_core::services::mcp_gateway::{
-    CompareSchemasArgs, GenerateFixScriptArgs, GetObjectDdlArgs, GetObjectErrorsArgs,
-    ListInvalidObjectsArgs, ListSchemaObjectsArgs, McpGateway, QueryTableArgs, RunQueryArgs,
-    SaveMigrationScriptArgs, ToolError,
+    CompareObjectArgs, CompareSchemasArgs, GenerateFixScriptArgs, GetObjectDdlArgs,
+    GetObjectErrorsArgs, ListInvalidObjectsArgs, ListSchemaObjectsArgs, McpGateway, QueryTableArgs,
+    RunQueryArgs, SaveMigrationScriptArgs, ToolError,
 };
 use serde_json::Value;
 
@@ -214,6 +214,18 @@ impl SchemetryMcp {
     ) -> Result<CallToolResult, McpError> {
         let (gateway, client) = (Arc::clone(&self.gateway), client_name(&context));
         run_blocking(move || gateway.generate_fix_script(&client, args)).await
+    }
+
+    #[tool(
+        description = "Compare a local DDL file in the schema's folder (path relative to it, e.g. code/app/ORDERS.sql) with one object's DDL on the server, entirely inside Schemetry: the file content is not sent through you. Returns {\"identical\": true} or a bounded unified diff ('-' server, '+' file) with counts. Line endings, trailing whitespace and, for Oracle, the CREATE header (OR REPLACE, EDITIONABLE, schema prefix, case) are normalised first."
+    )]
+    async fn compare_object(
+        &self,
+        Parameters(args): Parameters<CompareObjectArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let (gateway, client) = (Arc::clone(&self.gateway), client_name(&context));
+        run_blocking(move || gateway.compare_object(&client, args)).await
     }
 
     #[tool(

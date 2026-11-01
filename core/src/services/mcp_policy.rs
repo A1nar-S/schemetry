@@ -32,6 +32,7 @@ pub enum McpTool {
     SaveMigrationScript,
     CompareSchemas,
     GenerateFixScript,
+    CompareObject,
     QueryTable,
     RunQuery,
     ListInvalidObjects,
@@ -39,12 +40,13 @@ pub enum McpTool {
 }
 
 impl McpTool {
-    pub const ALL: [McpTool; 9] = [
+    pub const ALL: [McpTool; 10] = [
         McpTool::ListSchemaObjects,
         McpTool::GetObjectDdl,
         McpTool::SaveMigrationScript,
         McpTool::CompareSchemas,
         McpTool::GenerateFixScript,
+        McpTool::CompareObject,
         McpTool::QueryTable,
         McpTool::RunQuery,
         McpTool::ListInvalidObjects,
@@ -58,6 +60,7 @@ impl McpTool {
             McpTool::SaveMigrationScript => "save_migration_script",
             McpTool::CompareSchemas => "compare_schemas",
             McpTool::GenerateFixScript => "generate_fix_script",
+            McpTool::CompareObject => "compare_object",
             McpTool::QueryTable => "query_table",
             McpTool::RunQuery => "run_query",
             McpTool::ListInvalidObjects => "list_invalid_objects",
@@ -166,7 +169,10 @@ impl McpPolicy {
             McpTool::CompareSchemas | McpTool::GenerateFixScript => {
                 (!self.allow_compare_fix).then(|| setting_off("allow_compare_fix"))
             }
-            McpTool::ListInvalidObjects => (!(self.allow_invalid_objects && self.allow_schema_list))
+            McpTool::CompareObject => (!(self.allow_compare_object && self.allow_ddl_read))
+                .then(|| setting_off("allow_compare_object and allow_ddl_read")),
+            McpTool::ListInvalidObjects => (!(self.allow_invalid_objects
+                && self.allow_schema_list))
                 .then(|| setting_off("allow_invalid_objects and allow_schema_list")),
             McpTool::GetObjectErrors => (!(self.allow_invalid_objects && self.allow_ddl_read))
                 .then(|| setting_off("allow_invalid_objects and allow_ddl_read")),
@@ -238,6 +244,14 @@ impl McpPolicy {
                 || rule_type.eq_ignore_ascii_case(object_type.trim()))
                 && wildcard_match(rule.name.trim(), name.trim())
         })
+    }
+
+    /// Whether `name` is hidden for any object type — for text that can't say what type
+    /// a mention refers to.
+    pub fn name_denied_for_any_type(&self, name: &str) -> bool {
+        self.object_deny
+            .iter()
+            .any(|rule| wildcard_match(rule.name.trim(), name.trim()))
     }
 
     /// Table data may be read: some allow rule matches it and no deny rule covers the
@@ -333,6 +347,7 @@ impl McpPolicy {
             "save_migration_script": self.allow_save_scripts,
             "compare_and_fix": self.allow_compare_fix,
             "invalid_objects": self.allow_invalid_objects,
+            "compare_object": self.allow_compare_object && self.allow_ddl_read,
             "data_access": self.data_access,
             "run_query": self.allow_raw_sql && self.data_access == McpDataAccess::Allowlist,
             "table_rules": rules,

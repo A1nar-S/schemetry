@@ -357,6 +357,8 @@ pub struct McpPolicy {
     pub allow_compare_fix: bool,
     /// `list_invalid_objects` and `get_object_errors`: compile status and diagnostics.
     pub allow_invalid_objects: bool,
+    /// `compare_object`: diff a local schema-folder file against the server's DDL.
+    pub allow_compare_object: bool,
     pub data_access: McpDataAccess,
     /// Free-form SQL (`run_query`); still needs `data_access = allowlist`.
     pub allow_raw_sql: bool,
@@ -388,6 +390,7 @@ impl Default for McpPolicy {
             allow_save_scripts: false,
             allow_compare_fix: false,
             allow_invalid_objects: false,
+            allow_compare_object: false,
             data_access: McpDataAccess::None,
             allow_raw_sql: false,
             table_rules: Vec::new(),

@@ -184,6 +184,7 @@ export type McpPolicy = {
   allow_invalid_objects: boolean;
   allow_save_scripts: boolean;
   allow_compare_fix: boolean;
+  allow_compare_object: boolean;
   data_access: McpDataAccess;
   allow_raw_sql: boolean;
   table_rules: McpTableRule[];

@@ -222,6 +222,7 @@
           <label class="check-row"><input type="checkbox" bind:checked={policy.allow_invalid_objects} /> Read invalid objects &amp; compile errors (Oracle)</label>
           <label class="check-row"><input type="checkbox" bind:checked={policy.allow_save_scripts} /> Save migration / code files</label>
           <label class="check-row"><input type="checkbox" bind:checked={policy.allow_compare_fix} /> Compare schemas &amp; generate fix scripts</label>
+          <label class="check-row"><input type="checkbox" bind:checked={policy.allow_compare_object} /> Compare a local file with an object's DDL (needs Read DDL)</label>
         </div>
 
         <!-- (c) Data access -->

@@ -11,7 +11,9 @@ use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
 pub const PACKAGE_SPEC_AND_BODY: &str = "PACKAGE SPEC AND BODY";
 
 pub fn is_package_spec_and_body(object_type: &str) -> bool {
-    object_type.trim().eq_ignore_ascii_case(PACKAGE_SPEC_AND_BODY)
+    object_type
+        .trim()
+        .eq_ignore_ascii_case(PACKAGE_SPEC_AND_BODY)
 }
 
 /// The object type whose folder/extension/storage settings apply. The combined type has
@@ -244,7 +246,8 @@ pub fn plan_ddl_save(
     args: &DdlSaveArgs,
     options: &DdlSaveOptions,
 ) -> Result<DdlSavePlan, String> {
-    if is_package_spec_and_body(&args.object_type) && args.db_type.eq_ignore_ascii_case("postgres") {
+    if is_package_spec_and_body(&args.object_type) && args.db_type.eq_ignore_ascii_case("postgres")
+    {
         return Err(format!(
             "{PACKAGE_SPEC_AND_BODY} applies to Oracle packages only; PostgreSQL has no packages."
         ));

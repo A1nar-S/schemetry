@@ -15,6 +15,7 @@ use crate::models::{ConnectionRecord, DbType, Discrepancy, McpOutcome, McpPolicy
 use crate::repositories::db_repository::{ReadOnlyQuery, ReadOnlyResult};
 use crate::services::compare::compare_tables_across_servers;
 use crate::services::connection_catalog::ConnectionCatalogService;
+use crate::services::ddl_compare::{self, FileAccessError};
 use crate::services::ddl_save::{self, DdlSaveArgs};
 use crate::services::filter_rules::FilterRuleService;
 use crate::services::fix::{self, Dialect};
@@ -35,6 +36,8 @@ const MAX_OBJECT_ERRORS: usize = 500;
 const MAX_SCRIPT_BYTES: usize = 500_000;
 const MAX_RESULT_BYTES: usize = 1_000_000;
 const MAX_DDL_BYTES: usize = 1_000_000;
+const MAX_COMPARE_FILE_BYTES: u64 = 1_000_000;
+const MAX_DIFF_OUTPUT_LINES: usize = 400;
 const MAX_REASON_CHARS: usize = 2_000;
 const MAX_AUDIT_ARGUMENT_BYTES: usize = 16_000;
 
@@ -181,6 +184,19 @@ tool_args! {
         pub check_comments: Option<bool>,
         #[serde(default)]
         pub check_indexes: Option<bool>,
+    }
+}
+
+tool_args! {
+    pub struct CompareObjectArgs {
+        pub connection_id: i64,
+        pub object_name: String,
+        /// e.g. TABLE, VIEW, PROCEDURE, FUNCTION, PACKAGE, PACKAGE BODY, TRIGGER, SEQUENCE, TYPE.
+        pub object_type: String,
+        /// Path of the local DDL file relative to the schema's folder (the configured schema
+        /// root + schema name, or that schema's folder override), e.g. `code/app/ORDERS.sql`.
+        /// Absolute paths and `..` are refused. The file is read by Schemetry itself.
+        pub file_path: String,
     }
 }
 
@@ -599,7 +615,9 @@ impl McpGateway {
                 if !valid_object_type(&object_type) {
                     return denied("object_type is not a recognised object type.");
                 }
-                if ddl_save::is_package_spec_and_body(&object_type) && conn.db_type != DbType::Oracle {
+                if ddl_save::is_package_spec_and_body(&object_type)
+                    && conn.db_type != DbType::Oracle
+                {
                     return denied(PACKAGE_COMBINED_ORACLE_ONLY);
                 }
                 if object_hidden(&policy, name, &object_type) {
@@ -634,7 +652,8 @@ impl McpGateway {
                     }
                 };
                 ctx.row_count = Some(1);
-                let mut result = json!({ "object_name": name, "object_type": object_type, "ddl": ddl });
+                let mut result =
+                    json!({ "object_name": name, "object_type": object_type, "ddl": ddl });
                 if !includes.is_empty() {
                     result["includes"] = json!(includes);
                 }
@@ -1114,6 +1133,109 @@ impl McpGateway {
                     "skipped_count": result.skipped_count,
                     "truncated": truncated,
                     "hidden_by_policy": cmp.hidden,
+                }))
+            },
+        )
+    }
+
+    pub fn compare_object(&self, client: &str, args: CompareObjectArgs) -> ToolResult {
+        let arguments = serde_json::to_value(&args).unwrap_or_default();
+        self.audited(
+            client,
+            McpTool::CompareObject.name(),
+            Some(args.connection_id),
+            arguments,
+            |ctx| {
+                let Resolved { conn, policy } =
+                    self.resolve(ctx, args.connection_id, McpTool::CompareObject)?;
+                let name = args.object_name.trim();
+                let object_type = args.object_type.trim().to_ascii_uppercase();
+                if !mcp_query_builder::valid_identifier(name) {
+                    return denied("object_name must be a plain identifier.");
+                }
+                if !valid_object_type(&object_type) {
+                    return denied("object_type is not a recognised object type.");
+                }
+                if policy.object_denied(name, &object_type) {
+                    return denied(format!("{object_type} {name} is hidden by policy."));
+                }
+                let relative = ddl_compare::validate_relative_path(&args.file_path)
+                    .map_err(ToolError::Denied)?;
+                // The diff shows file lines, so a file named after a hidden object is as
+                // good as asking for that object.
+                if let Some(stem) = relative.file_stem().and_then(|s| s.to_str()) {
+                    let after_dollar = stem.rsplit('$').next().unwrap_or(stem);
+                    if [stem, after_dollar]
+                        .iter()
+                        .any(|candidate| policy.name_denied_for_any_type(candidate))
+                    {
+                        return denied("file_path names an object that is hidden by policy.");
+                    }
+                }
+
+                let schema = schema_of(&conn);
+                let schema_root = self.settings.schema_root().map_err(ToolError::Failed)?;
+                let schema_dir =
+                    ddl_save::resolve_schema_dir(&self.folder_overrides, &schema, &schema_root)
+                        .map_err(ToolError::Failed)?;
+                let bytes =
+                    ddl_compare::read_confined_file(&schema_dir, &relative, MAX_COMPARE_FILE_BYTES)
+                        .map_err(|error| match error {
+                            FileAccessError::Denied(message) => ToolError::Denied(message),
+                            FileAccessError::Failed(message) => ToolError::Failed(message),
+                        })?;
+                let options = self.settings.save_options(&object_type);
+                let encoding = self
+                    .folder_overrides
+                    .resolve_encoding(&schema.to_lowercase(), &options.encoding)?;
+                let file_text =
+                    ddl_compare::decode_ddl_file(&bytes, &encoding).map_err(ToolError::Failed)?;
+                // The diff echoes file lines, so a file that mentions a hidden object (a
+                // multi-object script, a migration) must not be compared at all.
+                let mentions_hidden = file_text
+                    .split(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$' | '#')))
+                    .filter(|word| !word.is_empty())
+                    .any(|word| policy.name_denied_for_any_type(word));
+                if mentions_hidden {
+                    return denied("The file mentions an object that is hidden by policy.");
+                }
+                let server_ddl = self.diff_svc.fetch_object_ddl(&conn, name, &object_type)?;
+                if server_ddl.len() > MAX_DDL_BYTES {
+                    return failed("The server DDL is too large to compare.");
+                }
+                ctx.row_count = Some(1);
+
+                let server = ddl_compare::normalize_ddl(&server_ddl, conn.db_type, &schema);
+                let file = ddl_compare::normalize_ddl(&file_text, conn.db_type, &schema);
+                let Some(diff) = ddl_compare::unified_diff(
+                    &server,
+                    &file,
+                    "server",
+                    "file",
+                    MAX_DIFF_OUTPUT_LINES,
+                ) else {
+                    ctx.details = Some(json!({ "result": "identical" }));
+                    return Ok(json!({ "identical": true }));
+                };
+
+                // The audit trail records counts only — never any DDL or file content.
+                ctx.details = Some(json!({
+                    "result": "different",
+                    "diff_added": diff.added,
+                    "diff_removed": diff.removed,
+                    "diff_lines": diff.output_lines,
+                }));
+                Ok(json!({
+                    "identical": false,
+                    "diff": diff.unified,
+                    "added": diff.added,
+                    "removed": diff.removed,
+                    "hunks": diff.hunks,
+                    "diff_lines": diff.output_lines,
+                    "truncated": diff.truncated,
+                    "note": "'-' lines come from the server, '+' lines from the file; \
+                             both sides are normalised first (line endings, trailing \
+                             whitespace, and for Oracle the CREATE header).",
                 }))
             },
         )

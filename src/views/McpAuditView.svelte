@@ -33,6 +33,7 @@
     'save_migration_script',
     'compare_schemas',
     'generate_fix_script',
+    'compare_object',
     'query_table',
     'run_query',
   ];

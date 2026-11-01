@@ -62,7 +62,7 @@ impl Default for SqliteMcpPolicyRepository {
 
 const COLUMNS: &str = "connection_id, mcp_enabled, allow_schema_list, allow_ddl_read, \
     allow_save_scripts, allow_compare_fix, data_access, allow_raw_sql, table_rules, \
-    object_deny, max_rows, query_timeout_secs, mcp_username, allow_invalid_objects";
+    object_deny, max_rows, query_timeout_secs, mcp_username, allow_invalid_objects, allow_compare_object";
 
 fn row_to_policy(row: &rusqlite::Row) -> rusqlite::Result<McpPolicy> {
     let data_access: String = row.get(6)?;
@@ -77,6 +77,7 @@ fn row_to_policy(row: &rusqlite::Row) -> rusqlite::Result<McpPolicy> {
         allow_ddl_read: row.get(3)?,
         allow_save_scripts: row.get(4)?,
         allow_compare_fix: row.get(5)?,
+        allow_compare_object: row.get(14)?,
         // Anything unrecognised falls back to the most restrictive value.
         data_access: if data_access == "allowlist" {
             McpDataAccess::Allowlist
@@ -126,6 +127,15 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
                 [],
             )?;
         }
+        let has_compare_object_column = conn
+            .prepare("SELECT 1 FROM pragma_table_info('connection_mcp_policy') WHERE name = 'allow_compare_object'")?
+            .exists([])?;
+        if !has_compare_object_column {
+            conn.execute(
+                "ALTER TABLE connection_mcp_policy ADD COLUMN allow_compare_object INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
         Ok(())
     }
 
@@ -171,8 +181,8 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
             "INSERT INTO connection_mcp_policy (
                 connection_id, mcp_enabled, allow_schema_list, allow_ddl_read, allow_save_scripts,
                 allow_compare_fix, data_access, allow_raw_sql, table_rules, object_deny,
-                max_rows, query_timeout_secs, mcp_username, allow_invalid_objects
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                max_rows, query_timeout_secs, mcp_username, allow_invalid_objects, allow_compare_object
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
              ON CONFLICT(connection_id) DO UPDATE SET
                 mcp_enabled = excluded.mcp_enabled,
                 allow_schema_list = excluded.allow_schema_list,
@@ -186,7 +196,8 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
                 max_rows = excluded.max_rows,
                 query_timeout_secs = excluded.query_timeout_secs,
                 mcp_username = excluded.mcp_username,
-                allow_invalid_objects = excluded.allow_invalid_objects",
+                allow_invalid_objects = excluded.allow_invalid_objects,
+                allow_compare_object = excluded.allow_compare_object",
             params![
                 policy.connection_id,
                 policy.mcp_enabled,
@@ -202,6 +213,7 @@ impl McpPolicyRepository for SqliteMcpPolicyRepository {
                 policy.query_timeout_secs,
                 policy.mcp_username,
                 policy.allow_invalid_objects,
+                policy.allow_compare_object,
             ],
         )
         .with_context(|| {

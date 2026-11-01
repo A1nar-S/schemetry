@@ -75,6 +75,7 @@ fn enabled_policy_allows_only_listing_and_ddl_by_default() {
     assert!(policy.check_tool(McpTool::SaveMigrationScript).is_err());
     assert!(policy.check_tool(McpTool::CompareSchemas).is_err());
     assert!(policy.check_tool(McpTool::GenerateFixScript).is_err());
+    assert!(policy.check_tool(McpTool::CompareObject).is_err());
     assert!(policy.check_tool(McpTool::QueryTable).is_err());
     assert!(policy.check_tool(McpTool::RunQuery).is_err());
 }
@@ -101,6 +102,21 @@ fn invalid_object_tools_also_need_listing_or_ddl_read() {
     assert!(policy.check_tool(McpTool::GetObjectErrors).is_ok());
     policy.allow_ddl_read = false;
     assert!(policy.check_tool(McpTool::GetObjectErrors).is_err());
+}
+
+#[test]
+fn compare_object_needs_its_own_flag_and_ddl_read() {
+    let mut policy = enabled_policy(1);
+    assert!(policy.check_tool(McpTool::CompareObject).is_err());
+    policy.allow_compare_object = true;
+    assert!(policy.check_tool(McpTool::CompareObject).is_ok());
+    assert_eq!(policy.agent_view()["compare_object"], true);
+    policy.allow_ddl_read = false;
+    assert!(policy.check_tool(McpTool::CompareObject).is_err());
+    assert_eq!(policy.agent_view()["compare_object"], false);
+    policy.allow_ddl_read = true;
+    policy.mcp_enabled = false;
+    assert!(policy.check_tool(McpTool::CompareObject).is_err());
 }
 
 #[test]

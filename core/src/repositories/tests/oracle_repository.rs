@@ -427,7 +427,10 @@ fn metadata_object_type_keeps_package_spec_and_body_separate() {
     assert_eq!(metadata_object_type("PACKAGE"), "PACKAGE_SPEC");
     assert_eq!(metadata_object_type("PACKAGE BODY"), "PACKAGE_BODY");
     assert_eq!(metadata_object_type("TYPE BODY"), "TYPE_BODY");
-    assert_eq!(metadata_object_type("MATERIALIZED VIEW"), "MATERIALIZED_VIEW");
+    assert_eq!(
+        metadata_object_type("MATERIALIZED VIEW"),
+        "MATERIALIZED_VIEW"
+    );
     assert_eq!(metadata_object_type("JOB"), "PROCOBJ");
     assert_eq!(metadata_object_type("VIEW"), "VIEW");
 }

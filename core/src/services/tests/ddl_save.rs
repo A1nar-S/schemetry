@@ -257,7 +257,8 @@ fn save_applies_per_schema_folder_storage_extension_and_encoding_overrides() {
 }
 
 const SPEC: &str = "CREATE OR REPLACE PACKAGE PKG AS\n  PROCEDURE p;\nEND PKG;";
-const BODY: &str = "CREATE OR REPLACE PACKAGE BODY PKG AS\n  PROCEDURE p IS BEGIN NULL; END;\nEND PKG;";
+const BODY: &str =
+    "CREATE OR REPLACE PACKAGE BODY PKG AS\n  PROCEDURE p IS BEGIN NULL; END;\nEND PKG;";
 
 fn package_args() -> DdlSaveArgs {
     DdlSaveArgs {
@@ -273,7 +274,8 @@ fn combine_puts_a_slash_line_after_spec_and_body_without_doubling_terminators() 
     let expected = format!("{SPEC}\n/\n\n{BODY}\n/\n");
     assert_eq!(combine_package_spec_and_body(SPEC, BODY), expected);
     // DBMS_METADATA output already ends with a `/` line.
-    let with_slashes = combine_package_spec_and_body(&format!("{SPEC}\n/\n"), &format!("{BODY}\n/"));
+    let with_slashes =
+        combine_package_spec_and_body(&format!("{SPEC}\n/\n"), &format!("{BODY}\n/"));
     assert_eq!(with_slashes, expected);
     // A `/` inside code (division) is not a terminator.
     let division = "BEGIN x := a /\n b; END;";
@@ -282,13 +284,17 @@ fn combine_puts_a_slash_line_after_spec_and_body_without_doubling_terminators() 
 
 #[test]
 fn has_package_spec_and_body_needs_both_statements() {
-    assert!(has_package_spec_and_body(&combine_package_spec_and_body(SPEC, BODY)));
+    assert!(has_package_spec_and_body(&combine_package_spec_and_body(
+        SPEC, BODY
+    )));
     assert!(has_package_spec_and_body(
         "create package a is end;\n/\ncreate or replace editionable package body a is begin null; end;"
     ));
     assert!(!has_package_spec_and_body(SPEC));
     assert!(!has_package_spec_and_body(BODY));
-    assert!(!has_package_spec_and_body("CREATE TABLE PACKAGE_X (ID NUMBER);"));
+    assert!(!has_package_spec_and_body(
+        "CREATE TABLE PACKAGE_X (ID NUMBER);"
+    ));
 }
 
 #[test]
@@ -298,7 +304,10 @@ fn combined_type_follows_the_package_settings() {
     assert_eq!(settings_object_type(PACKAGE_SPEC_AND_BODY), "PACKAGE");
     assert_eq!(settings_object_type("PACKAGE BODY"), "PACKAGE BODY");
     assert_eq!(settings_object_type("TABLE"), "TABLE");
-    assert_eq!(crate::services::settings::default_ddl_extension("PACKAGE"), "pck");
+    assert_eq!(
+        crate::services::settings::default_ddl_extension("PACKAGE"),
+        "pck"
+    );
 }
 
 #[test]
@@ -355,7 +364,10 @@ fn combined_package_is_rejected_for_postgres() {
 
     let error = save(temp_dir.path(), &pg_args, &options("both")).unwrap_err();
 
-    assert!(error.contains("Oracle") && error.contains("PostgreSQL"), "{error}");
+    assert!(
+        error.contains("Oracle") && error.contains("PostgreSQL"),
+        "{error}"
+    );
     assert_eq!(fs::read_dir(temp_dir.path()).unwrap().count(), 0);
 }
 
