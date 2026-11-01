@@ -167,7 +167,7 @@ fn is_keyword_before_paren(tokens: &[Token], i: usize, word: &str, db_type: DbTy
     let prev = i.checked_sub(1).and_then(|p| tokens.get(p));
     match word.to_ascii_uppercase().as_str() {
         // Reserved in Postgres only; an Oracle function may carry these names.
-        "LIMIT" | "OFFSET" => db_type == DbType::Postgres,
+        "LIMIT" | "OFFSET" | "ARRAY" => db_type == DbType::Postgres,
         "OVER" | "FILTER" | "KEEP" => matches!(prev, Some(Token::Symbol(')'))),
         "SETS" => word_is(prev, "GROUPING"),
         "BY" => word_in(prev, &["ORDER", "GROUP", "PARTITION", "SIBLINGS"]),
@@ -755,6 +755,7 @@ fn extract_tables(
     let mut stack = vec![Frame::Plain];
     let mut expecting_table = false;
     let mut tables: Vec<TableRef> = Vec::new();
+    let mut label_end: Option<usize> = None;
 
     let mut i = 0usize;
     while i < tokens.len() {
@@ -799,9 +800,13 @@ fn extract_tables(
             // where it is a name, not a clause.
             Token::Word(_)
                 if i > 0
+                    && label_end != Some(i - 1)
                     && (matches!(tokens.get(i - 1), Some(Token::Symbol('.')))
                         || word_is(tokens.get(i - 1), "AS")) =>
             {
+                // The label itself must not make the next keyword look like a label too
+                // (`AS as FROM secret`, `t.as JOIN secret`).
+                label_end = Some(i);
                 i += 1;
                 continue;
             }
@@ -810,7 +815,9 @@ fn extract_tables(
                 if word.eq_ignore_ascii_case("FROM") && top != Frame::FuncArgs {
                     *stack.last_mut().unwrap() = Frame::FromList;
                     expecting_table = true;
-                } else if word.eq_ignore_ascii_case("JOIN") {
+                } else if word.eq_ignore_ascii_case("JOIN")
+                    || (db_type == DbType::Oracle && word.eq_ignore_ascii_case("APPLY"))
+                {
                     expecting_table = true;
                 } else if top == Frame::FromList && ends_from_list(word, db_type) {
                     *stack.last_mut().unwrap() = Frame::Plain;

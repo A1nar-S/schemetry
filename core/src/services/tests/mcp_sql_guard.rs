@@ -714,3 +714,39 @@ fn an_oracle_recursive_cte_needs_a_top_level_union_all() {
         ORA,
     );
 }
+
+#[test]
+fn a_label_named_as_does_not_hide_the_next_from_or_join() {
+    for sql in [
+        "SELECT x AS as FROM secret",
+        "SELECT t.as FROM secret t",
+        "SELECT x AS as FROM public.secret",
+        "SELECT (SELECT 1 AS as FROM secret)",
+    ] {
+        assert!(
+            tables(sql, PG).iter().any(|t| t.ends_with("secret")),
+            "{sql}"
+        );
+    }
+    assert_eq!(tables("SELECT x AS as FROM a, secret", PG), ["a", "secret"]);
+    assert_eq!(
+        tables(
+            "SELECT 1 FROM a JOIN b ON a.id = b.as JOIN secret ON true",
+            PG
+        ),
+        ["a", "b", "secret"]
+    );
+}
+
+#[test]
+fn oracle_apply_joins_report_their_table() {
+    assert_eq!(
+        tables("SELECT 1 FROM a CROSS APPLY secret", ORA),
+        ["A", "SECRET"]
+    );
+    assert_eq!(
+        tables("SELECT 1 FROM a OUTER APPLY sch.secret", ORA),
+        ["A", "SCH.SECRET"]
+    );
+    rejected("SELECT array(1) FROM dual", ORA);
+}
