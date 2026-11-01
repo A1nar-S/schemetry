@@ -10,6 +10,7 @@ import type {
   CompletionMetadata,
   LobContent,
   McpAuditFilter,
+  ScriptServerResult,
   McpAuditPage,
   McpAuditSinkKind,
   McpAuditVerification,
@@ -360,3 +361,8 @@ export async function decideMcpApplyRequest(id: number, approve: boolean): Promi
   return invoke('decide_mcp_apply_request', { id, approve });
 }
 
+
+/** Runs a DDL script on the servers (own account); the caller must have asked the user first. */
+export async function applyScript(sql: string, server_ids: number[]): Promise<ScriptServerResult[]> {
+  return invoke('apply_script', { sql, serverIds: server_ids });
+}

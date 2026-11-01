@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::State;
 use tokio;
 
-use crate::models::{CompletionMetadata, QueryHistoryEntry, QueryServerResult};
+use crate::models::{CompletionMetadata, QueryHistoryEntry, QueryServerResult, ScriptServerResult};
 use crate::repositories::db_repository::LobCell;
 use crate::services;
 use crate::services::cancel::begin_task;
@@ -37,6 +37,25 @@ pub async fn run_query(
     .map_err(|e| e.to_string())?
 }
 
+/// Runs a pasted script on the selected servers; the UI has already asked the user to confirm.
+#[tauri::command]
+pub async fn apply_script(
+    state: State<'_, AppState>,
+    sql: String,
+    server_ids: Vec<i64>,
+) -> Result<Vec<ScriptServerResult>, String> {
+    let selected = super::selected_connections(&state.catalog, &server_ids)?;
+    if sql.trim().is_empty() {
+        return Err("The script cannot be empty.".to_string());
+    }
+    let query_svc = std::sync::Arc::clone(&state.query_svc);
+    tokio::task::spawn_blocking(move || {
+        let _task = begin_task();
+        Ok(query_svc.apply_script_on_servers(&selected, &sql))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 /// Schema metadata (tables, columns, other objects) for editor autocompletion.
 #[tauri::command]
 pub async fn fetch_completion_metadata(

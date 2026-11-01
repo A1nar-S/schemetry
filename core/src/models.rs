@@ -103,6 +103,31 @@ pub type ServerTables = HashMap<String, TableColumns>;
 /// groups/engines, but a connection's numeric id always is.
 pub type ServersData = HashMap<i64, ServerTables>;
 pub type TableDdls = HashMap<String, String>;
+/// A compiler message left on an object a script created.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScriptCompileError {
+    pub object: String,
+    pub object_type: String,
+    pub severity: String,
+    pub line: i64,
+    pub position: i64,
+    pub text: String,
+}
+
+/// What running a script on one server did.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScriptServerResult {
+    pub server_id: i64,
+    pub server_name: String,
+    /// Statements the script was split into.
+    pub statement_count: usize,
+    /// Statements that ran before an error stopped the script.
+    pub executed: usize,
+    pub error: Option<String>,
+    pub compile_errors: Vec<ScriptCompileError>,
+    pub duration_ms: u64,
+}
+
 pub type ServerTableDdls = HashMap<i64, TableDdls>;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

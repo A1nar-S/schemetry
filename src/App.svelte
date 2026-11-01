@@ -13,15 +13,17 @@
   import QueryView from './views/QueryView.svelte';
   import FixView from './views/FixView.svelte';
   import DdlView from './views/DdlView.svelte';
+  import ApplyView from './views/ApplyView.svelte';
   import HistoryFixView from './views/HistoryFixView.svelte';
   import McpAuditView from './views/McpAuditView.svelte';
   import ConnectionsView from './views/ConnectionsView.svelte';
   import SettingsView from './views/SettingsView.svelte';
 
-  type View = 'query' | 'compare' | 'ddl' | 'historyfix' | 'mcpaudit' | 'connections' | 'settings';
+  type View = 'query' | 'apply' | 'compare' | 'ddl' | 'historyfix' | 'mcpaudit' | 'connections' | 'settings';
 
   const VIEW_TITLES: Record<View, string> = {
     query:       'Query',
+    apply:       'Apply DDL',
     compare:     'Fix Discrepancies',
     ddl:         'Generate DDL',
     historyfix:  'Fix History Tables',
@@ -115,6 +117,14 @@
       </button>
       <button
         class="nav-btn"
+        class:active={activeView === 'apply'}
+        title="Apply DDL"
+        on:click={() => (activeView = 'apply')}
+      >
+        <Icon name="play" size={16} /><span class="nav-label">Apply DDL</span>
+      </button>
+      <button
+        class="nav-btn"
         class:active={activeView === 'ddl'}
         title="Generate DDL"
         on:click={() => (activeView = 'ddl')}
@@ -183,6 +193,8 @@
     <div class="view-body">
       {#if activeView === 'query'}
         <QueryView {connections} />
+      {:else if activeView === 'apply'}
+        <ApplyView {connections} />
       {:else if activeView === 'compare'}
         <FixView {connections} />
       {:else if activeView === 'ddl'}

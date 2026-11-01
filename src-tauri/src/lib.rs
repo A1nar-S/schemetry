@@ -37,6 +37,7 @@ pub fn run(db_override: Option<OsString>) -> anyhow::Result<()> {
             commands::history_fix::save_history_naming_rule,
             commands::history_fix::delete_history_naming_rule,
             commands::query::run_query,
+            commands::query::apply_script,
             commands::cancel_task,
             commands::query::fetch_completion_metadata,
             commands::query::fetch_lob_content,

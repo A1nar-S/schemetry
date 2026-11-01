@@ -301,3 +301,22 @@ export type McpAuditVerification = {
   problem: string | null;
   first_bad_id: number | null;
 };
+
+export interface ScriptCompileError {
+  object: string;
+  object_type: string;
+  severity: string;
+  line: number;
+  position: number;
+  text: string;
+}
+
+export interface ScriptServerResult {
+  server_id: number;
+  server_name: string;
+  statement_count: number;
+  executed: number;
+  error: string | null;
+  compile_errors: ScriptCompileError[];
+  duration_ms: number;
+}

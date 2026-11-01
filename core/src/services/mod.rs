@@ -23,4 +23,5 @@ pub mod query_export;
 pub mod query_history;
 pub mod save_summary;
 pub mod schema_diff;
+pub mod script_split;
 pub mod settings;

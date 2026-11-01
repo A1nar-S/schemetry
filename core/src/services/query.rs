@@ -6,11 +6,15 @@ use std::time::Instant;
 
 use anyhow::anyhow;
 
-use crate::models::{CompletionMetadata, ConnectionRecord, QueryServerResult};
+use crate::models::{
+    CompletionMetadata, ConnectionRecord, DbType, QueryServerResult, ScriptCompileError,
+    ScriptServerResult,
+};
 use crate::repositories::db_repository::{
-    DbRepository, LobCell, LobSource, ReadOnlyQuery, ReadOnlyResult,
+    ApplyDdlRequest, DbRepository, DdlStatement, LobCell, LobSource, ReadOnlyQuery, ReadOnlyResult,
 };
 use crate::services::cancel;
+use crate::services::script_split::{ScriptStatement, split_script};
 
 type SharedLobSource = Arc<Mutex<Box<dyn LobSource>>>;
 
@@ -51,6 +55,25 @@ impl QueryService {
         request: &ReadOnlyQuery,
     ) -> anyhow::Result<ReadOnlyResult> {
         self.repo.run_readonly_query(conn, request)
+    }
+
+    /// Runs `script` on every connection (its own account, no policy involved: this is the
+    /// user's own action). Oracle runs statement by statement and reports compile errors per
+    /// created object; Postgres runs the whole script in one transaction.
+    pub fn apply_script_on_servers(
+        &self,
+        connections: &[ConnectionRecord],
+        script: &str,
+    ) -> Vec<ScriptServerResult> {
+        let mut handles = Vec::new();
+        for conn in connections.iter().cloned() {
+            let repo = Arc::clone(&self.repo);
+            let script = script.to_string();
+            handles.push(cancel::spawn(move || {
+                run_script(repo.as_ref(), &conn, &script)
+            }));
+        }
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
     }
 
     pub fn run_query_on_servers(
@@ -157,4 +180,81 @@ impl QueryService {
         let mut source = source.lock().unwrap();
         source.copy_to(row_index, col_index, out)
     }
+}
+
+const SCRIPT_TIMEOUT_SECS: u32 = 600;
+
+fn run_script(
+    repo: &dyn DbRepository,
+    conn: &ConnectionRecord,
+    script: &str,
+) -> ScriptServerResult {
+    let started = Instant::now();
+    let statements = split_script(script, conn.db_type);
+    let mut result = ScriptServerResult {
+        server_id: conn.id,
+        server_name: conn.name.clone(),
+        statement_count: statements.len(),
+        executed: 0,
+        error: None,
+        compile_errors: Vec::new(),
+        duration_ms: 0,
+    };
+    let to_ddl = |s: &ScriptStatement| DdlStatement {
+        sql: s.sql.clone(),
+        object_type: s.object_type.clone(),
+    };
+    let describe = |index: usize, s: &ScriptStatement, error: String| {
+        let head: String = s.sql.chars().take(80).collect();
+        format!(
+            "Statement {} ({}): {error}",
+            index + 1,
+            head.replace('\n', " ")
+        )
+    };
+
+    if conn.db_type == DbType::Postgres {
+        let request = ApplyDdlRequest {
+            object_name: String::new(),
+            statements: statements.iter().map(to_ddl).collect(),
+            timeout_secs: SCRIPT_TIMEOUT_SECS,
+        };
+        match repo.apply_ddl(conn, &request) {
+            Ok(_) => result.executed = statements.len(),
+            Err(e) => result.error = Some(format!("{e} (rolled back; nothing was applied)")),
+        }
+    } else {
+        for (index, statement) in statements.iter().enumerate() {
+            if cancel::is_cancelled() {
+                result.error = Some(cancel::CANCELLED.to_string());
+                break;
+            }
+            let request = ApplyDdlRequest {
+                object_name: statement.object_name.clone(),
+                statements: vec![to_ddl(statement)],
+                timeout_secs: SCRIPT_TIMEOUT_SECS,
+            };
+            match repo.apply_ddl(conn, &request) {
+                Ok(done) => {
+                    result.executed += 1;
+                    result
+                        .compile_errors
+                        .extend(done.compile_errors.into_iter().map(|e| ScriptCompileError {
+                            object: statement.object_name.clone(),
+                            object_type: e.object_type,
+                            severity: e.severity,
+                            line: e.line,
+                            position: e.position,
+                            text: e.text,
+                        }));
+                }
+                Err(e) => {
+                    result.error = Some(describe(index, statement, e.to_string()));
+                    break;
+                }
+            }
+        }
+    }
+    result.duration_ms = started.elapsed().as_millis() as u64;
+    result
 }
