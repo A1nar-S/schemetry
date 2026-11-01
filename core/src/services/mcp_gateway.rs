@@ -29,6 +29,7 @@ use crate::services::mcp_policy::{ENABLE_HINT, McpPolicyService, McpTool};
 use crate::services::mcp_query_builder::{self, Filter, OrderBy, TableQuery};
 use crate::services::mcp_sql_guard;
 use crate::services::query::QueryService;
+use crate::services::save_summary;
 use crate::services::schema_diff::SchemaDiffService;
 use crate::services::settings;
 use crate::state::AppServices;
@@ -171,9 +172,15 @@ tool_args! {
         pub source: Option<SaveSource>,
         /// Short label used in the migration file name: letters, digits, `_` and `-`, up to 80 characters.
         pub description: String,
-        /// Report the target paths (and, for inline `ddl`, the rendered content) without writing anything.
+        /// Plan only: report what would be written without writing anything. Each file is described by
+        /// kind, path, size, sha256, line count, encoding, line endings and, when it already exists,
+        /// an added/removed line diff against the file on disk. Content is never echoed.
         #[serde(default)]
         pub dry_run: bool,
+        /// Dry run only (default false): also return each file's decoded content, but only for files
+        /// of at most 64 KB; larger files report `content_omitted`.
+        #[serde(default)]
+        pub include_content: bool,
     }
 }
 
@@ -392,7 +399,7 @@ fn truncate_chars(text: &str, max: usize) -> String {
     }
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -1073,26 +1080,12 @@ impl McpGateway {
                 }));
                 ctx.row_count = Some(plan.files.len() as i64);
 
-                // Content is only echoed for a dry run of inline DDL the agent supplied itself.
-                let echo_content = args.dry_run && source_kind == "inline";
+                // Summarised before writing, so the diff compares against the pre-save file.
+                let include_content = args.dry_run && args.include_content;
                 let files: Vec<Value> = plan
                     .files
                     .iter()
-                    .map(|file| {
-                        let mut entry = json!({
-                            "kind": file.kind,
-                            "path": file.path.to_string_lossy(),
-                            "bytes": file.content.len(),
-                            "sha256": sha256_hex(&file.content),
-                            "line_count": line_count(&file.content),
-                            "overwrites_existing": file.exists,
-                        });
-                        if echo_content {
-                            entry["content"] =
-                                Value::String(String::from_utf8_lossy(&file.content).into_owned());
-                        }
-                        entry
-                    })
+                    .map(|file| save_summary::describe_planned_file(file, include_content))
                     .collect();
 
                 if args.dry_run {

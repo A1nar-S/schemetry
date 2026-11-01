@@ -190,6 +190,38 @@ pub struct PlannedFile {
     pub content: Vec<u8>,
     /// The file is already there and would be overwritten.
     pub exists: bool,
+    /// Canonical name of the encoding `content` is in, see [`encoding_label`].
+    pub encoding: &'static str,
+}
+
+/// Canonical name of the encoding `encode_content` produces for a configured value.
+pub fn encoding_label(encoding: &str) -> &'static str {
+    match encoding.trim().to_ascii_lowercase().as_str() {
+        "utf8-bom" => "utf8-bom",
+        "windows-1257" => "windows-1257",
+        _ => "utf8",
+    }
+}
+
+/// Inverse of `encode_content`. The flag is true when bytes were not valid in the encoding
+/// and had to be replaced.
+pub fn decode_content(bytes: &[u8], encoding: &str) -> (String, bool) {
+    match encoding_label(encoding) {
+        "windows-1257" => {
+            let (text, had_errors) = encoding_rs::WINDOWS_1257.decode_without_bom_handling(bytes);
+            (text.into_owned(), had_errors)
+        }
+        label => {
+            let bytes = match bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+                Some(rest) if label == "utf8-bom" => rest,
+                _ => bytes,
+            };
+            match std::str::from_utf8(bytes) {
+                Ok(text) => (text.to_string(), false),
+                Err(_) => (String::from_utf8_lossy(bytes).into_owned(), true),
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -333,6 +365,7 @@ fn plan_inner(
                 Some(bytes) => bytes.to_vec(),
                 None => encode_content(&args.ddl, &encoding),
             },
+            encoding: encoding_label(&encoding),
             path: code_file,
         });
     }
@@ -390,6 +423,7 @@ fn plan_inner(
             kind: "migration",
             exists: migration_file.exists(),
             content: migration_content,
+            encoding: encoding_label(&encoding),
             path: migration_file,
         });
     }

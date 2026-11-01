@@ -20,5 +20,6 @@ pub mod mcp_sql_guard;
 pub mod query;
 pub mod query_export;
 pub mod query_history;
+pub mod save_summary;
 pub mod schema_diff;
 pub mod settings;

@@ -801,7 +801,7 @@ fn saving_the_combined_package_type_writes_one_pck_file() {
         .iter()
         .find(|f| f["kind"] == "code")
         .unwrap();
-    assert_eq!(code["content"], args.ddl.clone().unwrap());
+    assert!(code.get("content").is_none());
     assert!(code["path"].as_str().unwrap().ends_with("ORDER_API.sql"));
 
     args.dry_run = false;
@@ -1270,6 +1270,7 @@ fn save_args(name: &str, description: &str) -> SaveMigrationScriptArgs {
         source: None,
         description: description.into(),
         dry_run: false,
+        include_content: false,
     }
 }
 
@@ -1332,8 +1333,17 @@ fn saving_writes_code_and_migration_files_inside_the_schema_folder() {
     assert_audit(&h, 1, McpOutcome::Allowed);
 }
 
+fn code_entry(out: &Value) -> &Value {
+    out["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["kind"] == "code")
+        .unwrap()
+}
+
 #[test]
-fn dry_run_returns_paths_and_content_without_writing() {
+fn dry_run_describes_files_without_writing_or_echoing_content() {
     let (h, root) = save_harness();
     let mut args = save_args("ORDERS", "preview");
     args.dry_run = true;
@@ -1342,32 +1352,110 @@ fn dry_run_returns_paths_and_content_without_writing() {
     assert_eq!(out["dry_run"], true);
     assert_eq!(out["written"], false);
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
-    let code = out["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|f| f["kind"] == "code")
-        .unwrap();
-    assert_eq!(code["content"], "CREATE TABLE ORDERS (ID NUMBER);");
-    assert_eq!(code["overwrites_existing"], false);
+    for file in out["files"].as_array().unwrap() {
+        assert!(file.get("content").is_none());
+        assert!(file["size"].as_u64().unwrap() > 0);
+        assert_eq!(file["sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(file["encoding"], "utf8");
+        assert_eq!(file["overwrites_existing"], false);
+        assert!(file.get("diff").is_none());
+    }
+    let code = code_entry(&out);
+    let ddl = "CREATE TABLE ORDERS (ID NUMBER);";
+    assert_eq!(code["size"], ddl.len());
+    assert_eq!(code["lines"], 1);
+    assert_eq!(code["line_ending"], "none");
+    assert_eq!(code["sha256"], sha256_hex(ddl.as_bytes()));
+    assert_audit(&h, 1, McpOutcome::Allowed);
 }
 
 #[test]
-fn saving_again_reports_the_overwrite() {
+fn include_content_is_an_opt_in_for_dry_runs_only() {
     let (h, _root) = save_harness();
-    h.gateway
-        .save_migration_script(CLIENT, save_args("ORDERS", "first"))
+    let mut args = save_args("ORDERS", "preview");
+    args.dry_run = true;
+    args.include_content = true;
+    let out = h.gateway.save_migration_script(CLIENT, args).unwrap();
+    assert_eq!(
+        code_entry(&out)["content"],
+        "CREATE TABLE ORDERS (ID NUMBER);"
+    );
+
+    let mut real = save_args("ORDERS", "real");
+    real.include_content = true;
+    let out = h.gateway.save_migration_script(CLIENT, real).unwrap();
+    assert_eq!(out["written"], true);
+    assert!(code_entry(&out).get("content").is_none());
+}
+
+#[test]
+fn saving_never_echoes_content() {
+    let (h, _root) = save_harness();
+    let out = h
+        .gateway
+        .save_migration_script(CLIENT, save_args("ORDERS", "real"))
         .unwrap();
+    for file in out["files"].as_array().unwrap() {
+        assert!(file.get("content").is_none());
+        assert!(file["lines"].as_u64().unwrap() >= 1);
+    }
+}
+
+#[test]
+fn saving_again_reports_the_overwrite_with_a_line_diff() {
+    let (h, root) = save_harness();
+    let mut first = save_args("ORDERS", "first");
+    first.ddl = Some("CREATE TABLE ORDERS (\r\n  ID NUMBER\r\n);\r\n".into());
+    h.gateway.save_migration_script(CLIENT, first).unwrap();
+
     let mut again = save_args("ORDERS", "second");
+    again.ddl = Some("CREATE TABLE ORDERS (\n  ID NUMBER,\n  NAME VARCHAR2(10)\n);\n".into());
     again.dry_run = true;
-    let out = h.gateway.save_migration_script(CLIENT, again).unwrap();
-    let code = out["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|f| f["kind"] == "code")
+    let out = h
+        .gateway
+        .save_migration_script(CLIENT, again.clone())
         .unwrap();
+    let code = code_entry(&out);
     assert_eq!(code["overwrites_existing"], true);
+    assert_eq!(code["line_ending"], "LF");
+    assert_eq!(code["diff"]["existing_line_ending"], "CRLF");
+    assert_eq!(code["diff"]["identical"], false);
+    // "  ID NUMBER" -> "  ID NUMBER," plus the new NAME line.
+    assert_eq!(code["diff"]["added"], 2);
+    assert_eq!(code["diff"]["removed"], 1);
+
+    // The real run reports the diff against the pre-save file too.
+    again.dry_run = false;
+    let out = h.gateway.save_migration_script(CLIENT, again).unwrap();
+    assert_eq!(code_entry(&out)["diff"]["added"], 2);
+    let on_disk = std::fs::read_to_string(
+        root.path()
+            .join("app")
+            .join("code")
+            .join("app")
+            .join("ORDERS.sql"),
+    )
+    .unwrap();
+    assert!(on_disk.contains("NAME VARCHAR2(10)"));
+}
+
+#[test]
+fn the_planned_encoding_is_reported_and_used_for_the_digest() {
+    let (h, _root) = save_harness();
+    h.settings.options.lock().unwrap().encoding = "windows-1257".into();
+    let mut args = save_args("ORDERS", "enc");
+    args.ddl = Some("-- Žvaigždė\nCREATE TABLE ORDERS (ID NUMBER);".into());
+    args.dry_run = true;
+    let out = h.gateway.save_migration_script(CLIENT, args).unwrap();
+    let code = code_entry(&out);
+    assert_eq!(code["encoding"], "windows-1257");
+    // One byte per character instead of two for the non-ASCII letters.
+    assert_eq!(
+        code["size"],
+        "-- Žvaigždė\nCREATE TABLE ORDERS (ID NUMBER);"
+            .chars()
+            .count()
+    );
 }
 
 #[test]
@@ -1522,9 +1610,9 @@ fn server_source_saves_the_connections_ddl_without_echoing_it() {
     let code = saved_file(&out, "code");
     let on_disk = std::fs::read(code["path"].as_str().unwrap()).unwrap();
     assert_eq!(on_disk, ddl.as_bytes());
-    assert_eq!(code["bytes"], ddl.len());
+    assert_eq!(code["size"], ddl.len());
     assert_eq!(code["sha256"], sha256_hex(ddl.as_bytes()));
-    assert_eq!(code["line_count"], 1);
+    assert_eq!(code["lines"], 1);
     assert_eq!(code["overwrites_existing"], false);
     assert!(
         std::path::Path::new(saved_file(&out, "migration")["path"].as_str().unwrap()).is_file()
@@ -1615,9 +1703,9 @@ fn file_source_is_copied_byte_for_byte_into_every_file() {
             bytes,
             "{kind}"
         );
-        assert_eq!(file["bytes"], bytes.len());
+        assert_eq!(file["size"], bytes.len());
         assert_eq!(file["sha256"], sha256_hex(bytes));
-        assert_eq!(file["line_count"], 3);
+        assert_eq!(file["lines"], 3);
         assert_eq!(file["overwrites_existing"], false);
     }
 
@@ -1646,7 +1734,7 @@ fn file_source_dry_run_never_returns_content_and_reports_overwrites() {
     let code = saved_file(&out, "code");
     assert!(code.get("content").is_none());
     assert_eq!(code["overwrites_existing"], true);
-    assert_eq!(code["line_count"], 1);
+    assert_eq!(code["lines"], 1);
 }
 
 #[test]
@@ -1784,7 +1872,7 @@ fn file_source_size_cap_is_eight_megabytes() {
         .gateway
         .save_migration_script(CLIENT, from_file("big.sql"))
         .unwrap();
-    assert_eq!(saved_file(&out, "code")["bytes"], big.len());
+    assert_eq!(saved_file(&out, "code")["size"], big.len());
 
     put_source(&root, "huge.sql", &vec![b'x'; 8 * 1024 * 1024 + 1]);
     let message = denied_message(

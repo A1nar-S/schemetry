@@ -297,6 +297,7 @@ fn list_read_ddl_and_save_scripts_end_to_end() {
         source: None,
         description: "from_mcp".into(),
         dry_run,
+        include_content: false,
     };
     let preview = env
         .gateway
