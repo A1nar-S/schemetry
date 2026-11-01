@@ -195,14 +195,15 @@ pub struct McpApplyRequestView {
 /// Deploy requests agents filed through `apply_ddl` that are still open: pending ones
 /// awaiting a decision and approved ones the agent has not used yet.
 #[tauri::command]
-pub fn list_mcp_apply_requests(
-    state: State<AppState>,
-) -> Result<Vec<McpApplyRequestView>, String> {
+pub fn list_mcp_apply_requests(state: State<AppState>) -> Result<Vec<McpApplyRequestView>, String> {
     let connections = state
         .catalog
         .list_connection_summaries()
         .map_err(|e| e.to_string())?;
-    let open = state.mcp_approval_svc.list_open().map_err(|e| e.to_string())?;
+    let open = state
+        .mcp_approval_svc
+        .list_open()
+        .map_err(|e| e.to_string())?;
     Ok(open
         .into_iter()
         .map(|request| McpApplyRequestView {
@@ -225,7 +226,10 @@ pub fn decide_mcp_apply_request(
     approve: bool,
 ) -> Result<(), String> {
     if approve {
-        let open = state.mcp_approval_svc.list_open().map_err(|e| e.to_string())?;
+        let open = state
+            .mcp_approval_svc
+            .list_open()
+            .map_err(|e| e.to_string())?;
         let request = open
             .iter()
             .find(|r| r.id == id)

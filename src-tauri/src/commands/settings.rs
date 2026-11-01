@@ -99,8 +99,7 @@ pub fn save_settings(
         .map_err(|e| e.to_string())?;
     services::settings::save_ddl_line_endings(ddl_line_endings.trim())
         .map_err(|e| e.to_string())?;
-    services::settings::save_naming_template(naming_template.trim())
-        .map_err(|e| e.to_string())?;
+    services::settings::save_naming_template(naming_template.trim()).map_err(|e| e.to_string())?;
     services::settings::save_plsql_dev_path(plsql_dev_path.trim()).map_err(|e| e.to_string())?;
 
     set_client_lib_dir_hint(client_lib_dir.trim());

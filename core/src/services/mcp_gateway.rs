@@ -456,6 +456,7 @@ fn read_source_file(schema_dir: &Path, relative: &str) -> Result<Vec<u8>, ToolEr
         && !relative.contains(['\0', ':'])
         && !relative.starts_with(['/', '\\'])
         && !path.is_absolute()
+        && !relative.split(['/', '\\']).any(|part| part == "..")
         && path
             .components()
             .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
@@ -1831,6 +1832,8 @@ impl McpGateway {
     ) -> Result<String, ToolError> {
         let relative_path = std::path::Path::new(relative.trim());
         if relative.trim().is_empty()
+            || relative.contains(['\0', ':'])
+            || relative.split(['/', '\\']).any(|part| part == "..")
             || relative_path
                 .components()
                 .any(|c| !matches!(c, std::path::Component::Normal(_)))
