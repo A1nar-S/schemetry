@@ -7,6 +7,7 @@ pub mod ddl_save;
 pub mod filter_rules;
 pub mod fix;
 pub mod folder_schema_overrides;
+pub mod git;
 pub mod history_naming_rules;
 pub mod mcp_apply_approval;
 pub mod mcp_audit;

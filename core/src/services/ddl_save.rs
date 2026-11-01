@@ -5,6 +5,7 @@ use chrono::Local;
 use serde::Serialize;
 
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
+use crate::services::git;
 
 /// Pseudo object type for an Oracle package's spec and body kept together in one file
 /// (the `.pck` convention): spec, a `/` line, body, a `/` line.
@@ -429,6 +430,283 @@ fn plan_inner(
     }
 
     Ok(plan)
+}
+
+const DIFF_CONTEXT_LINES: usize = 2;
+const MAX_DIFF_LINES: usize = 40;
+const MAX_DIFF_CHARS: usize = 3_000;
+/// Line-pair budget for the LCS table; larger edits are summarised by counts only.
+const MAX_DIFF_CELLS: usize = 4_000_000;
+
+/// Overwrite-safety verdict for one planned file.
+#[derive(Clone, Debug)]
+pub struct FileGuard {
+    pub kind: &'static str,
+    pub path: PathBuf,
+    pub exists: bool,
+    pub git_status: git::FileStatus,
+    /// The file has uncommitted work that the new content would replace.
+    pub at_risk: bool,
+    /// Bounded unified-style diff (existing → new); only set for at-risk files.
+    pub diff: Option<String>,
+}
+
+impl FileGuard {
+    /// `"new"` when nothing exists yet, otherwise the git status.
+    pub fn status_label(&self) -> &'static str {
+        if self.exists {
+            self.git_status.as_str()
+        } else {
+            "new"
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct OverwriteGuard {
+    pub git: git::RepoStatus,
+    pub files: Vec<FileGuard>,
+}
+
+impl OverwriteGuard {
+    pub fn at_risk(&self) -> impl Iterator<Item = &FileGuard> {
+        self.files.iter().filter(|file| file.at_risk)
+    }
+
+    /// Why the save is refused, with a diff summary per file; `None` when it is safe.
+    pub fn refusal_message(&self) -> Option<String> {
+        let mut parts = Vec::new();
+        for file in self.at_risk() {
+            let mut part = if file.git_status == git::FileStatus::Unknown {
+                format!(
+                    "{} could not be checked against git, so this save would overwrite it unverified.",
+                    file.path.display()
+                )
+            } else {
+                format!(
+                    "{} has uncommitted changes in git ({}) that this save would overwrite.",
+                    file.path.display(),
+                    file.git_status.as_str()
+                )
+            };
+            // No diff here: this text is also written to the append-only audit log. The
+            // dry run returns the diff.
+            if let Some(diff) = &file.diff {
+                part.push_str(&format!(
+                    " ({} changed lines; run with dry_run to see the diff)",
+                    diff.lines()
+                        .filter(|l| l.starts_with('+') || l.starts_with('-'))
+                        .count()
+                ));
+            }
+            parts.push(part);
+        }
+        if parts.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "Refusing to overwrite {}. Commit or stash the local changes, or pass force: true to overwrite anyway.\n\n{}",
+            if parts.len() == 1 { "a file" } else { "files" },
+            parts.join("\n\n")
+        ))
+    }
+}
+
+/// Checks every planned file that already exists against git. Files whose content would not
+/// change are never at risk; files git cannot vouch for (no repository) are allowed but
+/// reported as `unknown`.
+pub fn assess_overwrites(plan: &DdlSavePlan) -> OverwriteGuard {
+    let git = plan
+        .files
+        .first()
+        .and_then(|file| file.path.parent())
+        .map(git::repo_status)
+        .unwrap_or_else(|| git::RepoStatus::Unknown("nothing to save".to_string()));
+    let files = plan
+        .files
+        .iter()
+        .map(|file| {
+            let mut guard = FileGuard {
+                kind: file.kind,
+                path: file.path.clone(),
+                exists: file.exists,
+                git_status: git::FileStatus::Unknown,
+                at_risk: false,
+                diff: None,
+            };
+            if !file.exists {
+                return guard;
+            }
+            // Git failing inside a work tree (missing binary, dubious ownership, ...) says
+            // nothing about the file, so an overwrite is refused rather than waved through.
+            let in_work_tree = file
+                .path
+                .ancestors()
+                .skip(1)
+                .any(|dir| dir.join(".git").exists());
+            if !git.is_known() && !in_work_tree {
+                return guard;
+            }
+            if git.is_known() {
+                guard.git_status = git::file_status(&file.path);
+                if guard.git_status != git::FileStatus::Unknown
+                    && !guard.git_status.has_uncommitted_changes()
+                {
+                    return guard;
+                }
+            }
+            match fs::read(&file.path) {
+                Ok(existing) if existing == file.content => {}
+                Ok(existing) => {
+                    guard.at_risk = true;
+                    guard.diff = Some(unified_diff_summary(
+                        &decode_lossy(&existing),
+                        &decode_lossy(&file.content),
+                    ));
+                }
+                Err(_) => guard.at_risk = true,
+            }
+            guard
+        })
+        .collect();
+    OverwriteGuard { git, files }
+}
+
+fn decode_lossy(bytes: &[u8]) -> String {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(bytes);
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// A bounded unified-style line diff from `old` to `new`.
+pub fn unified_diff_summary(old: &str, new: &str) -> String {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let prefix = old_lines
+        .iter()
+        .zip(&new_lines)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix = old_lines[prefix..]
+        .iter()
+        .rev()
+        .zip(new_lines[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let old_mid = &old_lines[prefix..old_lines.len() - suffix];
+    let new_mid = &new_lines[prefix..new_lines.len() - suffix];
+
+    if old_mid.is_empty() && new_mid.is_empty() {
+        return "(only line endings or encoding differ)".to_string();
+    }
+    if old_mid.len().saturating_mul(new_mid.len()) > MAX_DIFF_CELLS {
+        return format!(
+            "(too large for a line diff: {} existing lines, {} new lines, {} unchanged lines at the top/bottom excluded)",
+            old_lines.len(),
+            new_lines.len(),
+            prefix + suffix
+        );
+    }
+
+    // (marker, line, 1-based old line, 1-based new line) of every line in the merged view.
+    let mut ops: Vec<(char, &str, usize, usize)> = Vec::new();
+    let (mut o, mut n) = (1usize, 1usize);
+    for line in &old_lines[..prefix] {
+        ops.push((' ', line, o, n));
+        o += 1;
+        n += 1;
+    }
+    for (marker, line) in lcs_ops(old_mid, new_mid) {
+        ops.push((marker, line, o, n));
+        if marker != '+' {
+            o += 1;
+        }
+        if marker != '-' {
+            n += 1;
+        }
+    }
+    for line in &old_lines[old_lines.len() - suffix..] {
+        ops.push((' ', line, o, n));
+        o += 1;
+        n += 1;
+    }
+
+    let added = ops.iter().filter(|op| op.0 == '+').count();
+    let removed = ops.iter().filter(|op| op.0 == '-').count();
+    let mut out = format!("--- existing\n+++ new (+{added} -{removed} lines)\n");
+    let mut lines_written = 0usize;
+    let mut truncated = false;
+
+    let changed: Vec<usize> = (0..ops.len()).filter(|&i| ops[i].0 != ' ').collect();
+    let mut idx = 0;
+    'hunks: while idx < changed.len() {
+        let start = changed[idx].saturating_sub(DIFF_CONTEXT_LINES);
+        let mut end = changed[idx];
+        while idx < changed.len() && changed[idx] <= end + 2 * DIFF_CONTEXT_LINES + 1 {
+            end = changed[idx];
+            idx += 1;
+        }
+        let end = (end + DIFF_CONTEXT_LINES).min(ops.len() - 1);
+        let hunk = &ops[start..=end];
+        let old_count = hunk.iter().filter(|op| op.0 != '+').count();
+        let new_count = hunk.iter().filter(|op| op.0 != '-').count();
+        let header = format!(
+            "@@ -{},{} +{},{} @@\n",
+            hunk[0].2, old_count, hunk[0].3, new_count
+        );
+        if lines_written + 1 > MAX_DIFF_LINES || out.len() + header.len() > MAX_DIFF_CHARS {
+            truncated = true;
+            break;
+        }
+        out.push_str(&header);
+        lines_written += 1;
+        for (marker, line, _, _) in hunk {
+            let text = format!("{marker}{line}\n");
+            if lines_written >= MAX_DIFF_LINES || out.len() + text.len() > MAX_DIFF_CHARS {
+                truncated = true;
+                break 'hunks;
+            }
+            out.push_str(&text);
+            lines_written += 1;
+        }
+    }
+    if truncated {
+        out.push_str("... (diff truncated)\n");
+    }
+    out.trim_end().to_string()
+}
+
+/// Edit script (` `, `-`, `+`) from `old` to `new` via longest common subsequence.
+fn lcs_ops<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<(char, &'a str)> {
+    let (n, m) = (old.len(), new.len());
+    let mut table = vec![0u32; (n + 1) * (m + 1)];
+    let at = |i: usize, j: usize| i * (m + 1) + j;
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            table[at(i, j)] = if old[i] == new[j] {
+                table[at(i + 1, j + 1)] + 1
+            } else {
+                table[at(i + 1, j)].max(table[at(i, j + 1)])
+            };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let mut ops = Vec::with_capacity(n + m);
+    while i < n && j < m {
+        if old[i] == new[j] {
+            ops.push((' ', old[i]));
+            i += 1;
+            j += 1;
+        } else if table[at(i + 1, j)] >= table[at(i, j + 1)] {
+            ops.push(('-', old[i]));
+            i += 1;
+        } else {
+            ops.push(('+', new[j]));
+            j += 1;
+        }
+    }
+    ops.extend(old[i..].iter().map(|line| ('-', *line)));
+    ops.extend(new[j..].iter().map(|line| ('+', *line)));
+    ops
 }
 
 #[cfg(test)]

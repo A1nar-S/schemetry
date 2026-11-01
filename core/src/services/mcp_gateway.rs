@@ -21,6 +21,7 @@ use crate::services::ddl_save::{self, DdlSaveArgs};
 use crate::services::filter_rules::FilterRuleService;
 use crate::services::fix::{self, Dialect};
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
+use crate::services::git;
 use crate::services::mcp_apply_approval::{McpApprovalService, NewApplyRequest};
 use crate::services::mcp_audit::{McpAuditDraft, McpAuditService};
 use crate::services::mcp_audit_target::{self, TARGET_KEY};
@@ -181,6 +182,9 @@ tool_args! {
         /// of at most 64 KB; larger files report `content_omitted`.
         #[serde(default)]
         pub include_content: bool,
+        /// Overwrite existing files even when they have uncommitted changes in git (default false).
+        #[serde(default)]
+        pub force: bool,
     }
 }
 
@@ -905,7 +909,7 @@ impl McpGateway {
             "object_type": args.object_type,
             "description": args.description,
             "dry_run": args.dry_run,
-        });
+            "force": args.force,        });
         if let Some(ddl) = &args.ddl {
             arguments["ddl_bytes"] = json!(ddl.len());
             arguments["ddl_sha256"] = json!(sha256_hex(ddl.as_bytes()));
@@ -1072,12 +1076,27 @@ impl McpGateway {
                     .iter()
                     .map(|f| f.path.to_string_lossy().into_owned())
                     .collect();
-                ctx.details = Some(json!({
+                let guard = ddl_save::assess_overwrites(&plan);
+                let mut details = json!({
                     "source_kind": source_kind,
                     "source_bytes": source_bytes.len(),
                     "source_sha256": sha256_hex(source_bytes),
                     "target_paths": paths,
-                }));
+                    "git_status": guard.files.iter().map(|f| f.status_label()).collect::<Vec<_>>(),
+                });
+                if let Some(message) = guard.refusal_message() {
+                    if args.force {
+                        details["forced_overwrite"] =
+                            json!(guard.at_risk().map(|f| f.path.to_string_lossy()).collect::<Vec<_>>());
+                    } else {
+                        details["refusal"] = Value::String(message.clone());
+                        if !args.dry_run {
+                            ctx.details = Some(details);
+                            return denied(message);
+                        }
+                    }
+                }
+                ctx.details = Some(details);
                 ctx.row_count = Some(plan.files.len() as i64);
 
                 // Summarised before writing, so the diff compares against the pre-save file.
@@ -1085,18 +1104,43 @@ impl McpGateway {
                 let files: Vec<Value> = plan
                     .files
                     .iter()
-                    .map(|file| save_summary::describe_planned_file(file, include_content))
+                    .zip(&guard.files)
+                    .map(|(file, checked)| {
+                        let mut entry = save_summary::describe_planned_file(file, include_content);
+                        entry["git_status"] = json!(checked.status_label());
+                        entry["would_be_blocked"] = json!(checked.at_risk && !args.force);
+                        if include_content && let Some(diff) = &checked.diff {
+                            entry["diff_preview"] = Value::String(diff.clone());
+                        }
+                        entry
+                    })
                     .collect();
+                let mut result = json!({
+                    "dry_run": args.dry_run,
+                    "written": false,
+                    "source": source_info,
+                    "files": files,
+                });
+                match &guard.git {
+                    git::RepoStatus::Repo { branch, .. } => {
+                        result["git"] = json!("ok");
+                        result["git_branch"] = json!(branch);
+                    }
+                    git::RepoStatus::Unknown(reason) => {
+                        result["git"] = json!("unknown");
+                        result["git_note"] = json!(reason);
+                    }
+                }
 
                 if args.dry_run {
-                    return Ok(json!({ "dry_run": true, "written": false, "source": source_info, "files": files }));
+                    return Ok(result);
                 }
                 ddl_save::write_plan(&plan).map_err(ToolError::Failed)?;
-                Ok(json!({ "dry_run": false, "written": true, "source": source_info, "files": files }))
+                result["written"] = Value::Bool(true);
+                Ok(result)
             },
         )
     }
-
     /// Resolves every connection of a compare/fix request and fetches the schemas.
     #[allow(clippy::type_complexity)]
     fn load_comparison(

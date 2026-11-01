@@ -432,3 +432,36 @@ impl SchemaFolderOverrideRepository for TestOverrideRepository {
         Ok(self.override_row.clone())
     }
 }
+
+#[test]
+fn unified_diff_marks_changed_lines_with_context() {
+    let old = "a\nb\nc\nd\ne\nf\ng\n";
+    let new = "a\nb\nc\nD\ne\nf\ng\nh\n";
+    let diff = crate::services::ddl_save::unified_diff_summary(old, new);
+    assert!(diff.contains("(+2 -1 lines)"), "{diff}");
+    assert!(diff.contains("-d\n+D"), "{diff}");
+    assert!(diff.contains("+h"), "{diff}");
+    assert!(diff.contains(" c\n"), "{diff}");
+    assert!(!diff.contains(" a\n"), "{diff}");
+}
+
+#[test]
+fn unified_diff_is_bounded() {
+    let old: String = (0..5_000).map(|i| format!("old line {i}\n")).collect();
+    let new: String = (0..5_000).map(|i| format!("new line {i}\n")).collect();
+    let diff = crate::services::ddl_save::unified_diff_summary(&old, &new);
+    assert!(diff.len() < 4_000, "{}", diff.len());
+    assert!(diff.contains("too large"), "{diff}");
+
+    let old: String = (0..200).map(|i| format!("old {i}\n")).collect();
+    let new: String = (0..200).map(|i| format!("new {i}\n")).collect();
+    let diff = crate::services::ddl_save::unified_diff_summary(&old, &new);
+    assert!(diff.len() < 4_000, "{}", diff.len());
+    assert!(diff.contains("diff truncated"), "{diff}");
+}
+
+#[test]
+fn unified_diff_notes_line_ending_only_changes() {
+    let diff = crate::services::ddl_save::unified_diff_summary("a\r\nb\r\n", "a\nb\n");
+    assert!(diff.contains("line endings"), "{diff}");
+}

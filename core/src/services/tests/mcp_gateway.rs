@@ -1271,6 +1271,7 @@ fn save_args(name: &str, description: &str) -> SaveMigrationScriptArgs {
         description: description.into(),
         dry_run: false,
         include_content: false,
+        force: false,
     }
 }
 
@@ -1456,6 +1457,226 @@ fn the_planned_encoding_is_reported_and_used_for_the_digest() {
             .chars()
             .count()
     );
+}
+
+// ── save_migration_script: overwrite protection ─────────────────────────────────
+
+fn git_ok(root: &std::path::Path, args: &[&str]) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+/// A save harness whose schema folder is a git repo with `ORDERS.sql` committed; `None`
+/// when git is unavailable.
+fn git_save_harness() -> Option<(Harness, tempfile::TempDir, std::path::PathBuf)> {
+    let (h, root) = save_harness();
+    if !git_ok(root.path(), &["init", "-q"]) {
+        return None;
+    }
+    let code = root
+        .path()
+        .join("app")
+        .join("code")
+        .join("app")
+        .join("ORDERS.sql");
+    std::fs::create_dir_all(code.parent().unwrap()).unwrap();
+    std::fs::write(&code, "-- committed\n").unwrap();
+    assert!(git_ok(root.path(), &["add", "."]));
+    assert!(git_ok(root.path(), &["commit", "-q", "-m", "init"]));
+    Some((h, root, code))
+}
+
+#[test]
+fn overwriting_a_file_with_uncommitted_edits_is_refused_with_a_diff() {
+    let Some((h, root, code)) = git_save_harness() else {
+        return;
+    };
+    std::fs::write(&code, "-- committed\n-- my local edit\n").unwrap();
+
+    let message = denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, save_args("ORDERS", "x")),
+    );
+    assert!(message.contains("uncommitted changes"), "{message}");
+    assert!(message.contains("force"), "{message}");
+    // File content stays out of the refusal (and so out of the audit log); the dry run has it.
+    assert!(!message.contains("my local edit"), "{message}");
+
+    assert_eq!(
+        std::fs::read_to_string(&code).unwrap(),
+        "-- committed\n-- my local edit\n"
+    );
+    // Nothing is written at all, including the migration file.
+    assert!(!root.path().join("app").join("migration").exists());
+    assert_audit(&h, 1, McpOutcome::Denied);
+    let entry = &h.entries()[0];
+    assert!(entry.reason.contains("uncommitted changes"));
+    let arguments: Value = serde_json::from_str(&entry.arguments).unwrap();
+    assert_eq!(arguments["force"], false);
+    assert!(
+        arguments["refusal"]
+            .as_str()
+            .unwrap()
+            .contains("uncommitted")
+    );
+
+    // The diff is available through a dry run.
+    let mut preview = save_args("ORDERS", "x");
+    preview.dry_run = true;
+    preview.include_content = true;
+    let preview = h.gateway.save_migration_script(CLIENT, preview).unwrap();
+    assert!(
+        code_entry(&preview)["diff_preview"]
+            .as_str()
+            .unwrap()
+            .contains("-- my local edit")
+    );
+}
+
+#[test]
+fn force_overwrites_uncommitted_edits_and_is_audited() {
+    let Some((h, _root, code)) = git_save_harness() else {
+        return;
+    };
+    std::fs::write(&code, "-- local edit\n").unwrap();
+    let mut args = save_args("ORDERS", "x");
+    args.force = true;
+    let out = h.gateway.save_migration_script(CLIENT, args).unwrap();
+
+    assert_eq!(out["written"], true);
+    assert_eq!(code_entry(&out)["git_status"], "modified");
+    assert_eq!(code_entry(&out)["would_be_blocked"], false);
+    assert_eq!(
+        std::fs::read_to_string(&code).unwrap(),
+        "CREATE TABLE ORDERS (ID NUMBER);"
+    );
+    assert_audit(&h, 1, McpOutcome::Allowed);
+    let arguments: Value = serde_json::from_str(&h.entries()[0].arguments).unwrap();
+    assert_eq!(arguments["force"], true);
+    assert_eq!(arguments["forced_overwrite"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn overwriting_a_clean_committed_file_is_allowed() {
+    let Some((h, _root, code)) = git_save_harness() else {
+        return;
+    };
+    let out = h
+        .gateway
+        .save_migration_script(CLIENT, save_args("ORDERS", "x"))
+        .unwrap();
+    assert_eq!(out["written"], true);
+    assert_eq!(out["git"], "ok");
+    assert_eq!(code_entry(&out)["git_status"], "clean");
+    assert_eq!(code_entry(&out)["overwrites_existing"], true);
+    assert_eq!(
+        std::fs::read_to_string(&code).unwrap(),
+        "CREATE TABLE ORDERS (ID NUMBER);"
+    );
+    assert_audit(&h, 1, McpOutcome::Allowed);
+}
+
+#[test]
+fn untracked_and_staged_files_are_protected_too() {
+    let Some((h, root, code)) = git_save_harness() else {
+        return;
+    };
+    // Staged but not committed.
+    std::fs::write(&code, "-- staged\n").unwrap();
+    assert!(git_ok(root.path(), &["add", "."]));
+    denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, save_args("ORDERS", "x")),
+    );
+    // Untracked.
+    let other = code.with_file_name("OTHER.sql");
+    std::fs::write(&other, "-- never committed\n").unwrap();
+    denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, save_args("OTHER", "x")),
+    );
+    assert_eq!(
+        std::fs::read_to_string(&other).unwrap(),
+        "-- never committed\n"
+    );
+}
+
+#[test]
+fn identical_uncommitted_content_is_not_a_conflict() {
+    let Some((h, _root, code)) = git_save_harness() else {
+        return;
+    };
+    std::fs::write(&code, "CREATE TABLE ORDERS (ID NUMBER);").unwrap();
+    let out = h
+        .gateway
+        .save_migration_script(CLIENT, save_args("ORDERS", "x"))
+        .unwrap();
+    assert_eq!(out["written"], true);
+}
+
+#[test]
+fn dry_run_reports_git_status_and_whether_the_save_would_be_blocked() {
+    let Some((h, _root, code)) = git_save_harness() else {
+        return;
+    };
+    std::fs::write(&code, "-- local edit\n").unwrap();
+    let mut args = save_args("ORDERS", "x");
+    args.dry_run = true;
+    args.include_content = true;
+    let out = h
+        .gateway
+        .save_migration_script(CLIENT, args.clone())
+        .unwrap();
+
+    let entry = code_entry(&out);
+    assert_eq!(entry["git_status"], "modified");
+    assert_eq!(entry["would_be_blocked"], true);
+    assert!(
+        entry["diff_preview"]
+            .as_str()
+            .unwrap()
+            .contains("-- local edit")
+    );
+    let migration = out["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["kind"] == "migration")
+        .unwrap();
+    assert_eq!(migration["git_status"], "new");
+    assert_eq!(migration["would_be_blocked"], false);
+    assert_eq!(std::fs::read_to_string(&code).unwrap(), "-- local edit\n");
+    assert_audit(&h, 1, McpOutcome::Allowed);
+
+    args.force = true;
+    let out = h.gateway.save_migration_script(CLIENT, args).unwrap();
+    assert_eq!(code_entry(&out)["would_be_blocked"], false);
+}
+
+#[test]
+fn outside_a_git_repo_saving_is_allowed_and_reported_as_unknown() {
+    let (h, root) = save_harness();
+    if git_ok(root.path(), &["rev-parse", "--show-toplevel"]) {
+        return; // the temp folder sits inside a repository; nothing to assert
+    }
+    h.gateway
+        .save_migration_script(CLIENT, save_args("ORDERS", "first"))
+        .unwrap();
+    let out = h
+        .gateway
+        .save_migration_script(CLIENT, save_args("ORDERS", "second"))
+        .unwrap();
+    assert_eq!(out["written"], true);
+    assert_eq!(out["git"], "unknown");
+    assert_eq!(code_entry(&out)["git_status"], "unknown");
+    assert_audit(&h, 2, McpOutcome::Allowed);
 }
 
 #[test]
@@ -2691,4 +2912,38 @@ fn hidden_names_match_whatever_their_object_type() {
             .compare_object(CLIENT, compare_object_args("code/a.sql")),
     );
     assert!(message.contains("hidden"), "{message}");
+}
+#[test]
+fn a_broken_git_checkout_refuses_to_overwrite_an_existing_file() {
+    let (h, root) = save_harness();
+    // A `.git` that git cannot use: the status is unknown, which must not mean "safe".
+    std::fs::create_dir_all(root.path().join(".git")).unwrap();
+    let code = root
+        .path()
+        .join("app")
+        .join("code")
+        .join("app")
+        .join("ORDERS.sql");
+    std::fs::create_dir_all(code.parent().unwrap()).unwrap();
+    std::fs::write(&code, "-- precious local work\n").unwrap();
+
+    let message = denied_message(
+        h.gateway
+            .save_migration_script(CLIENT, save_args("ORDERS", "x")),
+    );
+    assert!(
+        message.contains("could not be checked against git"),
+        "{message}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&code).unwrap(),
+        "-- precious local work\n"
+    );
+
+    let mut args = save_args("ORDERS", "x");
+    args.force = true;
+    assert_eq!(
+        h.gateway.save_migration_script(CLIENT, args).unwrap()["written"],
+        true
+    );
 }
