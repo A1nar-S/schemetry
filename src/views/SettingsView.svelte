@@ -11,6 +11,7 @@
   }
   import { getSettings, saveSettings } from '../api';
   import { busy, setBusy, notify } from '../stores/notification';
+  import { theme, type ThemePreference } from '../hooks/useTheme';
   import SchemaFolderOverridesCard from '../components/SchemaFolderOverridesCard.svelte';
   import McpSettingsCard from '../components/McpSettingsCard.svelte';
 
@@ -19,6 +20,12 @@
   let mcpCard: McpSettingsCard | undefined;
 
   type Tab = 'general' | 'oracle' | 'mcp';
+  const THEME_OPTIONS: { id: ThemePreference; label: string }[] = [
+    { id: 'system', label: 'System' },
+    { id: 'dark', label: 'Dark' },
+    { id: 'light', label: 'Light' },
+  ];
+
   const TABS: { id: Tab; label: string }[] = [
     { id: 'general', label: 'General' },
     { id: 'oracle', label: 'Oracle' },
@@ -160,6 +167,19 @@
 
   <div class="panel" class:active={tab === 'general'}>
     <div class="settings-col">
+      <div class="card stack">
+        <div class="section-title">Appearance</div>
+        <p class="hint">System follows your operating system's light or dark setting.</p>
+        <div class="row" role="radiogroup" aria-label="Theme">
+          {#each THEME_OPTIONS as o}
+            <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;">
+              <input type="radio" name="theme" value={o.id} checked={$theme === o.id} on:change={() => theme.set(o.id)} />
+              {o.label}
+            </label>
+          {/each}
+        </div>
+      </div>
+
       <div class="card stack">
         <div class="section-title">Schema Root Folder</div>
         <p class="hint">

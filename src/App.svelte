@@ -4,7 +4,6 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { getConnections, mcpAuditVerify } from './api';
   import type { ConnectionRecord } from './types';
-  import { theme } from './hooks/useTheme';
   import { notify } from './stores/notification';
   import { auditVerification } from './stores/mcpAuditViewState';
   import BusyOverlay from './components/BusyOverlay.svelte';
@@ -176,16 +175,6 @@
         <Icon name="settings" size={16} /><span class="nav-label">Settings</span>
       </button>
     </nav>
-    <button
-      class="theme-toggle"
-      on:click={theme.toggle}
-      title={$theme === 'dark' ? 'Dark theme (click for light)' : $theme === 'light' ? 'Light theme (click for auto)' : 'Auto theme (click for dark)'}
-    >
-      <Icon name={$theme === 'dark' ? 'moon' : $theme === 'light' ? 'sun' : 'contrast'} size={15} />
-      {#if !sidebarCollapsed}
-        <span>{$theme === 'dark' ? 'Dark mode' : $theme === 'light' ? 'Light mode' : 'Auto'}</span>
-      {/if}
-    </button>
   </aside>
 
   <!-- Content -->
