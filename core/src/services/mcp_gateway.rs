@@ -20,6 +20,7 @@ use crate::services::filter_rules::FilterRuleService;
 use crate::services::fix::{self, Dialect};
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
 use crate::services::mcp_audit::{McpAuditDraft, McpAuditService};
+use crate::services::mcp_audit_target::{self, TARGET_KEY};
 use crate::services::mcp_policy::{McpPolicyService, McpTool};
 use crate::services::mcp_query_builder::{self, Filter, OrderBy, TableQuery};
 use crate::services::mcp_sql_guard;
@@ -194,6 +195,8 @@ tool_args! {
 struct Ctx {
     connection: Option<(i64, String)>,
     details: Option<Value>,
+    /// What the call was about (tables, objects, …); stored under `arguments.target`.
+    target: Option<Map<String, Value>>,
     row_count: Option<i64>,
 }
 
@@ -303,13 +306,21 @@ fn bounded_arguments(arguments: Value) -> String {
     if text.len() <= MAX_AUDIT_ARGUMENT_BYTES {
         return text;
     }
-    json!({
+    let mut replacement = json!({
         "truncated": true,
         "original_bytes": text.len(),
         "sha256": sha256_hex(text.as_bytes()),
         "preview": truncate_chars(&text, 2_000),
-    })
-    .to_string()
+    });
+    // The target summary is itself bounded, so it always survives.
+    if let Some(target) = arguments.get(TARGET_KEY) {
+        replacement[TARGET_KEY] = target.clone();
+    }
+    replacement.to_string()
+}
+
+fn target_of(object_type: &str, names: &[String]) -> Map<String, Value> {
+    mcp_audit_target::object_target(object_type, names)
 }
 
 impl McpGateway {
@@ -385,6 +396,9 @@ impl McpGateway {
             for (key, value) in extra {
                 map.insert(key, value);
             }
+        }
+        if let (Some(target), Value::Object(map)) = (ctx.target.take(), &mut arguments) {
+            map.insert(TARGET_KEY.to_string(), Value::Object(target));
         }
         let (connection_id, connection_name) = match ctx.connection {
             Some((id, name)) => (Some(id), name),
@@ -528,6 +542,10 @@ impl McpGateway {
             Some(args.connection_id),
             arguments,
             |ctx| {
+                ctx.target = Some(target_of(
+                    &args.object_type.trim().to_ascii_uppercase(),
+                    std::slice::from_ref(&args.object_name),
+                ));
                 let Resolved { conn, policy } =
                     self.resolve(ctx, args.connection_id, McpTool::GetObjectDdl)?;
                 let name = args.object_name.trim();
@@ -566,6 +584,10 @@ impl McpGateway {
             Some(args.connection_id),
             arguments,
             |ctx| {
+                ctx.target = Some(target_of(
+                    &args.object_type.trim().to_ascii_uppercase(),
+                    std::slice::from_ref(&args.object_name),
+                ));
                 let Resolved { conn, policy } =
                     self.resolve(ctx, args.connection_id, McpTool::SaveMigrationScript)?;
 
@@ -684,6 +706,11 @@ impl McpGateway {
         }
         // Several connections are involved; the audit entry names the reference one.
         ctx.connection = Some((source_id, resolved[0].conn.name.clone()));
+        let server_names: Vec<String> = resolved.iter().map(|r| r.conn.name.clone()).collect();
+        let target = ctx
+            .target
+            .get_or_insert_with(|| target_of("SCHEMA", &server_names));
+        target.insert("connections".into(), json!(server_names));
 
         if resolved
             .iter()
@@ -796,6 +823,9 @@ impl McpGateway {
             Some(args.source_id),
             arguments,
             |ctx| {
+                if let Some(tables) = args.tables.as_ref().filter(|t| !t.is_empty()) {
+                    ctx.target = Some(target_of("TABLE", tables));
+                }
                 let flags = (
                     args.check_tables.unwrap_or(true),
                     args.check_columns.unwrap_or(true),
@@ -911,9 +941,19 @@ impl McpGateway {
             Some(args.connection_id),
             arguments,
             |ctx| {
+                let mut target = target_of("TABLE", std::slice::from_ref(&args.table));
+                target.insert(
+                    "filters".into(),
+                    json!(args.filters.as_ref().map_or(0, Vec::len)),
+                );
+                ctx.target = Some(target);
                 let resolved = self.resolve(ctx, args.connection_id, McpTool::QueryTable)?;
                 let Resolved { conn, policy } = &resolved;
                 let table = args.table.trim();
+                if let Some(target) = ctx.target.as_mut() {
+                    let named = target_of("TABLE", &[actual_table_name(table, conn.db_type)]);
+                    target.insert("names".into(), named["names"].clone());
+                }
                 if !mcp_query_builder::valid_identifier(table) {
                     return denied("table must be a plain table name.");
                 }
@@ -1000,6 +1040,10 @@ impl McpGateway {
                 )
                 .map_err(ToolError::Denied)?;
                 ctx.details = Some(json!({ "sql": built.sql, "binds": built.binds }));
+                if let Some(target) = ctx.target.as_mut() {
+                    mcp_audit_target::set_columns(target, &selected);
+                    target.insert("limit".into(), json!(limit));
+                }
 
                 let request = ReadOnlyQuery {
                     sql: built.sql,
@@ -1010,6 +1054,7 @@ impl McpGateway {
                 let result = self.run_readonly(&resolved, &request)?;
                 ctx.row_count = Some(result.rows.len() as i64);
                 let mut out = rows_to_json(result, limit);
+                note_truncated(ctx, &out);
                 if omitted > 0 {
                     out["omitted_columns"] = json!(omitted);
                     out["note"] = json!(
@@ -1033,6 +1078,7 @@ impl McpGateway {
                 let Resolved { conn, policy } = &resolved;
 
                 let analyzed = mcp_sql_guard::analyze(&args.sql, conn.db_type).map_err(ToolError::Denied)?;
+                ctx.target = Some(target_of("TABLE", &analyzed.table_names()));
                 let own_schema = schema_of(conn);
                 for table in &analyzed.tables {
                     if let Some(schema) = &table.schema
@@ -1071,7 +1117,12 @@ impl McpGateway {
                 };
                 let result = self.run_readonly(&resolved, &request)?;
                 ctx.row_count = Some(result.rows.len() as i64);
-                Ok(rows_to_json(result, limit))
+                let out = rows_to_json(result, limit);
+                if let Some(target) = ctx.target.as_mut() {
+                    target.insert("limit".into(), json!(limit));
+                }
+                note_truncated(ctx, &out);
+                Ok(out)
             },
         )
     }
@@ -1113,6 +1164,13 @@ fn actual_table_name(table: &str, db_type: DbType) -> String {
     }
 }
 
+/// Records on the audit target whether the result was cut short by the row/byte caps.
+fn note_truncated(ctx: &mut Ctx, output: &Value) {
+    if let (Some(target), Some(truncated)) = (ctx.target.as_mut(), output.get("truncated")) {
+        target.insert("truncated".into(), truncated.clone());
+    }
+}
+
 fn rows_to_json(result: ReadOnlyResult, limit: u32) -> Value {
     let mut bytes = 0usize;
     let mut rows: Vec<Value> = Vec::new();
@@ -1144,3 +1202,7 @@ fn rows_to_json(result: ReadOnlyResult, limit: u32) -> Value {
 #[cfg(test)]
 #[path = "tests/mcp_gateway.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/mcp_gateway_targets.rs"]
+mod target_tests;

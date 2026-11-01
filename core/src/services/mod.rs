@@ -9,6 +9,7 @@ pub mod folder_schema_overrides;
 pub mod history_naming_rules;
 pub mod mcp_audit;
 pub mod mcp_audit_sink;
+pub mod mcp_audit_target;
 pub mod mcp_gateway;
 pub mod mcp_policy;
 pub mod mcp_query_builder;

@@ -389,6 +389,8 @@ pub struct McpAuditFilter {
     pub connection_id: Option<i64>,
     pub tool: Option<String>,
     pub outcome: Option<McpOutcome>,
+    /// Case-insensitive text matched against the entry's target names (tables, objects).
+    pub target: Option<String>,
     /// Inclusive lower bound, `YYYY-MM-DD` or a full RFC 3339 timestamp (UTC).
     pub from: Option<String>,
     /// Inclusive upper bound; a bare date covers that whole day.

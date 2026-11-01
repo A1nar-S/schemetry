@@ -137,7 +137,9 @@ To see which function was refused, look at the `run_query` reason: the error ret
 
 ### Audit log
 
-Every tool call — allowed, denied or failed — appends one entry (time, tool, connection, arguments, outcome and reason, rows/bytes returned, duration, MCP client name) to `mcp_audit_log`. Entries are hash-chained (`hash = sha256(prev_hash ‖ entry)`), SQLite triggers reject `UPDATE`/`DELETE`, and nothing in Schemetry can edit or purge the log. Schemetry verifies the chain on startup and shows a warning banner if it is broken or truncated; the **MCP Audit** view filters by connection / tool / outcome / date and exports CSV.
+Every tool call — allowed, denied or failed — appends one entry (time, tool, connection, arguments, outcome and reason, rows/bytes returned, duration, MCP client name) to `mcp_audit_log`. Entries are hash-chained (`hash = sha256(prev_hash ‖ entry)`), SQLite triggers reject `UPDATE`/`DELETE`, and nothing in Schemetry can edit or purge the log. Schemetry verifies the chain on startup and shows a warning banner if it is broken or truncated; the **MCP Audit** view filters by connection / tool / outcome / table or object / date and exports CSV.
+
+Each entry also records *what the call touched* under `target` in its arguments JSON (so it is covered by the hash and old entries verify unchanged): the table(s) for `query_table` and `run_query` (taken from the SQL guard's parsed table list), plus selected columns, filter count, row limit and truncation flag for `query_table`; object type and name for DDL/migration tools; tables or connections for compare/fix tools. It appears as the **Target** column, in the CSV export, and as a top-level `target` text in the external sink payload.
 
 On a machine you own no local file is truly immutable: the guarantee is *no cleanup path in the app* plus *tampering is detectable*. For a copy outside your control, forward each entry to an external sink in **Settings** (syslog over UDP or `/dev/log`, Windows Event Log, or an HTTP endpoint). If the audit log can't be written, the call's result is withheld.
 

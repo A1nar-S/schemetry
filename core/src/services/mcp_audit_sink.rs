@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::models::{McpAuditEntry, McpOutcome};
+use crate::services::mcp_audit_target;
 use crate::services::settings;
 
 const FORWARD_TIMEOUT: Duration = Duration::from_secs(3);
@@ -36,9 +37,20 @@ pub fn load_config() -> SinkConfig {
     parse_config(&kind, &target)
 }
 
-/// The entry as one JSON line — the payload every sink receives.
+/// The entry as one JSON line — the payload every sink receives. `target` repeats the
+/// human-readable target summary at the top level (the structured form is inside
+/// `arguments`) so receivers need not parse the arguments to see what was touched.
 pub fn render(entry: &McpAuditEntry) -> String {
-    serde_json::to_string(entry).unwrap_or_default()
+    let Ok(mut value) = serde_json::to_value(entry) else {
+        return String::new();
+    };
+    if let Some(map) = value.as_object_mut() {
+        map.insert(
+            "target".to_string(),
+            serde_json::Value::String(mcp_audit_target::summarize(&entry.arguments)),
+        );
+    }
+    value.to_string()
 }
 
 pub fn forward(entry: &McpAuditEntry) -> Result<()> {

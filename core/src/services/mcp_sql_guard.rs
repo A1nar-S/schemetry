@@ -746,6 +746,25 @@ pub fn analyze(raw: &str, db_type: DbType) -> Result<AnalyzedSql, String> {
     Ok(AnalyzedSql { sql, tables })
 }
 
+impl AnalyzedSql {
+    /// Distinct table names in first-seen order (case-insensitive), without schema
+    /// prefixes; the same list the allowlist checks run over.
+    pub fn table_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for table in &self.tables {
+            if !names.iter().any(|n| n.eq_ignore_ascii_case(&table.name)) {
+                names.push(table.name.clone());
+            }
+        }
+        names
+    }
+}
+
+/// The tables a read-only SELECT references; an error if it is not an acceptable SELECT.
+pub fn referenced_tables(raw: &str, db_type: DbType) -> Result<Vec<String>, String> {
+    analyze(raw, db_type).map(|analyzed| analyzed.table_names())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Frame {
     /// Ordinary scope.

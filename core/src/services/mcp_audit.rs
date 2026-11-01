@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use crate::models::{McpAuditEntry, McpAuditFilter, McpAuditVerification, McpOutcome};
 use crate::repositories::mcp_audit_repository::{GENESIS_HASH, McpAuditRepository};
 use crate::services::mcp_audit_sink;
+use crate::services::mcp_audit_target;
 
 /// Everything about a call except the fields the chain assigns (id, hash, prev_hash).
 #[derive(Clone, Debug)]
@@ -212,7 +213,7 @@ impl McpAuditService {
 
         let mut csv = String::from(
             "id,timestamp,tool,connection_id,connection_name,client,outcome,reason,\
-             row_count,bytes,duration_ms,arguments,prev_hash,hash\r\n",
+             row_count,bytes,duration_ms,target,arguments,prev_hash,hash\r\n",
         );
         for entry in &entries {
             let fields = [
@@ -230,6 +231,7 @@ impl McpAuditService {
                 entry.row_count.map(|n| n.to_string()).unwrap_or_default(),
                 entry.bytes.to_string(),
                 entry.duration_ms.to_string(),
+                mcp_audit_target::summarize(&entry.arguments),
                 entry.arguments.clone(),
                 entry.prev_hash.clone(),
                 entry.hash.clone(),

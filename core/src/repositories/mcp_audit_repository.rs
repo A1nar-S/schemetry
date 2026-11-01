@@ -98,6 +98,23 @@ fn where_clause(filter: &McpAuditFilter) -> (String, Vec<rusqlite::types::Value>
         clauses.push("outcome = ?");
         values.push(Value::Text(outcome.as_str().to_string()));
     }
+    if let Some(target) = filter
+        .target
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
+        // json_valid guards entries whose arguments are not JSON (tampered or foreign).
+        clauses.push(
+            "(CASE WHEN json_valid(arguments) THEN json_extract(arguments, '$.target.names') END) \
+             LIKE ? ESCAPE '\\'",
+        );
+        let escaped = target
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        values.push(Value::Text(format!("%{escaped}%")));
+    }
     if let Some(from) = filter.from.as_deref().filter(|t| !t.trim().is_empty()) {
         clauses.push("timestamp >= ?");
         values.push(Value::Text(from.trim().to_string()));

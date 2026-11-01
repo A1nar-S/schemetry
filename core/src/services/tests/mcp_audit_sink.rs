@@ -136,3 +136,20 @@ fn http_sink_rejects_other_schemes_and_reports_failures() {
 fn the_event_log_sink_is_windows_only() {
     assert!(deliver(&SinkConfig::EventLog, &entry(McpOutcome::Allowed)).is_err());
 }
+
+#[test]
+fn sink_payload_carries_the_target_summary() {
+    let mut with_target = entry(McpOutcome::Allowed);
+    with_target.arguments =
+        "{\"target\":{\"object_type\":\"TABLE\",\"names\":[\"ORDERS\",\"ITEMS\"]}}".to_string();
+
+    let payload: serde_json::Value = serde_json::from_str(&render(&with_target)).unwrap();
+    assert_eq!(payload["target"], "TABLE ORDERS, ITEMS");
+    assert!(syslog_message(&with_target).contains("\"target\":\"TABLE ORDERS, ITEMS\""));
+    // The structured form stays inside the arguments, as before.
+    assert!(payload["arguments"].as_str().unwrap().contains("\"names\""));
+
+    let plain: serde_json::Value =
+        serde_json::from_str(&render(&entry(McpOutcome::Allowed))).unwrap();
+    assert_eq!(plain["target"], "");
+}

@@ -4,6 +4,7 @@ import type { McpAuditEntry, McpAuditVerification } from '../types';
 export const auditConnection   = writable<number | null>(null);
 export const auditTool         = writable('');
 export const auditOutcome      = writable('');
+export const auditTarget       = writable('');
 export const auditFrom         = writable('');
 export const auditTo           = writable('');
 export const auditEntries      = writable<McpAuditEntry[]>([]);

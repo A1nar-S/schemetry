@@ -12,6 +12,7 @@
     auditConnection,
     auditTool,
     auditOutcome,
+    auditTarget,
     auditFrom,
     auditTo,
     auditEntries,
@@ -38,6 +39,7 @@
     { key: '_time',           header: 'Time',       width: 160, titleKey: '_timeRaw' },
     { key: 'tool',            header: 'Tool',       width: 160 },
     { key: 'connection_name', header: 'Connection', width: 140 },
+    { key: '_target',         header: 'Target',     width: 220 },
     { key: 'client_name',     header: 'Client',     width: 120 },
     { key: 'outcome',         header: 'Outcome',    width: 90 },
     { key: '_rows',           header: 'Rows',       width: 70 },
@@ -52,6 +54,7 @@
     _timeRaw: e.timestamp,
     tool: e.tool,
     connection_name: e.connection_name,
+    _target: targetSummary(e.arguments),
     client_name: e.client_name,
     outcome: e.outcome,
     _rows: e.row_count ?? '',
@@ -67,6 +70,24 @@
   function formatTime(ts: string): string {
     const d = new Date(ts);
     return Number.isNaN(d.getTime()) ? ts : d.toLocaleString();
+  }
+
+  /** Mirrors `mcp_audit_target::summarize` in the backend: e.g. `TABLE ORDERS, ITEMS`. */
+  function targetSummary(argumentsJson: string): string {
+    try {
+      const target = JSON.parse(argumentsJson)?.target;
+      const names: string[] = Array.isArray(target?.names)
+        ? target.names.filter((n: unknown): n is string => typeof n === 'string')
+        : [];
+      if (names.length === 0) return '';
+      const more = typeof target.names_total === 'number' ? target.names_total - names.length : 0;
+      const text = names.join(', ') + (more > 0 ? ` (+${more} more)` : '');
+      return typeof target.object_type === 'string' && target.object_type
+        ? `${target.object_type} ${text}`
+        : text;
+    } catch {
+      return '';
+    }
   }
 
   function prettyJson(text: string): string {
@@ -96,6 +117,7 @@
       connection_id: get(auditConnection),
       tool: get(auditTool) || null,
       outcome: (get(auditOutcome) || null) as McpAuditOutcome | null,
+      target: get(auditTarget).trim() || null,
       from: get(auditFrom) || null,
       to: get(auditTo) || null,
     };
@@ -243,6 +265,15 @@
       </select>
     </div>
     <div class="field">
+      <span>Table / object</span>
+      <input
+        type="text"
+        placeholder="e.g. ORDERS"
+        bind:value={$auditTarget}
+        on:change={() => void onFilterChange()}
+      />
+    </div>
+    <div class="field">
       <span>From</span>
       <input type="date" bind:value={$auditFrom} on:change={() => void onFilterChange()} />
     </div>
@@ -292,6 +323,7 @@
           <dt>Time (UTC)</dt><dd>{e.timestamp}</dd>
           <dt>Tool</dt><dd>{e.tool}</dd>
           <dt>Connection</dt><dd>{e.connection_name || '—'}{e.connection_id !== null ? ` (id ${e.connection_id})` : ''}</dd>
+          <dt>Target</dt><dd>{targetSummary(e.arguments) || '—'}</dd>
           <dt>Client</dt><dd>{e.client_name || '—'}</dd>
           <dt>Outcome</dt>
           <dd>

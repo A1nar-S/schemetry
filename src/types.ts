@@ -247,6 +247,8 @@ export type McpAuditFilter = {
   connection_id?: number | null;
   tool?: string | null;
   outcome?: McpAuditOutcome | null;
+  /** Case-insensitive text matched against the entry's target names (tables, objects). */
+  target?: string | null;
   /** `YYYY-MM-DD` or RFC 3339. */
   from?: string | null;
   /** `YYYY-MM-DD` covers the whole day. */

@@ -393,3 +393,156 @@ fn csv_export_lists_oldest_first() {
     let second = csv.find("second").unwrap();
     assert!(first < second);
 }
+
+// -- target summaries ------------------------------------------------------------
+
+fn with_target(tool: &str, names: &[&str]) -> McpAuditDraft {
+    let mut d = draft(tool, McpOutcome::Allowed);
+    d.arguments = serde_json::json!({
+        "table": names[0],
+        "target": { "object_type": "TABLE", "names": names },
+    })
+    .to_string();
+    d
+}
+
+/// Inserts a row hashed exactly as the original (pre-target) format did, bypassing
+/// `McpAuditService::record`, to stand in for entries written by an older release.
+fn insert_legacy_row(path: &std::path::Path, id: i64, prev_hash: &str) -> String {
+    let (timestamp, tool, name, arguments, reason, client) = (
+        "2024-01-02T03:04:05.678Z",
+        "query_table",
+        "Prod",
+        "{\"connection_id\":1,\"table\":\"ORDERS\",\"sql\":\"SELECT 1\",\"binds\":[]}",
+        "",
+        "claude-code 1.0",
+    );
+    let canonical = serde_json::json!([
+        id, timestamp, tool, 1, name, arguments, "allowed", reason, 3, 120, 7, client
+    ]);
+    let mut hasher = Sha256::new();
+    hasher.update(prev_hash.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(canonical.to_string().as_bytes());
+    let hash: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+
+    Connection::open(path)
+        .unwrap()
+        .execute(
+            "INSERT INTO mcp_audit_log (id, timestamp, tool, connection_id, connection_name,
+                arguments, outcome, reason, row_count, bytes, duration_ms, client_name,
+                prev_hash, hash)
+             VALUES (?1, ?2, ?3, 1, ?4, ?5, 'allowed', ?6, 3, 120, 7, ?7, ?8, ?9)",
+            rusqlite::params![
+                id, timestamp, tool, name, arguments, reason, client, prev_hash, hash
+            ],
+        )
+        .unwrap();
+    hash
+}
+
+#[test]
+fn sqlite_legacy_entries_without_a_target_still_verify_next_to_new_ones() {
+    let (svc, path, _dir) = sqlite_service();
+    let first = insert_legacy_row(&path, 1, GENESIS_HASH);
+    insert_legacy_row(&path, 2, &first);
+
+    let before = svc.verify().unwrap();
+    assert!(before.ok, "{:?}", before.problem);
+    assert_eq!(before.entries, 2);
+
+    let new = svc.record(with_target("query_table", &["ORDERS"])).unwrap();
+    assert_eq!(new.id, 3);
+    svc.record(with_target("run_query", &["ORDERS", "ITEMS"]))
+        .unwrap();
+
+    let after = svc.verify().unwrap();
+    assert!(after.ok, "{:?}", after.problem);
+    assert_eq!(after.entries, 4);
+
+    let listed = svc.list(&McpAuditFilter::default()).unwrap();
+    assert_eq!(mcp_audit_target::summarize(&listed[3].arguments), "");
+    assert_eq!(
+        mcp_audit_target::summarize(&listed[0].arguments),
+        "TABLE ORDERS, ITEMS"
+    );
+}
+
+#[test]
+fn sqlite_tampering_with_a_target_is_detected() {
+    let (svc, path, _dir) = sqlite_service();
+    svc.record(with_target("query_table", &["ORDERS"])).unwrap();
+    svc.record(draft("t", McpOutcome::Allowed)).unwrap();
+
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("DROP TRIGGER mcp_audit_log_no_update")
+        .unwrap();
+    conn.execute(
+        "UPDATE mcp_audit_log SET arguments = replace(arguments, 'ORDERS', 'HARMLESS') WHERE id = 1",
+        [],
+    )
+    .unwrap();
+
+    let verdict = svc.verify().unwrap();
+    assert!(!verdict.ok);
+    assert_eq!(verdict.first_bad_id, Some(1));
+}
+
+#[test]
+fn sqlite_filters_entries_by_target_text() {
+    let (svc, _, _dir) = sqlite_service();
+    svc.record(with_target("query_table", &["ORDERS"])).unwrap();
+    svc.record(with_target("run_query", &["ITEMS", "order_lines"]))
+        .unwrap();
+    svc.record(draft("list_connections", McpOutcome::Allowed))
+        .unwrap();
+    // Not JSON at all, as a foreign row might be: must not break the filter.
+    let mut broken = draft("query_table", McpOutcome::Error);
+    broken.arguments = "not json".into();
+    svc.record(broken).unwrap();
+
+    let ids = |text: &str| -> Vec<i64> {
+        svc.list(&McpAuditFilter {
+            target: Some(text.into()),
+            ..Default::default()
+        })
+        .unwrap()
+        .iter()
+        .map(|e| e.id)
+        .collect()
+    };
+    assert_eq!(ids("orders"), vec![1]);
+    assert_eq!(ids("ITEMS"), vec![2]);
+    assert_eq!(ids("nothing"), Vec::<i64>::new());
+    // LIKE wildcards in the input are literal.
+    assert_eq!(ids("%"), Vec::<i64>::new());
+    assert_eq!(ids("order_"), vec![2]);
+    assert_eq!(ids("ord_rs"), Vec::<i64>::new());
+    assert_eq!(ids("  "), vec![4, 3, 2, 1]);
+    assert_eq!(
+        svc.count(&McpAuditFilter {
+            target: Some("orders".into()),
+            ..Default::default()
+        })
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn csv_export_has_a_target_column() {
+    let (svc, _) = memory_service();
+    svc.record(with_target("query_table", &["ORDERS"])).unwrap();
+    svc.record(draft("list_connections", McpOutcome::Allowed))
+        .unwrap();
+
+    let csv = svc.export_csv(&McpAuditFilter::default()).unwrap();
+    let lines: Vec<&str> = csv.trim_end().split("\r\n").collect();
+    assert!(lines[0].contains(",duration_ms,target,arguments,"));
+    assert!(lines[1].contains(",7,TABLE ORDERS,"));
+    assert!(lines[2].contains(",7,,\"{\"\"a\"\""));
+}
