@@ -750,3 +750,14 @@ fn oracle_apply_joins_report_their_table() {
     );
     rejected("SELECT array(1) FROM dual", ORA);
 }
+
+#[test]
+fn a_lone_carriage_return_is_refused_but_crlf_is_fine() {
+    for db in [ORA, PG] {
+        rejected("SELECT 1 FROM dual --\r'\n, secret --\r'\n WHERE 1=1", db);
+        assert_eq!(
+            tables("SELECT 1 FROM t\r\nWHERE x = 1 -- c\r\n", db).len(),
+            1
+        );
+    }
+}

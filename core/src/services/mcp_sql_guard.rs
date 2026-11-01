@@ -230,6 +230,15 @@ pub struct AnalyzedSql {
 
 fn tokenize(sql: &str, db_type: DbType) -> Result<Vec<Token>, String> {
     let chars: Vec<char> = sql.chars().collect();
+    // Engines disagree on whether a lone CR ends a `--` comment, so the guard can't know
+    // what the database will run.
+    if chars
+        .iter()
+        .enumerate()
+        .any(|(n, &c)| c == '\r' && chars.get(n + 1) != Some(&'\n'))
+    {
+        return Err("A carriage return must be followed by a line feed.".to_string());
+    }
     let mut tokens = Vec::new();
     let mut i = 0usize;
     while i < chars.len() {
