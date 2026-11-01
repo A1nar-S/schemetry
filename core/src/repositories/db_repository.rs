@@ -28,11 +28,9 @@ pub trait DbRepository: Send + Sync {
         conn: &ConnectionRecord,
         table_names: &[String],
     ) -> Result<TableDdls>;
-    fn fetch_schema_objects(
-        &self,
-        conn: &ConnectionRecord,
-        filter_rules: &[TableFilterRule],
-    ) -> Result<Vec<SchemaObject>>;
+    /// Lists every object in the connection's schema. Table filter rules are a
+    /// compare-only concern and intentionally not applied here.
+    fn fetch_schema_objects(&self, conn: &ConnectionRecord) -> Result<Vec<SchemaObject>>;
     fn fetch_object_ddl(
         &self,
         conn: &ConnectionRecord,

@@ -632,28 +632,17 @@ impl DbRepository for DbPostgresRepository {
         })
     }
 
-    fn fetch_schema_objects(
-        &self,
-        conn: &ConnectionRecord,
-        filter_rules: &[TableFilterRule],
-    ) -> Result<Vec<SchemaObject>> {
+    fn fetch_schema_objects(&self, conn: &ConnectionRecord) -> Result<Vec<SchemaObject>> {
         self.runtime.block_on(async {
             let client = self.connect(conn).await?;
             let schema = Self::schema_of(conn);
 
-            let (filter_clause, filter_binds) = build_predicate(filter_rules, "c.relname", 2, ParamStyle::Dollar);
-            let tables_sql = format!(
-                "SELECT c.relname, CASE c.relkind WHEN 'r' THEN 'TABLE' WHEN 'v' THEN 'VIEW' \
+            let tables_sql = "SELECT c.relname, CASE c.relkind WHEN 'r' THEN 'TABLE' WHEN 'v' THEN 'VIEW' \
                         WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'S' THEN 'SEQUENCE' END \
                  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-                 WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','S'){filter_clause}"
-            );
-            let mut params: Vec<&(dyn ToSql + Sync)> = vec![&schema];
-            for b in &filter_binds {
-                params.push(b);
-            }
+                 WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','S')";
             let mut objects = Vec::new();
-            for row in client.query(&tables_sql, &params).await.map_err(|e| anyhow!(e.to_string()))? {
+            for row in client.query(tables_sql, &[&schema]).await.map_err(|e| anyhow!(e.to_string()))? {
                 objects.push(SchemaObject { name: row.get(0), object_type: row.get(1) });
             }
 

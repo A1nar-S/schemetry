@@ -13,14 +13,12 @@ use crate::repositories::db_repository::{
     ApplyDdlRequest, ApplyDdlResult, DbRepository, DdlCompileError, DdlStatement, QueryOutput,
     ReadOnlyQuery, ReadOnlyResult,
 };
-use crate::repositories::filter_rule_repository::FilterRuleRepository;
 use crate::repositories::folder_schema_override_repository::SchemaFolderOverrideRepository;
 use crate::repositories::mcp_apply_approval_repository::SqliteMcpApprovalRepository;
 use crate::repositories::mcp_audit_repository::{GENESIS_HASH, McpAuditRepository};
 use crate::repositories::mcp_policy_repository::McpPolicyRepository;
 use crate::services::connection_catalog::ConnectionCatalogService;
 use crate::services::ddl_save::DdlSaveOptions;
-use crate::services::filter_rules::FilterRuleService;
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
 use crate::services::mcp_apply_approval::McpApprovalService;
 use crate::services::mcp_audit::McpAuditService;
@@ -178,11 +176,7 @@ impl DbRepository for FakeDb {
         self.touch();
         Ok(self.table_ddls.lock().unwrap().clone())
     }
-    fn fetch_schema_objects(
-        &self,
-        _: &ConnectionRecord,
-        _: &[TableFilterRule],
-    ) -> Result<Vec<SchemaObject>> {
+    fn fetch_schema_objects(&self, _: &ConnectionRecord) -> Result<Vec<SchemaObject>> {
         self.touch();
         Ok(self.objects.lock().unwrap().clone())
     }
@@ -323,26 +317,6 @@ impl DbRepository for FakeDb {
 }
 
 // ── small repositories ──────────────────────────────────────────────────────────
-
-pub struct NoFilterRules;
-
-impl FilterRuleRepository for NoFilterRules {
-    fn init_db(&self) -> Result<()> {
-        Ok(())
-    }
-    fn list_rules(&self) -> Result<Vec<TableFilterRule>> {
-        Ok(Vec::new())
-    }
-    fn insert_rule(&self, rule: &TableFilterRule) -> Result<TableFilterRule> {
-        Ok(rule.clone())
-    }
-    fn update_rule(&self, _: i64, rule: &TableFilterRule) -> Result<TableFilterRule> {
-        Ok(rule.clone())
-    }
-    fn delete_rule(&self, _: i64) -> Result<()> {
-        Ok(())
-    }
-}
 
 pub struct NoOverrides;
 
@@ -556,7 +530,6 @@ impl Harness {
             )))),
             Arc::new(SchemaDiffService::new(Arc::clone(&db_repo))),
             Arc::new(QueryService::new(db_repo)),
-            Arc::new(FilterRuleService::new(Arc::new(NoFilterRules))),
             Arc::new(SchemaFolderOverrideService::new(Arc::new(NoOverrides))),
             Arc::new(McpPolicyService::new(policies.clone())),
             Arc::new(McpAuditService::new(audit.clone()).without_forwarding()),

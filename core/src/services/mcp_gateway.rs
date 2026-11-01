@@ -18,7 +18,7 @@ use crate::services::compare::compare_tables_across_servers;
 use crate::services::connection_catalog::ConnectionCatalogService;
 use crate::services::ddl_compare::{self, FileAccessError};
 use crate::services::ddl_save::{self, DdlSaveArgs};
-use crate::services::filter_rules::FilterRuleService;
+
 use crate::services::fix::{self, Dialect};
 use crate::services::folder_schema_overrides::SchemaFolderOverrideService;
 use crate::services::git;
@@ -331,7 +331,6 @@ pub struct McpGateway {
     catalog: Arc<ConnectionCatalogService>,
     diff_svc: Arc<SchemaDiffService>,
     query_svc: Arc<QueryService>,
-    filter_rules_svc: Arc<FilterRuleService>,
     folder_overrides: Arc<SchemaFolderOverrideService>,
     policy_svc: Arc<McpPolicyService>,
     audit_svc: Arc<McpAuditService>,
@@ -512,7 +511,6 @@ impl McpGateway {
             Arc::clone(&services.catalog),
             Arc::clone(&services.diff_svc),
             Arc::clone(&services.query_svc),
-            Arc::clone(&services.filter_rules_svc),
             Arc::clone(&services.folder_schema_overrides_svc),
             Arc::clone(&services.mcp_policy_svc),
             Arc::clone(&services.mcp_audit_svc),
@@ -526,7 +524,6 @@ impl McpGateway {
         catalog: Arc<ConnectionCatalogService>,
         diff_svc: Arc<SchemaDiffService>,
         query_svc: Arc<QueryService>,
-        filter_rules_svc: Arc<FilterRuleService>,
         folder_overrides: Arc<SchemaFolderOverrideService>,
         policy_svc: Arc<McpPolicyService>,
         audit_svc: Arc<McpAuditService>,
@@ -537,7 +534,6 @@ impl McpGateway {
             catalog,
             diff_svc,
             query_svc,
-            filter_rules_svc,
             folder_overrides,
             policy_svc,
             audit_svc,
@@ -651,10 +647,6 @@ impl McpGateway {
         Ok(Resolved { conn, policy })
     }
 
-    fn blocking_filter_rules(&self) -> Result<Vec<crate::models::TableFilterRule>, ToolError> {
-        Ok(self.filter_rules_svc.list_active_rules()?)
-    }
-
     // ── tools ───────────────────────────────────────────────────────────────────
 
     pub fn list_connections(&self, client: &str) -> ToolResult {
@@ -694,7 +686,6 @@ impl McpGateway {
             |ctx| {
                 let Resolved { conn, policy } =
                     self.resolve(ctx, args.connection_id, McpTool::ListSchemaObjects)?;
-                let rules = self.blocking_filter_rules()?;
                 let wanted = args
                     .object_type
                     .as_deref()
@@ -703,7 +694,7 @@ impl McpGateway {
 
                 let objects: Vec<SchemaObject> = self
                     .diff_svc
-                    .fetch_schema_objects(&conn, &rules)?
+                    .fetch_schema_objects(&conn)?
                     .into_iter()
                     .filter(|o| !policy.object_denied(&o.name, &o.object_type))
                     .filter(|o| {
@@ -1177,8 +1168,7 @@ impl McpGateway {
         }
 
         let connections: Vec<ConnectionRecord> = resolved.iter().map(|r| r.conn.clone()).collect();
-        let rules = self.blocking_filter_rules()?;
-        let (servers, errors) = self.diff_svc.fetch_from_connections(&connections, &rules);
+        let (servers, errors) = self.diff_svc.fetch_from_connections(&connections, &[]);
         if !errors.is_empty() {
             let mut messages: Vec<String> = errors
                 .iter()

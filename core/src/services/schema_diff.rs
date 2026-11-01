@@ -74,12 +74,8 @@ impl SchemaDiffService {
         self.repo.fetch_table_ddls_for_tables(conn, table_names)
     }
 
-    pub fn fetch_schema_objects(
-        &self,
-        conn: &ConnectionRecord,
-        filter_rules: &[TableFilterRule],
-    ) -> Result<Vec<SchemaObject>> {
-        self.repo.fetch_schema_objects(conn, filter_rules)
+    pub fn fetch_schema_objects(&self, conn: &ConnectionRecord) -> Result<Vec<SchemaObject>> {
+        self.repo.fetch_schema_objects(conn)
     }
 
     pub fn fetch_object_ddl(

@@ -18,14 +18,12 @@ use schemetry_core::models::*;
 use schemetry_core::repositories::connection_repository::ConnectionRepository;
 use schemetry_core::repositories::db_repository::{DbRepository, ReadOnlyQuery};
 use schemetry_core::repositories::dispatch_repository::DispatchRepository;
-use schemetry_core::repositories::filter_rule_repository::FilterRuleRepository;
 use schemetry_core::repositories::folder_schema_override_repository::SchemaFolderOverrideRepository;
 use schemetry_core::repositories::mcp_apply_approval_repository::SqliteMcpApprovalRepository;
 use schemetry_core::repositories::mcp_audit_repository::SqliteMcpAuditRepository;
 use schemetry_core::repositories::mcp_policy_repository::SqliteMcpPolicyRepository;
 use schemetry_core::services::connection_catalog::ConnectionCatalogService;
 use schemetry_core::services::ddl_save::DdlSaveOptions;
-use schemetry_core::services::filter_rules::FilterRuleService;
 use schemetry_core::services::folder_schema_overrides::SchemaFolderOverrideService;
 use schemetry_core::services::mcp_apply_approval::McpApprovalService;
 use schemetry_core::services::mcp_audit::McpAuditService;
@@ -76,26 +74,6 @@ impl ConnectionRepository for Connections {
     }
     fn upsert_connection(&self, _: &ConnectionRecord) -> Result<()> {
         Err(anyhow!("unsupported"))
-    }
-}
-
-struct NoRules;
-
-impl FilterRuleRepository for NoRules {
-    fn init_db(&self) -> Result<()> {
-        Ok(())
-    }
-    fn list_rules(&self) -> Result<Vec<TableFilterRule>> {
-        Ok(Vec::new())
-    }
-    fn insert_rule(&self, r: &TableFilterRule) -> Result<TableFilterRule> {
-        Ok(r.clone())
-    }
-    fn update_rule(&self, _: i64, r: &TableFilterRule) -> Result<TableFilterRule> {
-        Ok(r.clone())
-    }
-    fn delete_rule(&self, _: i64) -> Result<()> {
-        Ok(())
     }
 }
 
@@ -193,7 +171,6 @@ fn env_with(second: ConnectionRecord) -> Env {
         ])))),
         Arc::new(SchemaDiffService::new(Arc::clone(&repo))),
         Arc::new(QueryService::new(Arc::clone(&repo))),
-        Arc::new(FilterRuleService::new(Arc::new(NoRules))),
         Arc::new(SchemaFolderOverrideService::new(Arc::new(NoOverrides))),
         Arc::new(McpPolicyService::new(policy_repo())),
         Arc::new(McpAuditService::new(audit_repo()).without_forwarding()),

@@ -138,16 +138,12 @@ pub async fn mcp_preview(
     }
 
     let conn = super::selected_connections(&state.catalog, &[connection_id])?.remove(0);
-    let rules = state
-        .filter_rules_svc
-        .list_active_rules()
-        .map_err(|e| e.to_string())?;
     let diff_svc = Arc::clone(&state.diff_svc);
     let db_type: DbType = conn.db_type;
 
     let fetched: Result<Vec<SchemaObject>, String> = tokio::task::spawn_blocking(move || {
         diff_svc
-            .fetch_schema_objects(&conn, &rules)
+            .fetch_schema_objects(&conn)
             .map_err(|e| e.to_string())
     })
     .await

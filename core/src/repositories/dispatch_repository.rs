@@ -66,12 +66,8 @@ impl DbRepository for DispatchRepository {
             .fetch_table_ddls_for_tables(conn, table_names)
     }
 
-    fn fetch_schema_objects(
-        &self,
-        conn: &ConnectionRecord,
-        filter_rules: &[TableFilterRule],
-    ) -> Result<Vec<SchemaObject>> {
-        self.repo(conn).fetch_schema_objects(conn, filter_rules)
+    fn fetch_schema_objects(&self, conn: &ConnectionRecord) -> Result<Vec<SchemaObject>> {
+        self.repo(conn).fetch_schema_objects(conn)
     }
 
     fn fetch_object_ddl(

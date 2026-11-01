@@ -630,18 +630,11 @@ impl DbRepository for DbOracleRepository {
         Ok(table_ddls)
     }
 
-    fn fetch_schema_objects(
-        &self,
-        conn: &ConnectionRecord,
-        filter_rules: &[TableFilterRule],
-    ) -> Result<Vec<SchemaObject>> {
+    fn fetch_schema_objects(&self, conn: &ConnectionRecord) -> Result<Vec<SchemaObject>> {
         let db = self.connect(conn)?;
         let schema = conn.username.to_ascii_uppercase();
 
-        let (filter_clause, filter_binds) =
-            build_predicate(filter_rules, "o.OBJECT_NAME", 2, ParamStyle::Colon);
-        let sql = format!(
-            "SELECT o.OBJECT_NAME, o.OBJECT_TYPE \
+        let sql = "SELECT o.OBJECT_NAME, o.OBJECT_TYPE \
              FROM ALL_OBJECTS o \
              WHERE o.OWNER = :1 \
                AND o.OBJECT_TYPE IN ('TABLE','VIEW','PROCEDURE','FUNCTION','PACKAGE',\
@@ -650,15 +643,12 @@ impl DbRepository for DbOracleRepository {
                AND o.STATUS = 'VALID' \
                AND NOT (o.OBJECT_TYPE = 'TABLE' \
                         AND EXISTS (SELECT 1 FROM ALL_MVIEWS m \
-                                     WHERE m.OWNER = o.OWNER AND m.MVIEW_NAME = o.OBJECT_NAME)){filter_clause} \
-             ORDER BY o.OBJECT_TYPE, o.OBJECT_NAME"
-        );
-        let mut binds: Vec<&dyn ToSql> = vec![&schema];
-        for b in &filter_binds {
-            binds.push(b);
-        }
+                                     WHERE m.OWNER = o.OWNER AND m.MVIEW_NAME = o.OBJECT_NAME)) \
+             ORDER BY o.OBJECT_TYPE, o.OBJECT_NAME";
 
-        let rows = db.query(&sql, &binds).map_err(|e| anyhow!(e.to_string()))?;
+        let rows = db
+            .query(sql, &[&schema])
+            .map_err(|e| anyhow!(e.to_string()))?;
 
         let mut objects = Vec::new();
         for row_result in rows {

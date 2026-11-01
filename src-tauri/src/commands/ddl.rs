@@ -15,16 +15,12 @@ pub async fn fetch_schema_objects(
 ) -> Result<Vec<SchemaObject>, String> {
     let mut conns = super::selected_connections(&state.catalog, &[server_id])?;
     let conn = conns.remove(0);
-    let filter_rules = state
-        .filter_rules_svc
-        .list_active_rules()
-        .map_err(|e| e.to_string())?;
     let diff_svc = Arc::clone(&state.diff_svc);
 
     tokio::task::spawn_blocking(move || {
         let _task = begin_task();
         diff_svc
-            .fetch_schema_objects(&conn, &filter_rules)
+            .fetch_schema_objects(&conn)
             .map_err(|e| e.to_string())
     })
     .await

@@ -51,7 +51,7 @@ fn ddl_and_schema_objects_on_source() {
     let source = common::source_connection();
 
     let objects = svc
-        .fetch_schema_objects(&source, &[])
+        .fetch_schema_objects(&source)
         .expect("fetch_schema_objects failed");
     for expected in ["DEPARTMENTS", "EMPLOYEES", "AUDIT_LOG"] {
         assert!(
