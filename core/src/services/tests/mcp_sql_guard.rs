@@ -613,3 +613,66 @@ fn user_functions_named_like_soft_keywords_are_checked() {
     ok("SELECT count(*) FILTER (WHERE x > 1) FROM t", PG);
     ok("SELECT SUM(x) OVER (PARTITION BY y ORDER BY z) FROM t", ORA);
 }
+
+#[test]
+fn a_quoted_cte_name_does_not_hide_a_differently_cased_table() {
+    assert_eq!(
+        tables(
+            "WITH \"Secret\" AS (SELECT 1 AS x) SELECT * FROM secret",
+            PG
+        ),
+        ["secret"]
+    );
+    assert_eq!(
+        tables(
+            "WITH \"secret\" AS (SELECT 1 x FROM dual) SELECT * FROM secret",
+            ORA
+        ),
+        ["SECRET"]
+    );
+    assert_eq!(
+        tables(
+            "WITH secret AS (SELECT 1 AS x) SELECT * FROM \"Secret\"",
+            PG
+        ),
+        ["Secret"]
+    );
+    assert_eq!(tables("SELECT * FROM \"dual\"", ORA), ["dual"]);
+}
+
+#[test]
+fn an_alias_named_like_a_clause_does_not_end_the_from_list() {
+    assert_eq!(tables("SELECT * FROM a start, secret", PG), ["a", "secret"]);
+    assert_eq!(
+        tables("SELECT * FROM a AS minus, secret", PG),
+        ["a", "secret"]
+    );
+    assert_eq!(
+        tables("SELECT * FROM a connect, secret", PG),
+        ["a", "secret"]
+    );
+    assert_eq!(
+        tables("SELECT * FROM a qualify, secret", ORA),
+        ["A", "SECRET"]
+    );
+    assert_eq!(
+        tables("SELECT * FROM (SELECT 1 FROM a start, secret) q", PG),
+        ["a", "secret"]
+    );
+    assert_eq!(
+        tables("SELECT * FROM a WHERE x IN (1, 2) ORDER BY x, y", PG),
+        ["a"]
+    );
+}
+
+#[test]
+fn non_ascii_outside_strings_and_quoted_names_is_refused() {
+    for db in [ORA, PG] {
+        rejected("SELECT 1 FROM t WHERE x = 1\u{a0}OR y = 2", db);
+        rejected("SELECT 1 FROM \u{20ac}$$secret", db);
+        ok(
+            "SELECT 'l\u{101}tvija' AS \"\u{101}\" FROM t -- \u{101}\n",
+            db,
+        );
+    }
+}

@@ -177,26 +177,29 @@ fn is_keyword_before_paren(tokens: &[Token], i: usize, word: &str, db_type: DbTy
     }
 }
 
-/// Keywords that end an alias position when scanning FROM lists.
-const CLAUSE_ENDERS: &[&str] = &[
-    "WHERE",
-    "GROUP",
-    "ORDER",
-    "HAVING",
-    "UNION",
-    "INTERSECT",
-    "EXCEPT",
-    "MINUS",
-    "LIMIT",
-    "OFFSET",
-    "FETCH",
-    "CONNECT",
-    "START",
-    "WINDOW",
-    "FOR",
-    "RETURNING",
-    "QUALIFY",
-];
+/// Keywords that end a FROM list. Only words the engine reserves count: any other word in
+/// that position is a table alias (`FROM a start, secret`), and treating it as a clause
+/// would drop the comma-separated table after it.
+fn ends_from_list(word: &str, db_type: DbType) -> bool {
+    const BOTH: &[&str] = &[
+        "WHERE",
+        "GROUP",
+        "ORDER",
+        "HAVING",
+        "UNION",
+        "INTERSECT",
+        "FOR",
+    ];
+    const POSTGRES: &[&str] = &["EXCEPT", "LIMIT", "OFFSET", "FETCH", "WINDOW", "RETURNING"];
+    const ORACLE: &[&str] = &["MINUS", "CONNECT", "START"];
+    let engine = match db_type {
+        DbType::Postgres => POSTGRES,
+        DbType::Oracle => ORACLE,
+    };
+    BOTH.iter()
+        .chain(engine)
+        .any(|w| word.eq_ignore_ascii_case(w))
+}
 
 /// Functions whose parentheses legitimately contain a `FROM` that isn't a table source.
 const FROM_IN_ARGS: &[&str] = &["EXTRACT", "TRIM", "SUBSTRING", "OVERLAY", "POSITION"];
@@ -231,8 +234,15 @@ fn tokenize(sql: &str, db_type: DbType) -> Result<Vec<Token>, String> {
     let mut i = 0usize;
     while i < chars.len() {
         let c = chars[i];
-        if c.is_whitespace() {
+        if c.is_ascii_whitespace() || c == '\u{b}' {
             i += 1;
+        } else if !c.is_ascii() && c != '"' && c != '\'' {
+            // The engines' notion of an identifier character differs from Rust's Unicode
+            // classes, so a non-ASCII character could hide a token boundary.
+            return Err(format!(
+                "Non-ASCII character U+{:04X} outside a string or quoted identifier.",
+                c as u32
+            ));
         } else if c == '-' && chars.get(i + 1) == Some(&'-') {
             // Postgres also ends a line comment at a lone `\r`; ending early only exposes more tokens.
             while i < chars.len() && chars[i] != '\n' && chars[i] != '\r' {
@@ -295,10 +305,10 @@ fn tokenize(sql: &str, db_type: DbType) -> Result<Vec<Token>, String> {
                 }
             }
             tokens.push(Token::Quoted(name));
-        } else if c.is_alphabetic() || c == '_' {
+        } else if c.is_ascii_alphabetic() || c == '_' {
             let start = i;
             while i < chars.len()
-                && (chars[i].is_alphanumeric() || matches!(chars[i], '_' | '$' | '#'))
+                && (chars[i].is_ascii_alphanumeric() || matches!(chars[i], '_' | '$' | '#'))
             {
                 i += 1;
             }
@@ -785,9 +795,7 @@ fn extract_tables(
                     expecting_table = true;
                 } else if word.eq_ignore_ascii_case("JOIN") {
                     expecting_table = true;
-                } else if top == Frame::FromList
-                    && CLAUSE_ENDERS.iter().any(|w| word.eq_ignore_ascii_case(w))
-                {
+                } else if top == Frame::FromList && ends_from_list(word, db_type) {
                     *stack.last_mut().unwrap() = Frame::Plain;
                 }
                 i += 1;
@@ -835,8 +843,10 @@ fn extract_tables(
         match parts.len() {
             1 => {
                 let name = parts.remove(0);
-                let is_cte = ctes.iter().any(|c| c.eq_ignore_ascii_case(&name));
-                let is_dual = db_type == DbType::Oracle && name.eq_ignore_ascii_case("DUAL");
+                // Names are already folded to the engine's case, so a quoted "Secret" is
+                // not the CTE `secret`.
+                let is_cte = ctes.iter().any(|c| *c == name);
+                let is_dual = db_type == DbType::Oracle && name == "DUAL";
                 if !is_cte && !is_dual {
                     tables.push(TableRef { schema: None, name });
                 }
