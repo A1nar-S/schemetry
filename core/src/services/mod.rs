@@ -17,6 +17,7 @@ pub mod mcp_ddl_guard;
 pub mod mcp_gateway;
 pub mod mcp_policy;
 pub mod mcp_query_builder;
+pub mod mcp_spill;
 pub mod mcp_sql_guard;
 pub mod query;
 pub mod query_export;

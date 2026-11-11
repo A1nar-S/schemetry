@@ -44,6 +44,8 @@ Rust unit tests cover the core business logic. Tests live in separate files alon
 - `core/src/services/tests/fix.rs` — tests for `services/fix.rs` (fix-script generation, SQL builders, `generate_fix_script`)
 - `core/src/repositories/tests/oracle_repository.rs` — tests for `repositories/oracle_repository.rs` (`clean_opt`, `fmt_type`, `make_idempotent`, `clean_sequence_ddl`)
 - `core/src/services/tests/mcp_*.rs` — MCP policy rules, SQL guard, query builder, audit hash chain (incl. real-SQLite tamper tests), audit sinks, and the gateway (policy/audit invariants) against in-memory fakes from `core/src/test_support.rs`.
+- `core/src/services/tests/mcp_spill.rs` — tests for `services/mcp_spill.rs` (result files: limits, expiry, cleanup, outline, streamed grep/read, LOB type sniffing).
+- `core/src/repositories/tests/db_repository.rs` — tests for `LobBudget` (the per-call limits when MCP `lob_files` reads LOB cells whole).
 - `core/src/services/tests/ddl_save.rs` — tests for `services/ddl_save.rs` (save planning, encoding refusal for unrepresentable characters, line-ending normalisation, file-name templates and their validation). Saved-file naming goes through `render_file_name`/`validate_file_name`, so keep any new naming option behind that validation (path confinement relies on it).
 
 `repositories/postgres_repository.rs` has no dedicated unit-test file yet — its catalog-introspection/DDL-rendering logic is exercised by the Postgres integration suite below instead.
@@ -107,7 +109,7 @@ mcp/         ← schemetry-mcp: stdio MCP server; thin rmcp wrapper over service
 
 ### MCP server
 
-Agents connect to the separate `schemetry-mcp` process. Every tool lives in `core/src/services/mcp_gateway.rs` and follows policy check (`mcp_policy.rs`, per-connection, default deny) → work → exactly one audit entry (`mcp_audit.rs`, append-only hash chain; no update/delete path may ever be added). Raw SQL goes through `mcp_sql_guard.rs` and runs via `DbRepository::run_readonly_query` (read-only transaction, row cap, timeout); `query_table` builds SQL in `mcp_query_builder.rs`. The GUI edits policies/settings and reads the audit log through `src-tauri/src/commands/mcp.rs`. New MCP tools must go through `McpGateway::audited` and have a matching `McpTool` policy capability.
+Agents connect to the separate `schemetry-mcp` process. Every tool lives in `core/src/services/mcp_gateway.rs` and follows policy check (`mcp_policy.rs`, per-connection, default deny) → work → exactly one audit entry (`mcp_audit.rs`, append-only hash chain; no update/delete path may ever be added). Raw SQL goes through `mcp_sql_guard.rs` and runs via `DbRepository::run_readonly_query` (read-only transaction, row cap, timeout); `query_table` builds SQL in `mcp_query_builder.rs`. The GUI edits policies/settings and reads the audit log through `src-tauri/src/commands/mcp.rs`. New MCP tools must go through `McpGateway::audited` and have a matching `McpTool` policy capability. Results over 16 KB (or with `output: "file"`) are written to temp files by `mcp_spill.rs` (`SpillStore`) and returned as a handle; `grep_result` / `read_result` read them and inherit the capability of the tool that wrote the file (rechecked per read), so they have no `McpTool` of their own.
 
 Passwords are stored in the OS keychain via the `keyring` crate; connection metadata goes to SQLite.
 

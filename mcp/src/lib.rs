@@ -18,8 +18,8 @@ use rmcp::{
 };
 use schemetry_core::services::mcp_gateway::{
     ApplyDdlArgs, CompareObjectArgs, CompareSchemasArgs, GenerateFixScriptArgs, GetObjectDdlArgs,
-    GetObjectErrorsArgs, ListInvalidObjectsArgs, ListSchemaObjectsArgs, McpGateway, QueryTableArgs,
-    RunQueryArgs, SaveMigrationScriptArgs, ToolError,
+    GetObjectErrorsArgs, GrepResultArgs, ListInvalidObjectsArgs, ListSchemaObjectsArgs, McpGateway,
+    QueryTableArgs, ReadResultArgs, RunQueryArgs, SaveMigrationScriptArgs, ToolError,
 };
 use serde_json::Value;
 
@@ -145,7 +145,7 @@ impl SchemetryMcp {
     }
 
     #[tool(
-        description = "Read the DDL of one schema object (no table data). For packages the type matters: PACKAGE returns the specification only, PACKAGE BODY the body only, and on Oracle PACKAGE SPEC AND BODY returns both as one script (spec, a `/` line, body, a `/` line). The response's `includes` lists which parts are present."
+        description = "Read the DDL of one schema object (no table data). For packages the type matters: PACKAGE returns the specification only, PACKAGE BODY the body only, and on Oracle PACKAGE SPEC AND BODY returns both as one script (spec, a `/` line, body, a `/` line). The response's `includes` lists which parts are present. DDL over 16 KB is written to a temp file instead (see grep_result); the response then carries `file` (path, size, lines), a preview and an outline of statements and subprograms with line numbers."
     )]
     async fn get_object_ddl(
         &self,
@@ -193,7 +193,7 @@ impl SchemetryMcp {
     }
 
     #[tool(
-        description = "Compare the schema of a reference connection with one or more others (same database engine) and list the discrepancies."
+        description = "Compare the schema of a reference connection with one or more others (same database engine) and list the discrepancies. Long lists go to a JSONL file (one discrepancy per line) with counts per difference and table."
     )]
     async fn compare_schemas(
         &self,
@@ -205,7 +205,7 @@ impl SchemetryMcp {
     }
 
     #[tool(
-        description = "Compare schemas like compare_schemas and generate an idempotent SQL script that brings the targets in line with the reference. The script is returned, never executed."
+        description = "Compare schemas like compare_schemas and generate an idempotent SQL script that brings the targets in line with the reference. The script is returned, never executed. A script over 16 KB is written whole to a temp file (path, preview and outline returned)."
     )]
     async fn generate_fix_script(
         &self,
@@ -217,7 +217,7 @@ impl SchemetryMcp {
     }
 
     #[tool(
-        description = "Compare a local DDL file in the schema's folder (path relative to it, e.g. code/app/ORDERS.sql) with one object's DDL on the server, entirely inside Schemetry: the file content is not sent through you. Returns {\"identical\": true} or a bounded unified diff ('-' server, '+' file) with counts. Line endings, trailing whitespace and, for Oracle, the CREATE header (OR REPLACE, EDITIONABLE, schema prefix, case) are normalised first."
+        description = "Compare a local DDL file in the schema's folder (path relative to it, e.g. code/app/ORDERS.sql) with one object's DDL on the server, entirely inside Schemetry: the file content is not sent through you. Returns {\"identical\": true} or a bounded unified diff ('-' server, '+' file) with counts. Line endings, trailing whitespace and, for Oracle, the CREATE header (OR REPLACE, EDITIONABLE, schema prefix, case) are normalised first. A diff over 16 KB is written to a temp file."
     )]
     async fn compare_object(
         &self,
@@ -229,7 +229,7 @@ impl SchemetryMcp {
     }
 
     #[tool(
-        description = "Read rows from one allowed table using structured columns, filters and ordering (no SQL text). Limited to the policy's table/column allowlist, row cap and timeout."
+        description = "Read rows from one allowed table using structured columns, filters and ordering (no SQL text). Limited to the policy's table/column allowlist, row cap and timeout. Results over 16 KB are written to a JSONL temp file (first line the columns, then one JSON array per row) and the first rows are shown. LOB cells (BLOB, CLOB, bytea) show as placeholders; set lob_files to write each one, and any cell over 4,000 characters, whole to its own typed temp file (pdf, png, docx, json, …) listed in `lob_files` with its path."
     )]
     async fn query_table(
         &self,
@@ -241,7 +241,7 @@ impl SchemetryMcp {
     }
 
     #[tool(
-        description = "Run one read-only SELECT. Only available when the connection's policy allows raw SQL; the statement is checked against the table allowlist and runs in a read-only transaction with a row cap and timeout."
+        description = "Run one read-only SELECT. Only available when the connection's policy allows raw SQL; the statement is checked against the table allowlist and runs in a read-only transaction with a row cap and timeout. Results over 16 KB are written to a JSONL temp file like query_table's. lob_files works as in query_table."
     )]
     async fn run_query(
         &self,
@@ -250,6 +250,30 @@ impl SchemetryMcp {
     ) -> Result<CallToolResult, McpError> {
         let (gateway, client) = (Arc::clone(&self.gateway), client_name(&context));
         run_blocking(move || gateway.run_query(&client, args)).await
+    }
+
+    #[tool(
+        description = "Search a result file that another tool wrote (its `file.id`), like `grep -n -C`: returns matching lines as `<line>:<text>` with context lines as `<line>-<text>`, plus the total match count. Literal and case-insensitive by default; set regex for a regular expression. Prefer this, or your own grep on `file.path`, over reading a large result whole."
+    )]
+    async fn grep_result(
+        &self,
+        Parameters(args): Parameters<GrepResultArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let (gateway, client) = (Arc::clone(&self.gateway), client_name(&context));
+        run_blocking(move || gateway.grep_result(&client, args)).await
+    }
+
+    #[tool(
+        description = "Read a range of lines (numbered) from a result file that another tool wrote (its `file.id`), e.g. around a line found with grep_result or the outline. Default 200 lines from start_line 1, at most 2000 per call."
+    )]
+    async fn read_result(
+        &self,
+        Parameters(args): Parameters<ReadResultArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let (gateway, client) = (Arc::clone(&self.gateway), client_name(&context));
+        run_blocking(move || gateway.read_result(&client, args)).await
     }
 
     #[tool(
@@ -273,7 +297,10 @@ impl ServerHandler for SchemetryMcp {
             .with_instructions(
                 "Schemetry gives controlled access to the Oracle/PostgreSQL connections configured \
                  in the Schemetry app. Call list_connections first; what each connection allows is \
-                 decided by its policy, and every call is recorded in an audit log.",
+                 decided by its policy, and every call is recorded in an audit log. Results over \
+                 16 KB (DDL, scripts, diffs, rows) are written to a temp file and returned as a \
+                 handle with a preview: grep it (grep_result or your own tools on `file.path`) \
+                 rather than reading it whole. Pass output \"inline\" or \"file\" to choose.",
             )
     }
 }

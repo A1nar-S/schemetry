@@ -39,6 +39,8 @@ fn query(table: &str) -> QueryTableArgs {
         filters: None,
         order_by: None,
         limit: None,
+        output: Default::default(),
+        lob_files: false,
     }
 }
 
@@ -47,6 +49,8 @@ fn raw(sql: &str) -> RunQueryArgs {
         connection_id: 1,
         sql: sql.to_string(),
         max_rows: None,
+        output: Default::default(),
+        lob_files: false,
     }
 }
 
@@ -57,6 +61,7 @@ fn rows(n: usize, truncated: bool) -> ReadOnlyResult {
             .map(|i| vec![Some(i.to_string()), Some("OPEN".into())])
             .collect(),
         truncated,
+        lobs: Default::default(),
     }
 }
 
@@ -286,7 +291,8 @@ fn capability_flags_gate_each_tool() {
             GetObjectDdlArgs {
                 connection_id: 1,
                 object_name: "ORDERS".into(),
-                object_type: "TABLE".into()
+                object_type: "TABLE".into(),
+                output: Default::default(),
             }
         ),
         Err(ToolError::Denied(_))
@@ -424,6 +430,7 @@ fn ddl_of_hidden_objects_is_refused_and_others_are_returned() {
         connection_id: 1,
         object_name: name.into(),
         object_type: ty.into(),
+        output: Default::default(),
     };
 
     let ok = h
@@ -662,6 +669,7 @@ fn ddl_args(ty: &str) -> GetObjectDdlArgs {
         connection_id: 1,
         object_name: "order_api".into(),
         object_type: ty.into(),
+        output: Default::default(),
     }
 }
 
@@ -1014,8 +1022,11 @@ fn oversized_results_are_cut_off() {
         columns: vec!["BIG".into()],
         rows: (0..400).map(|_| vec![Some("x".repeat(4_000))]).collect(),
         truncated: false,
+        lobs: Default::default(),
     });
-    let out = h.gateway.query_table(CLIENT, query("ORDERS")).unwrap();
+    let mut args = query("ORDERS");
+    args.output = OutputMode::Inline;
+    let out = h.gateway.query_table(CLIENT, args).unwrap();
     assert_eq!(out["truncated"], true);
     assert!(out["rows"].as_array().unwrap().len() < 400);
 }
@@ -2267,6 +2278,7 @@ fn compare_args() -> CompareSchemasArgs {
         check_columns: None,
         check_comments: None,
         check_indexes: None,
+        output: Default::default(),
     }
 }
 
@@ -2304,6 +2316,7 @@ fn compare_needs_the_permission_on_every_involved_connection() {
                 check_columns: None,
                 check_comments: None,
                 check_indexes: None,
+                output: Default::default(),
             }
         ),
         Err(ToolError::Denied(_))
@@ -2358,6 +2371,7 @@ fn fix_scripts_are_generated_never_executed_and_respect_hidden_objects() {
                 check_columns: None,
                 check_comments: None,
                 check_indexes: None,
+                output: Default::default(),
             },
         )
         .unwrap();
@@ -2380,6 +2394,7 @@ fn fix_scripts_are_generated_never_executed_and_respect_hidden_objects() {
                 check_columns: None,
                 check_comments: None,
                 check_indexes: None,
+                output: Default::default(),
             },
         )
         .unwrap();
@@ -2396,6 +2411,7 @@ fn fix_scripts_are_generated_never_executed_and_respect_hidden_objects() {
             check_columns: None,
             check_comments: None,
             check_indexes: None,
+            output: Default::default(),
         },
     );
     assert!(matches!(none, Err(ToolError::Failed(_))));
@@ -2551,6 +2567,7 @@ fn compare_object_args(file_path: &str) -> CompareObjectArgs {
         object_name: "ORDERS_V".into(),
         object_type: "VIEW".into(),
         file_path: file_path.into(),
+        output: Default::default(),
     }
 }
 
@@ -2844,7 +2861,13 @@ fn compare_object_reports_truncation_of_long_diffs() {
     write_schema_file(&root, "code/v.sql", file.as_bytes());
     let out = h
         .gateway
-        .compare_object(CLIENT, compare_object_args("code/v.sql"))
+        .compare_object(
+            CLIENT,
+            CompareObjectArgs {
+                output: OutputMode::Inline,
+                ..compare_object_args("code/v.sql")
+            },
+        )
         .unwrap();
     assert_eq!(out["truncated"], true);
     assert_eq!(out["diff_lines"], 400);
@@ -2962,4 +2985,584 @@ fn a_broken_git_checkout_refuses_to_overwrite_an_existing_file() {
         h.gateway.save_migration_script(CLIENT, args).unwrap()["written"],
         true
     );
+}
+
+// ── large results go to files ──────────────────────────────────────────────────
+
+/// A package body well over the inline limit: a header line, then six lines per procedure.
+fn big_body() -> String {
+    let mut ddl = String::from("CREATE OR REPLACE PACKAGE BODY ORDER_API AS\n");
+    for i in 0..400 {
+        ddl.push_str(&format!(
+            "  PROCEDURE step_{i} IS\n  BEGIN\n    -- does step {i}\n    NULL;\n  END;\n\n"
+        ));
+    }
+    ddl.push_str("END ORDER_API;\n/");
+    ddl
+}
+
+fn file_of(out: &Value) -> (String, std::path::PathBuf) {
+    assert_eq!(out["output"], "file", "{out}");
+    (
+        out["file"]["id"].as_str().unwrap().to_string(),
+        out["file"]["path"].as_str().unwrap().into(),
+    )
+}
+
+fn read_args(id: &str) -> ReadResultArgs {
+    ReadResultArgs {
+        id: id.into(),
+        start_line: None,
+        max_lines: None,
+    }
+}
+
+fn grep_args(id: &str, pattern: &str) -> GrepResultArgs {
+    GrepResultArgs {
+        id: id.into(),
+        pattern: pattern.into(),
+        regex: false,
+        ignore_case: None,
+        context: None,
+        max_matches: None,
+    }
+}
+
+#[test]
+fn small_ddl_stays_inline_and_large_ddl_goes_to_a_file() {
+    let h = package_harness();
+    let small = h
+        .gateway
+        .get_object_ddl(CLIENT, ddl_args("PACKAGE"))
+        .unwrap();
+    assert_eq!(small["ddl"], PKG_SPEC);
+    assert!(small.get("file").is_none());
+
+    let body = big_body();
+    h.db.ddls
+        .lock()
+        .unwrap()
+        .insert("PACKAGE BODY:ORDER_API".into(), body.clone());
+    let out = h
+        .gateway
+        .get_object_ddl(CLIENT, ddl_args("PACKAGE BODY"))
+        .unwrap();
+    let (_, path) = file_of(&out);
+    assert!(out.get("ddl").is_none());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+    assert!(path.starts_with(h.spill.dir()));
+    assert_eq!(out["file"]["bytes"], body.len());
+    assert_eq!(out["file"]["sha256"], sha256_hex(body.as_bytes()));
+    assert_eq!(out["includes"], json!(["body"]));
+    assert_eq!(out["object_name"], "order_api");
+    assert!(
+        out["preview"]
+            .as_str()
+            .unwrap()
+            .starts_with("CREATE OR REPLACE PACKAGE BODY")
+    );
+    let outline = out["outline"].as_array().unwrap();
+    assert_eq!(outline.len(), 401);
+    assert_eq!(
+        outline[1],
+        json!({ "line": 2, "kind": "PROCEDURE", "name": "step_0" })
+    );
+
+    // The audit entry records the file, never its content.
+    let entry = h.entries().pop().unwrap();
+    assert!(!entry.arguments.contains("step_17"));
+    let args: Value = serde_json::from_str(&entry.arguments).unwrap();
+    assert_eq!(args["result_file"]["sha256"], sha256_hex(body.as_bytes()));
+}
+
+#[test]
+fn output_mode_can_force_inline_or_file() {
+    let h = package_harness();
+    let forced = h
+        .gateway
+        .get_object_ddl(
+            CLIENT,
+            GetObjectDdlArgs {
+                output: OutputMode::File,
+                ..ddl_args("PACKAGE")
+            },
+        )
+        .unwrap();
+    let (_, path) = file_of(&forced);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), PKG_SPEC);
+
+    h.db.ddls
+        .lock()
+        .unwrap()
+        .insert("PACKAGE BODY:ORDER_API".into(), big_body());
+    let inline = h
+        .gateway
+        .get_object_ddl(
+            CLIENT,
+            GetObjectDdlArgs {
+                output: OutputMode::Inline,
+                ..ddl_args("PACKAGE BODY")
+            },
+        )
+        .unwrap();
+    assert_eq!(inline["ddl"], big_body());
+
+    // Over the 1 MB inline cap, inline is refused rather than flooding the context.
+    h.db.ddls
+        .lock()
+        .unwrap()
+        .insert("PACKAGE BODY:ORDER_API".into(), "-- x\n".repeat(300_000));
+    let message = denied_message(h.gateway.get_object_ddl(
+        CLIENT,
+        GetObjectDdlArgs {
+            output: OutputMode::Inline,
+            ..ddl_args("PACKAGE BODY")
+        },
+    ));
+    assert!(message.contains("output \"file\""), "{message}");
+}
+
+#[test]
+fn read_and_grep_work_on_a_result_file_and_are_audited() {
+    let h = package_harness();
+    h.db.ddls
+        .lock()
+        .unwrap()
+        .insert("PACKAGE BODY:ORDER_API".into(), big_body());
+    let out = h
+        .gateway
+        .get_object_ddl(CLIENT, ddl_args("PACKAGE BODY"))
+        .unwrap();
+    let (id, _) = file_of(&out);
+    let before = h.entries().len();
+
+    // step_17 starts at line 2 + 17 * 6 = 104.
+    let found = h
+        .gateway
+        .grep_result(
+            CLIENT,
+            GrepResultArgs {
+                context: Some(1),
+                ..grep_args(&id, "procedure STEP_17 ")
+            },
+        )
+        .unwrap();
+    assert_eq!(found["match_count"], 1);
+    assert_eq!(
+        found["hunks"],
+        "103-\n104:  PROCEDURE step_17 IS\n105-  BEGIN\n"
+    );
+
+    let read = h
+        .gateway
+        .read_result(
+            CLIENT,
+            ReadResultArgs {
+                start_line: Some(104),
+                max_lines: Some(2),
+                ..read_args(&id)
+            },
+        )
+        .unwrap();
+    assert_eq!(read["text"], "104:   PROCEDURE step_17 IS\n105:   BEGIN\n");
+    assert_eq!(read["more"], true);
+
+    let entries = h.entries();
+    assert_eq!(entries.len(), before + 2);
+    for entry in &entries[before..] {
+        assert_eq!(entry.outcome, McpOutcome::Allowed);
+        assert_eq!(entry.connection_id, Some(1));
+        assert!(!entry.arguments.contains("BEGIN"));
+        let args: Value = serde_json::from_str(&entry.arguments).unwrap();
+        assert_eq!(args["target"]["result_id"], id);
+        assert_eq!(args["target"]["source_tool"], "get_object_ddl");
+        assert_eq!(args["target"]["object_type"], "PACKAGE BODY");
+    }
+    assert_eq!(entries[before].tool, "grep_result");
+    assert_eq!(entries[before + 1].tool, "read_result");
+}
+
+#[test]
+fn result_files_follow_the_policy_of_the_tool_that_made_them() {
+    let h = package_harness();
+    let out = h
+        .gateway
+        .get_object_ddl(
+            CLIENT,
+            GetObjectDdlArgs {
+                output: OutputMode::File,
+                ..ddl_args("PACKAGE")
+            },
+        )
+        .unwrap();
+    let (id, _) = file_of(&out);
+    h.gateway.read_result(CLIENT, read_args(&id)).unwrap();
+
+    let bad = h.gateway.grep_result(
+        CLIENT,
+        GrepResultArgs {
+            regex: true,
+            ..grep_args(&id, "(")
+        },
+    );
+    assert!(matches!(bad, Err(ToolError::Denied(_))));
+
+    h.set_policy(McpPolicy {
+        allow_ddl_read: false,
+        ..enabled_policy(1)
+    });
+    denied_message(h.gateway.read_result(CLIENT, read_args(&id)));
+    assert_eq!(h.entries().last().unwrap().outcome, McpOutcome::Denied);
+
+    let message = denied_message(
+        h.gateway
+            .read_result(CLIENT, read_args("r_0000000000000000")),
+    );
+    assert!(message.contains("Unknown or expired"));
+}
+
+#[test]
+fn data_result_files_obey_the_global_kill_switch() {
+    let h = oracle();
+    h.set_policy(data_policy(1, vec![allow("ORDERS", "")]));
+    prepare_orders(&h);
+    let mut args = query("ORDERS");
+    args.output = OutputMode::File;
+    let out = h.gateway.query_table(CLIENT, args).unwrap();
+    let (id, _) = file_of(&out);
+    h.gateway.read_result(CLIENT, read_args(&id)).unwrap();
+
+    h.settings.data_tools_disabled.store(true, Ordering::SeqCst);
+    let message = denied_message(h.gateway.read_result(CLIENT, read_args(&id)));
+    assert!(message.contains("switched off"), "{message}");
+}
+
+#[test]
+fn large_query_results_go_to_jsonl_and_keep_the_row_cap() {
+    let h = oracle();
+    h.set_policy(McpPolicy {
+        max_rows: 1_000,
+        ..data_policy(1, vec![allow("ORDERS", "")])
+    });
+    prepare_orders(&h);
+    *h.db.readonly_result.lock().unwrap() = Some(ReadOnlyResult {
+        columns: vec!["ID".into(), "NOTE".into()],
+        rows: (0..1_000)
+            .map(|i| {
+                let note = (i != 7).then(|| format!("line\nbreak {i}"));
+                vec![Some(i.to_string()), note]
+            })
+            .collect(),
+        truncated: true,
+        lobs: Default::default(),
+    });
+    let out = h.gateway.query_table(CLIENT, query("ORDERS")).unwrap();
+    let (_, path) = file_of(&out);
+    assert_eq!(h.db.seen.lock().unwrap()[0].max_rows, 1_000);
+    assert_eq!(out["row_count"], 1_000);
+    assert_eq!(out["truncated"], true);
+    assert_eq!(out["rows"].as_array().unwrap().len(), 20);
+    assert_eq!(out["columns"], json!(["ID", "NOTE"]));
+
+    let text = std::fs::read_to_string(path).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 1_001, "a header and one line per row");
+    assert_eq!(lines[0], r#"{"columns":["ID","NOTE"]}"#);
+    assert_eq!(lines[1], r#"["0","line\nbreak 0"]"#);
+    assert_eq!(lines[8], r#"["7",null]"#);
+
+    // Small results are unchanged.
+    *h.db.readonly_result.lock().unwrap() = Some(rows(2, false));
+    let small = h.gateway.query_table(CLIENT, query("ORDERS")).unwrap();
+    assert!(small.get("file").is_none());
+    assert_eq!(small["row_count"], 2);
+}
+
+#[test]
+fn run_query_results_can_go_to_a_file() {
+    let h = oracle();
+    h.set_policy(raw_policy(vec![allow("ORDERS", "")]));
+    has_tables(&h, &["ORDERS"]);
+    *h.db.readonly_result.lock().unwrap() = Some(rows(3, false));
+    let out = h
+        .gateway
+        .run_query(
+            CLIENT,
+            RunQueryArgs {
+                output: OutputMode::File,
+                ..raw("SELECT id FROM orders")
+            },
+        )
+        .unwrap();
+    let (_, path) = file_of(&out);
+    assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 4);
+    assert_eq!(out["row_count"], 3);
+}
+
+#[test]
+fn whole_fix_scripts_and_discrepancy_lists_go_to_files() {
+    let h = compare_harness();
+    let fix = h
+        .gateway
+        .generate_fix_script(
+            CLIENT,
+            GenerateFixScriptArgs {
+                source_id: 1,
+                target_ids: vec![2],
+                tables: None,
+                check_tables: None,
+                check_columns: None,
+                check_comments: None,
+                check_indexes: None,
+                output: OutputMode::File,
+            },
+        )
+        .unwrap();
+    let (_, path) = file_of(&fix);
+    let script = std::fs::read_to_string(&path).unwrap();
+    assert!(script.contains("AUDIT_LOG"));
+    assert_eq!(fix["truncated"], false);
+    assert!(
+        fix["outline"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "TABLE")
+    );
+
+    let cmp = h
+        .gateway
+        .compare_schemas(
+            CLIENT,
+            CompareSchemasArgs {
+                output: OutputMode::File,
+                ..compare_args()
+            },
+        )
+        .unwrap();
+    let (id, path) = file_of(&cmp);
+    assert_eq!(cmp["count"], 2);
+    assert_eq!(cmp["summary"]["table_count"], 2);
+    let lines: Vec<Value> = std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert!(lines.iter().any(|d| d["table"] == "AUDIT_LOG"));
+    h.gateway
+        .grep_result(CLIENT, grep_args(&id, "ORDERS"))
+        .unwrap();
+
+    // Reads recheck every connection the comparison involved.
+    h.set_policy(enabled_policy(2));
+    denied_message(h.gateway.grep_result(CLIENT, grep_args(&id, "ORDERS")));
+}
+
+#[test]
+fn long_object_diffs_go_to_a_file_in_full() {
+    let server: String = (0..600).map(|i| format!("server line {i}\n")).collect();
+    let (h, root) = compare_object_harness(&server);
+    let file: String = (0..600).map(|i| format!("file line {i}\n")).collect();
+    write_schema_file(&root, "code/v.sql", file.as_bytes());
+    let out = h
+        .gateway
+        .compare_object(CLIENT, compare_object_args("code/v.sql"))
+        .unwrap();
+    let (_, path) = file_of(&out);
+    assert_eq!(out["truncated"], false);
+    assert!(out.get("diff").is_none());
+    let diff = std::fs::read_to_string(path).unwrap();
+    assert!(diff.contains("-server line 599") && diff.contains("+file line 599"));
+    assert_eq!(out["file"]["format"], "diff");
+}
+
+// ── LOB cells as files ─────────────────────────────────────────────────────────
+
+const PDF: &[u8] = b"%PDF-1.4\n%binary\x00\xff\n";
+
+/// Two rows of a DOCS table whose BLOB/CLOB cells the database read whole.
+fn lob_result() -> ReadOnlyResult {
+    use crate::repositories::db_repository::{CapturedCell, CapturedLobs, SkippedCell};
+    ReadOnlyResult {
+        columns: vec!["ID".into(), "CONTENT".into(), "META".into()],
+        rows: vec![
+            vec![
+                Some("1".into()),
+                Some("<BLOB>".into()),
+                Some("<CLOB>".into()),
+            ],
+            vec![Some("2".into()), Some("<BLOB>".into()), None],
+        ],
+        truncated: false,
+        lobs: CapturedLobs {
+            cells: vec![
+                CapturedCell {
+                    row: 0,
+                    col: 1,
+                    source_type: "BLOB",
+                    binary: true,
+                    bytes: PDF.to_vec(),
+                },
+                CapturedCell {
+                    row: 0,
+                    col: 2,
+                    source_type: "CLOB",
+                    binary: false,
+                    bytes: br#"{"author": "Ann", "pages": 3}"#.to_vec(),
+                },
+            ],
+            skipped: vec![SkippedCell {
+                row: 1,
+                col: 1,
+                reason: "larger than the 32 MB per-cell limit".into(),
+            }],
+        },
+    }
+}
+
+fn docs_harness() -> Harness {
+    let h = oracle();
+    h.set_policy(data_policy(1, vec![allow("DOCS", "")]));
+    h.db.columns.lock().unwrap().insert(
+        "DOCS".into(),
+        vec!["ID".into(), "CONTENT".into(), "META".into()],
+    );
+    h
+}
+
+#[test]
+fn lob_cells_are_only_read_whole_when_asked() {
+    let h = docs_harness();
+    *h.db.readonly_result.lock().unwrap() = Some(rows(1, false));
+    let out = h.gateway.query_table(CLIENT, query("DOCS")).unwrap();
+    assert_eq!(h.db.seen.lock().unwrap()[0].lobs, LobCapture::Off);
+    assert!(out.get("lob_files").is_none());
+
+    *h.db.readonly_result.lock().unwrap() = Some(rows(1, false));
+    h.gateway
+        .query_table(
+            CLIENT,
+            QueryTableArgs {
+                lob_files: true,
+                ..query("DOCS")
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        h.db.seen.lock().unwrap()[1].lobs,
+        LobCapture::On { max_cells: 50, .. }
+    ));
+}
+
+#[test]
+fn lob_cells_go_to_typed_files_and_the_cells_point_at_them() {
+    let h = docs_harness();
+    *h.db.readonly_result.lock().unwrap() = Some(lob_result());
+    let out = h
+        .gateway
+        .query_table(
+            CLIENT,
+            QueryTableArgs {
+                lob_files: true,
+                ..query("DOCS")
+            },
+        )
+        .unwrap();
+
+    let files = out["lob_files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    let pdf = &files[0];
+    assert_eq!(pdf["row_index"], 0);
+    assert_eq!(pdf["column"], "CONTENT");
+    assert_eq!(pdf["source_type"], "BLOB");
+    assert_eq!(pdf["mime"], "application/pdf");
+    assert_eq!(pdf["binary"], true);
+    assert!(pdf.get("preview").is_none());
+    let pdf_path = std::path::PathBuf::from(pdf["path"].as_str().unwrap());
+    assert_eq!(std::fs::read(&pdf_path).unwrap(), PDF);
+    assert!(
+        pdf_path
+            .to_string_lossy()
+            .ends_with("-query_table-DOCS-CONTENT-row1.pdf")
+    );
+
+    let json_file = &files[1];
+    assert_eq!(json_file["format"], "json");
+    assert_eq!(json_file["preview"], r#"{"author": "Ann", "pages": 3}"#);
+
+    // The cells now name their files; the skipped one keeps its placeholder.
+    let rows = out["rows"].as_array().unwrap();
+    assert_eq!(
+        rows[0][1],
+        format!("<BLOB file {}>", pdf["id"].as_str().unwrap())
+    );
+    assert_eq!(
+        rows[0][2],
+        format!("<CLOB file {}>", json_file["id"].as_str().unwrap())
+    );
+    assert_eq!(rows[1][1], "<BLOB>");
+    assert_eq!(out["lob_files_skipped"][0]["row_index"], 1);
+    assert!(
+        out["lob_files_skipped"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("per-cell")
+    );
+
+    // The audit entry lists the files, never their bytes.
+    let entry = h.entries().pop().unwrap();
+    assert!(!entry.arguments.contains("Ann"));
+    let args: Value = serde_json::from_str(&entry.arguments).unwrap();
+    assert_eq!(args["lob_files"][0]["sha256"], sha256_hex(PDF));
+    assert_eq!(args["lob_files"][0]["mime"], "application/pdf");
+    assert_eq!(args["lob_files_skipped"], 1);
+
+    // Text LOBs can be grepped through MCP; binary ones are refused.
+    let found = h
+        .gateway
+        .grep_result(
+            CLIENT,
+            grep_args(json_file["id"].as_str().unwrap(), "author"),
+        )
+        .unwrap();
+    assert_eq!(found["match_count"], 1);
+    let message = denied_message(
+        h.gateway
+            .read_result(CLIENT, read_args(pdf["id"].as_str().unwrap())),
+    );
+    assert!(message.contains("binary"), "{message}");
+}
+
+#[test]
+fn run_query_can_write_lob_files_too() {
+    let h = oracle();
+    h.set_policy(raw_policy(vec![allow("DOCS", "")]));
+    has_tables(&h, &["DOCS"]);
+    *h.db.readonly_result.lock().unwrap() = Some(lob_result());
+    let out = h
+        .gateway
+        .run_query(
+            CLIENT,
+            RunQueryArgs {
+                lob_files: true,
+                ..raw("SELECT * FROM docs")
+            },
+        )
+        .unwrap();
+    let files = out["lob_files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    assert!(
+        files[0]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("-run_query-CONTENT-row1.pdf")
+    );
+
+    // LOB files are table data: the global kill switch also stops reading them.
+    h.settings.data_tools_disabled.store(true, Ordering::SeqCst);
+    denied_message(h.gateway.grep_result(
+        CLIENT,
+        grep_args(files[1]["id"].as_str().unwrap(), "author"),
+    ));
 }

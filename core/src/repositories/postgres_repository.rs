@@ -11,8 +11,8 @@ use crate::models::{
     ObjectErrorList, SchemaObject, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::{
-    ApplyDdlRequest, ApplyDdlResult, DbRepository, LobCell, LobSource, QueryOutput, ReadOnlyQuery,
-    ReadOnlyResult,
+    ApplyDdlRequest, ApplyDdlResult, DbRepository, LobBudget, LobCapture, LobCell, LobSource,
+    MCP_CELL_CAP, QueryOutput, ReadOnlyQuery, ReadOnlyResult,
 };
 use crate::repositories::filter_rule_repository::{ParamStyle, build_predicate};
 use crate::services::cancel::{checkpoint, on_cancel};
@@ -20,9 +20,6 @@ use crate::services::cancel::{checkpoint, on_cancel};
 /// Cap on materialized LOB-like content (characters of text / bytes decoded), mirroring
 /// `oracle_repository::MATERIALIZE_TEXT_CAP`.
 const MATERIALIZE_TEXT_CAP: usize = 1_000_000;
-
-/// Per-cell cap for results returned to MCP agents.
-const MCP_CELL_CAP: usize = 4_000;
 
 /// `tokio-postgres` is a pure async driver, but every caller in this codebase (services,
 /// commands) is synchronous — they already bridge into async Tauri commands via
@@ -1111,6 +1108,20 @@ impl DbRepository for DbPostgresRepository {
                     .batch_execute("BEGIN READ ONLY")
                     .await
                     .map_err(|e| describe_pg_error(e, timeout_secs))?;
+                // The text protocol below carries no column types, so bytea columns are
+                // found by describing the statement (it is not executed here).
+                let binary_columns: Vec<bool> = if request.lobs == LobCapture::Off {
+                    Vec::new()
+                } else {
+                    client
+                        .prepare(&request.sql)
+                        .await
+                        .map_err(|e| describe_pg_error(e, timeout_secs))?
+                        .columns()
+                        .iter()
+                        .map(|c| c.type_().name() == "bytea")
+                        .collect()
+                };
                 // A cursor accepts only a plain query, and lets us pull just max_rows + 1.
                 client
                     .batch_execute(&format!(
@@ -1126,12 +1137,14 @@ impl DbRepository for DbPostgresRepository {
                     ))
                     .await
                     .map_err(|e| describe_pg_error(e, timeout_secs))
+                    .map(|messages| (messages, binary_columns))
             }
             .await;
             let _ = client.batch_execute("ROLLBACK").await;
-            let messages = outcome?;
+            let (messages, binary_columns) = outcome?;
 
             let cap = request.max_rows as usize;
+            let mut budget = LobBudget::new(request.lobs);
             let mut columns: Vec<String> = Vec::new();
             let mut rows: Vec<Vec<Option<String>>> = Vec::new();
             let mut truncated = false;
@@ -1144,17 +1157,39 @@ impl DbRepository for DbPostgresRepository {
                         truncated = true;
                         break;
                     }
-                    rows.push(
-                        (0..row.len())
-                            .map(|i| row.get(i).map(|v| cap_chars(v.to_string(), MCP_CELL_CAP)))
-                            .collect(),
-                    );
+                    let row_index = rows.len();
+                    let mut values = Vec::with_capacity(row.len());
+                    for i in 0..row.len() {
+                        let value = row.get(i);
+                        match (budget.as_mut(), value) {
+                            (Some(budget), Some(text))
+                                if binary_columns.get(i).copied().unwrap_or(false) =>
+                            {
+                                budget.record(row_index, i, "BYTEA", true, decode_bytea_hex(text));
+                                values.push(Some("<BYTEA>".to_string()));
+                                continue;
+                            }
+                            (Some(budget), Some(text)) if text.chars().count() > MCP_CELL_CAP => {
+                                budget.record(
+                                    row_index,
+                                    i,
+                                    "TEXT",
+                                    false,
+                                    text.as_bytes().to_vec(),
+                                );
+                            }
+                            _ => {}
+                        }
+                        values.push(value.map(|v| cap_chars(v.to_string(), MCP_CELL_CAP)));
+                    }
+                    rows.push(values);
                 }
             }
             Ok(ReadOnlyResult {
                 columns,
                 rows,
                 truncated,
+                lobs: budget.map(|b| b.captured).unwrap_or_default(),
             })
         })
     }

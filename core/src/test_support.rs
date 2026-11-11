@@ -10,8 +10,8 @@ use anyhow::{Result, anyhow};
 use crate::models::*;
 use crate::repositories::connection_repository::ConnectionRepository;
 use crate::repositories::db_repository::{
-    ApplyDdlRequest, ApplyDdlResult, DbRepository, DdlCompileError, DdlStatement, QueryOutput,
-    ReadOnlyQuery, ReadOnlyResult,
+    ApplyDdlRequest, ApplyDdlResult, DbRepository, DdlCompileError, DdlStatement, LobCapture,
+    QueryOutput, ReadOnlyQuery, ReadOnlyResult,
 };
 use crate::repositories::folder_schema_override_repository::SchemaFolderOverrideRepository;
 use crate::repositories::mcp_apply_approval_repository::SqliteMcpApprovalRepository;
@@ -24,6 +24,7 @@ use crate::services::mcp_apply_approval::McpApprovalService;
 use crate::services::mcp_audit::McpAuditService;
 use crate::services::mcp_gateway::{GatewaySettings, McpGateway};
 use crate::services::mcp_policy::McpPolicyService;
+use crate::services::mcp_spill::SpillStore;
 use crate::services::query::QueryService;
 use crate::services::schema_diff::SchemaDiffService;
 
@@ -123,6 +124,7 @@ pub struct SeenQuery {
     pub binds: Vec<String>,
     pub max_rows: u32,
     pub timeout_secs: u32,
+    pub lobs: LobCapture,
 }
 
 #[derive(Default)]
@@ -232,6 +234,7 @@ impl DbRepository for FakeDb {
             binds: request.binds.clone(),
             max_rows: request.max_rows,
             timeout_secs: request.timeout_secs,
+            lobs: request.lobs,
         });
         self.readonly_result
             .lock()
@@ -502,7 +505,10 @@ pub struct Harness {
     pub approvals: Arc<McpApprovalService>,
     /// The approval service's "now", in unix seconds.
     pub clock: Arc<AtomicI64>,
+    /// Where result files go; inside a temp dir the harness owns.
+    pub spill: Arc<SpillStore>,
     _approvals_dir: tempfile::TempDir,
+    _spill_dir: tempfile::TempDir,
 }
 
 impl Harness {
@@ -536,6 +542,9 @@ impl Harness {
             Arc::clone(&approvals),
             settings.clone(),
         );
+        let spill_dir = tempfile::tempdir().unwrap();
+        let spill = Arc::new(SpillStore::under(spill_dir.path().join("results")));
+        let gateway = gateway.with_spill_store(Arc::clone(&spill));
         Self {
             gateway,
             db,
@@ -544,7 +553,9 @@ impl Harness {
             settings,
             approvals,
             clock,
+            spill,
             _approvals_dir: approvals_dir,
+            _spill_dir: spill_dir,
         }
     }
 

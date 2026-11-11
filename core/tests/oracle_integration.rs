@@ -20,10 +20,12 @@ use std::sync::Arc;
 
 use schemetry_core::models::ServerTableDdls;
 use schemetry_core::repositories::db_repository::LobCell;
+use schemetry_core::repositories::db_repository::{DbRepository, LobCapture, ReadOnlyQuery};
 use schemetry_core::repositories::oracle_repository::DbOracleRepository;
 use schemetry_core::services::cancel;
 use schemetry_core::services::compare::compare_tables_across_servers;
 use schemetry_core::services::fix::generate_fix_script;
+use schemetry_core::services::mcp_spill::sniff;
 use schemetry_core::services::query::QueryService;
 use schemetry_core::services::schema_diff::SchemaDiffService;
 
@@ -548,4 +550,71 @@ fn running_query_can_be_cancelled() {
         !cancel::cancel_task(),
         "task should be cleared once its guard drops"
     );
+}
+
+/// What `mcp_spill::sniff` should call each LOB sample, by its FORMAT value.
+fn expected_extension(format: &str) -> &str {
+    match format {
+        "text" => "txt",
+        "binary" => "bin",
+        other => other,
+    }
+}
+
+#[test]
+#[ignore = "requires the two Oracle containers from docker/docker-compose.yml"]
+fn readonly_query_captures_lob_cells_whole_for_mcp_files() {
+    const PAYLOAD_PLACEHOLDER: &str = "<BLOB>";
+    common::init_oracle_client();
+    let repo = DbOracleRepository::new();
+    let request = |lobs| ReadOnlyQuery {
+        sql: "SELECT SAMPLE_ID, FORMAT, BODY, PAYLOAD FROM LOB_SAMPLES ORDER BY SAMPLE_ID".into(),
+        binds: Vec::new(),
+        max_rows: 50,
+        timeout_secs: 30,
+        lobs,
+    };
+
+    let off = repo
+        .run_readonly_query(&common::source_connection(), &request(LobCapture::Off))
+        .unwrap();
+    assert!(off.lobs.cells.is_empty() && off.lobs.skipped.is_empty());
+
+    let on = repo
+        .run_readonly_query(
+            &common::source_connection(),
+            &request(LobCapture::On {
+                max_cells: 50,
+                max_cell_bytes: 32 * 1024 * 1024,
+                max_total_bytes: 64 * 1024 * 1024,
+            }),
+        )
+        .unwrap();
+    assert!(on.lobs.skipped.is_empty(), "{:?}", on.lobs.skipped);
+    assert_eq!(on.rows.len(), 9);
+    for (index, row) in on.rows.iter().enumerate() {
+        let format = row[1].clone().unwrap();
+        let expected = expected_extension(&format);
+        let cells: Vec<_> = on.lobs.cells.iter().filter(|c| c.row == index).collect();
+        // Every sample has a payload; text samples also have a body holding the same text.
+        let payload = cells
+            .iter()
+            .find(|c| c.col == 3)
+            .unwrap_or_else(|| panic!("row {index} ({format}): payload not captured"));
+        assert!(payload.binary);
+        assert_eq!(row[3].as_deref(), Some(PAYLOAD_PLACEHOLDER));
+        assert_eq!(
+            sniff(&payload.bytes).ext,
+            expected,
+            "row {index} ({format})"
+        );
+        for body in cells.iter().filter(|c| c.col == 2) {
+            assert!(!body.binary);
+            assert_eq!(
+                sniff(&body.bytes).ext,
+                expected,
+                "row {index} ({format}) body"
+            );
+        }
+    }
 }

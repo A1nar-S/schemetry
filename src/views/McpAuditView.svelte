@@ -37,6 +37,8 @@
     'compare_object',
     'query_table',
     'run_query',
+    'grep_result',
+    'read_result',
     'apply_ddl',
   ];
 

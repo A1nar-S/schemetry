@@ -133,6 +133,137 @@ pub struct ReadOnlyQuery {
     pub binds: Vec<String>,
     pub max_rows: u32,
     pub timeout_secs: u32,
+    /// Whether LOB cells come back whole (for writing to files) instead of as placeholders.
+    pub lobs: LobCapture,
+}
+
+/// Per-cell cap on text returned inline to MCP agents; longer cells are cut (or captured
+/// whole when [`LobCapture::On`]).
+pub const MCP_CELL_CAP: usize = 4_000;
+
+/// What a read-only query does with LOB cells (Oracle BLOB/CLOB/NCLOB/LONG/LONG RAW/BFILE,
+/// Postgres bytea) and with text cells longer than [`MCP_CELL_CAP`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LobCapture {
+    /// Placeholders (`<BLOB>`, `<CLOB>`) and cut text, as returned inline.
+    #[default]
+    Off,
+    /// Read such cells whole, within these limits; cells that don't fit are skipped and
+    /// keep their placeholder.
+    On {
+        max_cells: usize,
+        max_cell_bytes: usize,
+        max_total_bytes: usize,
+    },
+}
+
+/// One cell read whole because of [`LobCapture::On`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapturedCell {
+    pub row: usize,
+    pub col: usize,
+    /// `BLOB`, `CLOB`, `NCLOB`, `LONG`, `LONG RAW`, `BFILE`, `BYTEA` or `TEXT` (a long text cell).
+    pub source_type: &'static str,
+    /// Text cells hold UTF-8.
+    pub binary: bool,
+    pub bytes: Vec<u8>,
+}
+
+/// A cell that [`LobCapture::On`] could not read whole.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkippedCell {
+    pub row: usize,
+    pub col: usize,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CapturedLobs {
+    pub cells: Vec<CapturedCell>,
+    pub skipped: Vec<SkippedCell>,
+}
+
+/// Tracks a query's [`LobCapture`] limits while the engine reads cells.
+pub struct LobBudget {
+    max_cells: usize,
+    max_cell_bytes: usize,
+    remaining: usize,
+    pub captured: CapturedLobs,
+}
+
+impl LobBudget {
+    pub fn new(capture: LobCapture) -> Option<Self> {
+        match capture {
+            LobCapture::Off => None,
+            LobCapture::On {
+                max_cells,
+                max_cell_bytes,
+                max_total_bytes,
+            } => Some(Self {
+                max_cells,
+                max_cell_bytes,
+                remaining: max_total_bytes,
+                captured: CapturedLobs::default(),
+            }),
+        }
+    }
+
+    /// How many bytes the next cell may have, or why it can't be captured at all. Read
+    /// one byte more than this to tell whether the cell fits.
+    pub fn allowance(&self) -> Result<usize, String> {
+        if self.captured.cells.len() >= self.max_cells {
+            return Err(format!(
+                "only {} cells are written to files per call",
+                self.max_cells
+            ));
+        }
+        if self.remaining == 0 {
+            return Err("the per-call LOB byte limit was reached".into());
+        }
+        Ok(self.max_cell_bytes.min(self.remaining))
+    }
+
+    /// Records a cell read with at most `allowance() + 1` bytes.
+    pub fn record(
+        &mut self,
+        row: usize,
+        col: usize,
+        source_type: &'static str,
+        binary: bool,
+        bytes: Vec<u8>,
+    ) {
+        let allowed = match self.allowance() {
+            Ok(allowed) => allowed,
+            Err(reason) => return self.skip(row, col, reason),
+        };
+        if bytes.len() > allowed {
+            let reason = if allowed == self.max_cell_bytes {
+                format!(
+                    "larger than the {} MB per-cell limit",
+                    self.max_cell_bytes / (1024 * 1024)
+                )
+            } else {
+                "the per-call LOB byte limit was reached".to_string()
+            };
+            return self.skip(row, col, reason);
+        }
+        self.remaining -= bytes.len();
+        self.captured.cells.push(CapturedCell {
+            row,
+            col,
+            source_type,
+            binary,
+            bytes,
+        });
+    }
+
+    pub fn skip(&mut self, row: usize, col: usize, reason: impl Into<String>) {
+        self.captured.skipped.push(SkippedCell {
+            row,
+            col,
+            reason: reason.into(),
+        });
+    }
 }
 
 pub struct ReadOnlyResult {
@@ -140,6 +271,8 @@ pub struct ReadOnlyResult {
     pub rows: Vec<Vec<Option<String>>>,
     /// More rows existed than `max_rows`; the extras were dropped.
     pub truncated: bool,
+    /// Cells read whole under [`LobCapture::On`]; empty otherwise.
+    pub lobs: CapturedLobs,
 }
 
 pub struct QueryOutput {
@@ -170,3 +303,7 @@ pub enum LobCell {
     Text(Option<String>),
     Binary(Vec<u8>),
 }
+
+#[cfg(test)]
+#[path = "tests/db_repository.rs"]
+mod tests;

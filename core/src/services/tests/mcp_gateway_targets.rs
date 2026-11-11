@@ -30,6 +30,7 @@ fn harness() -> Harness {
         columns: vec!["ID".into()],
         rows: vec![vec![Some("1".into())], vec![Some("2".into())]],
         truncated: true,
+        lobs: Default::default(),
     });
     h
 }
@@ -50,6 +51,8 @@ fn query(table: &str) -> QueryTableArgs {
         }]),
         order_by: None,
         limit: Some(5),
+        output: Default::default(),
+        lob_files: false,
     }
 }
 
@@ -96,6 +99,8 @@ fn run_query_audits_the_tables_the_sql_reads() {
                 sql: "SELECT o.id FROM orders o JOIN app.items i ON i.oid = o.id JOIN orders x ON 1=1"
                     .into(),
                 max_rows: None,
+                output: Default::default(),
+                lob_files: false,
             },
         )
         .unwrap();
@@ -116,6 +121,8 @@ fn run_query_denied_for_a_table_outside_the_allowlist_still_records_it() {
             connection_id: 1,
             sql: "SELECT * FROM payroll".into(),
             max_rows: None,
+            output: Default::default(),
+            lob_files: false,
         },
     );
     assert!(matches!(result, Err(ToolError::Denied(_))));
@@ -137,6 +144,7 @@ fn get_object_ddl_audits_object_type_and_name_even_when_refused() {
                 connection_id: 1,
                 object_name: "V_ORDERS".into(),
                 object_type: "view".into(),
+                output: Default::default(),
             },
         )
         .unwrap();
@@ -148,6 +156,7 @@ fn get_object_ddl_audits_object_type_and_name_even_when_refused() {
             connection_id: 1,
             object_name: "BAD; DROP".into(),
             object_type: "TABLE".into(),
+            output: Default::default(),
         },
     );
     assert!(matches!(refused, Err(ToolError::Denied(_))));

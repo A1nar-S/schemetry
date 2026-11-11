@@ -216,6 +216,8 @@ fn query(table: &str) -> QueryTableArgs {
         filters: None,
         order_by: None,
         limit: None,
+        output: Default::default(),
+        lob_files: false,
     }
 }
 
@@ -261,6 +263,7 @@ fn list_read_ddl_and_save_scripts_end_to_end() {
                 connection_id: ID(),
                 object_name: "employees".into(),
                 object_type: "TABLE".into(),
+                output: Default::default(),
             },
         )
         .unwrap();
@@ -481,6 +484,8 @@ fn raw_sql_is_checked_and_runs_read_only() {
                 connection_id: ID(),
                 sql: sql.into(),
                 max_rows: None,
+                output: Default::default(),
+                lob_files: false,
             },
         )
     };
@@ -526,6 +531,7 @@ fn the_database_layer_itself_refuses_writes_and_enforces_the_timeout() {
                 binds: vec![],
                 max_rows: 10,
                 timeout_secs,
+                lobs: Default::default(),
             },
         )
     };
@@ -579,6 +585,7 @@ fn compare_and_fix_scripts_work_across_connections_when_both_allow_it() {
         check_columns: None,
         check_comments: None,
         check_indexes: None,
+        output: Default::default(),
     };
     // The target connection has no policy yet: the whole call is refused.
     assert!(matches!(
@@ -610,6 +617,7 @@ fn compare_and_fix_scripts_work_across_connections_when_both_allow_it() {
                 check_columns: None,
                 check_comments: None,
                 check_indexes: None,
+                output: Default::default(),
             },
         )
         .unwrap();
@@ -706,6 +714,160 @@ fn apply_ddl_deploys_a_view_only_after_the_user_approves_it() {
     pg::execute_script(
         &pg::source_connection(),
         "DROP VIEW IF EXISTS mcp_it_deployed;",
+    );
+    assert!(env.audit.verify().unwrap().ok);
+}
+
+#[test]
+#[ignore = "requires the Postgres containers from docker/docker-compose.yml"]
+fn large_results_can_go_to_files_that_are_grepped_through_the_gateway() {
+    let env = env();
+    set(
+        &env,
+        McpPolicy {
+            data_access: McpDataAccess::Allowlist,
+            allow_raw_sql: true,
+            table_rules: vec![rule(McpRuleAction::Allow, "employees", "")],
+            ..base(ID())
+        },
+    );
+
+    let ddl = env
+        .gateway
+        .get_object_ddl(
+            CLIENT,
+            GetObjectDdlArgs {
+                connection_id: ID(),
+                object_name: "employees".into(),
+                object_type: "TABLE".into(),
+                output: OutputMode::File,
+            },
+        )
+        .unwrap();
+    assert_eq!(ddl["output"], "file");
+    let path = std::path::PathBuf::from(ddl["file"]["path"].as_str().unwrap());
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert!(on_disk.to_lowercase().contains("create table"));
+    assert!(
+        ddl["outline"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "TABLE")
+    );
+
+    let found = env
+        .gateway
+        .grep_result(
+            CLIENT,
+            GrepResultArgs {
+                id: ddl["file"]["id"].as_str().unwrap().into(),
+                pattern: "create table".into(),
+                regex: false,
+                ignore_case: None,
+                context: Some(0),
+                max_matches: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(found["match_count"], 1);
+
+    let rows = env
+        .gateway
+        .run_query(
+            CLIENT,
+            RunQueryArgs {
+                connection_id: ID(),
+                sql: "SELECT * FROM employees".into(),
+                max_rows: None,
+                output: OutputMode::File,
+                lob_files: false,
+            },
+        )
+        .unwrap();
+    let rows_path = std::path::PathBuf::from(rows["file"]["path"].as_str().unwrap());
+    let lines = std::fs::read_to_string(rows_path).unwrap().lines().count();
+    assert_eq!(lines as u64, rows["row_count"].as_u64().unwrap() + 1);
+
+    let read = env
+        .gateway
+        .read_result(
+            CLIENT,
+            ReadResultArgs {
+                id: rows["file"]["id"].as_str().unwrap().into(),
+                start_line: Some(1),
+                max_lines: Some(1),
+            },
+        )
+        .unwrap();
+    assert!(
+        read["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("1: {\"columns\"")
+    );
+
+    // The gateway owns its result folder and removes it when dropped.
+    let dir = path.parent().unwrap().to_path_buf();
+    drop(env);
+    assert!(!dir.exists());
+}
+
+#[test]
+#[ignore = "requires the Postgres containers from docker/docker-compose.yml"]
+fn lob_cells_are_written_to_typed_files_through_query_table() {
+    let env = env();
+    set(
+        &env,
+        McpPolicy {
+            data_access: McpDataAccess::Allowlist,
+            table_rules: vec![rule(McpRuleAction::Allow, "lob_samples", "")],
+            ..base(ID())
+        },
+    );
+    let out = env
+        .gateway
+        .query_table(
+            CLIENT,
+            QueryTableArgs {
+                columns: Some(vec!["sample_id".into(), "format".into(), "payload".into()]),
+                order_by: Some(vec![
+                    serde_json::from_value(json!({ "column": "sample_id" })).unwrap(),
+                ]),
+                lob_files: true,
+                ..query("lob_samples")
+            },
+        )
+        .unwrap();
+
+    let files = out["lob_files"].as_array().unwrap();
+    assert_eq!(files.len(), 9, "{out}");
+    let by_format: std::collections::HashMap<&str, &serde_json::Value> = out["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[1].as_str().unwrap())
+        .zip(files.iter())
+        .collect();
+    for (format, ext) in [
+        ("png", "png"),
+        ("pdf", "pdf"),
+        ("docx", "docx"),
+        ("json", "json"),
+    ] {
+        let file = by_format[format];
+        assert_eq!(file["format"], ext);
+        let path = std::path::PathBuf::from(file["path"].as_str().unwrap());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            file["bytes"].as_u64().unwrap()
+        );
+    }
+    assert!(
+        out["rows"][0][2]
+            .as_str()
+            .unwrap()
+            .starts_with("<BYTEA file r_")
     );
     assert!(env.audit.verify().unwrap().ok);
 }

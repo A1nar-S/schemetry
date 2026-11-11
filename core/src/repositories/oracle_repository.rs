@@ -12,8 +12,8 @@ use crate::models::{
     MatchType, ObjectError, ObjectErrorList, SchemaObject, TableDdls, TableFilterRule,
 };
 use crate::repositories::db_repository::{
-    ApplyDdlRequest, ApplyDdlResult, DbRepository, DdlCompileError, LobCell, LobSource,
-    QueryOutput, ReadOnlyQuery, ReadOnlyResult,
+    ApplyDdlRequest, ApplyDdlResult, DbRepository, DdlCompileError, LobBudget, LobCell, LobSource,
+    MCP_CELL_CAP, QueryOutput, ReadOnlyQuery, ReadOnlyResult,
 };
 use crate::repositories::filter_rule_repository::{ParamStyle, build_predicate};
 use crate::services::cancel::{checkpoint, on_cancel};
@@ -428,7 +428,7 @@ impl DbRepository for DbOracleRepository {
                 .build()
                 .and_then(|stmt| stmt.into_result_set::<Row>(&binds))
                 .map_err(|e| anyhow!(e.to_string()))?;
-            let (columns, kinds) = {
+            let (columns, kinds, types) = {
                 let infos = result_set.column_info();
                 (
                     infos
@@ -439,10 +439,15 @@ impl DbRepository for DbOracleRepository {
                         .iter()
                         .map(|c| cell_kind(c.oracle_type()))
                         .collect::<Vec<_>>(),
+                    infos
+                        .iter()
+                        .map(|c| c.oracle_type().clone())
+                        .collect::<Vec<_>>(),
                 )
             };
 
             let cap = request.max_rows as usize;
+            let mut budget = LobBudget::new(request.lobs);
             let mut rows = Vec::new();
             let mut truncated = false;
             for row_result in result_set {
@@ -451,21 +456,31 @@ impl DbRepository for DbOracleRepository {
                     break;
                 }
                 let row = row_result.map_err(|e| anyhow!(e.to_string()))?;
-                let values = (0..columns.len())
-                    .map(|i| {
-                        if kinds[i].is_lob() {
-                            Some(kinds[i].placeholder().to_string())
-                        } else {
-                            read_cell(&row, i, kinds[i]).map(|v| cap_chars(v, MCP_CELL_CAP))
+                let row_index = rows.len();
+                let mut values = Vec::with_capacity(columns.len());
+                for i in 0..columns.len() {
+                    if kinds[i].is_lob() {
+                        if let Some(budget) = budget.as_mut() {
+                            capture_lob(&row, i, &types[i], row_index, budget)?;
                         }
-                    })
-                    .collect();
+                        values.push(Some(kinds[i].placeholder().to_string()));
+                        continue;
+                    }
+                    let value = read_cell(&row, i, kinds[i]);
+                    if let (Some(budget), Some(text)) = (budget.as_mut(), value.as_ref())
+                        && text.chars().count() > MCP_CELL_CAP
+                    {
+                        budget.record(row_index, i, "TEXT", false, text.as_bytes().to_vec());
+                    }
+                    values.push(value.map(|v| cap_chars(v, MCP_CELL_CAP)));
+                }
                 rows.push(values);
             }
             Ok(ReadOnlyResult {
                 columns,
                 rows,
                 truncated,
+                lobs: budget.map(|b| b.captured).unwrap_or_default(),
             })
         })();
 
@@ -1878,9 +1893,6 @@ fn cell_kind(oracle_type: &OracleType) -> CellKind {
 /// memory; longer values are truncated. Excel further clips cells at 32,767 chars.
 const MATERIALIZE_TEXT_CAP: usize = 1_000_000;
 
-/// Per-cell cap for results returned to MCP agents.
-const MCP_CELL_CAP: usize = 4_000;
-
 impl CellKind {
     fn is_lob(self) -> bool {
         matches!(self, CellKind::TextLob | CellKind::BinaryLob)
@@ -1939,6 +1951,48 @@ impl OraLob {
             OraLob::Bytes(b) => out.write_all(b).map(|_| b.len() as u64).map_err(err),
         }
     }
+}
+
+/// Reads a LOB cell whole for an MCP file, within the query's budget. A cell over the
+/// allowance is read only one byte past it, so a huge BLOB is never pulled in full.
+fn capture_lob(
+    row: &Row,
+    i: usize,
+    oracle_type: &OracleType,
+    row_index: usize,
+    budget: &mut LobBudget,
+) -> Result<()> {
+    let allowed = match budget.allowance() {
+        Ok(allowed) => allowed,
+        Err(reason) => {
+            budget.skip(row_index, i, reason);
+            return Ok(());
+        }
+    };
+    let Some(cell) = take_lob_cell(row, i, oracle_type)? else {
+        return Ok(());
+    };
+    let limit = allowed.saturating_add(1);
+    let read = match &cell {
+        OraLob::Blob(b) => read_bytes_capped(b.clone(), limit),
+        OraLob::Clob(c) => read_bytes_capped(c.clone(), limit),
+        OraLob::Nclob(c) => read_bytes_capped(c.clone(), limit),
+        OraLob::Text(s) => Ok(s.as_bytes()[..s.len().min(limit)].to_vec()),
+        OraLob::Bytes(b) => Ok(b[..b.len().min(limit)].to_vec()),
+    };
+    let (source_type, binary) = match oracle_type {
+        OracleType::BLOB => ("BLOB", true),
+        OracleType::BFILE => ("BFILE", true),
+        OracleType::LongRaw => ("LONG RAW", true),
+        OracleType::NCLOB => ("NCLOB", false),
+        OracleType::Long => ("LONG", false),
+        _ => ("CLOB", false),
+    };
+    match read {
+        Ok(bytes) => budget.record(row_index, i, source_type, binary, bytes),
+        Err(e) => budget.skip(row_index, i, format!("could not be read: {e}")),
+    }
+    Ok(())
 }
 
 /// Takes a LOB-column cell out of a row fetched in `lob_locator()` mode.

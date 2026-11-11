@@ -13,7 +13,9 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::models::{ConnectionRecord, DbType, Discrepancy, McpOutcome, McpPolicy, SchemaObject};
-use crate::repositories::db_repository::{ApplyDdlRequest, ReadOnlyQuery, ReadOnlyResult};
+use crate::repositories::db_repository::{
+    ApplyDdlRequest, LobCapture, ReadOnlyQuery, ReadOnlyResult,
+};
 use crate::services::compare::compare_tables_across_servers;
 use crate::services::connection_catalog::ConnectionCatalogService;
 use crate::services::ddl_compare::{self, FileAccessError};
@@ -28,6 +30,8 @@ use crate::services::mcp_audit_target::{self, TARGET_KEY};
 use crate::services::mcp_ddl_guard;
 use crate::services::mcp_policy::{ENABLE_HINT, McpPolicyService, McpTool};
 use crate::services::mcp_query_builder::{self, Filter, OrderBy, TableQuery};
+pub use crate::services::mcp_spill::OutputMode;
+use crate::services::mcp_spill::{self, SpillEntry, SpillFormat, SpillMeta, SpillStore};
 use crate::services::mcp_sql_guard;
 use crate::services::query::QueryService;
 use crate::services::save_summary;
@@ -121,6 +125,10 @@ tool_args! {
         /// e.g. TABLE, VIEW, PROCEDURE, FUNCTION, PACKAGE (spec only), PACKAGE BODY (body only),
         /// PACKAGE SPEC AND BODY (Oracle: spec then body, each ended by a `/` line), TRIGGER, SEQUENCE, TYPE.
         pub object_type: String,
+        /// `auto` (default): inline when small, otherwise written to a temp file and returned
+        /// as a handle to grep/read. `inline` or `file` force either.
+        #[serde(default)]
+        pub output: OutputMode,
     }
 }
 
@@ -207,6 +215,10 @@ tool_args! {
         /// Report index differences (default false).
         #[serde(default)]
         pub check_indexes: Option<bool>,
+        /// `auto` (default): inline when small, otherwise written to a temp file and returned
+        /// as a handle to grep/read. `inline` or `file` force either.
+        #[serde(default)]
+        pub output: OutputMode,
     }
 }
 
@@ -225,6 +237,10 @@ tool_args! {
         pub check_comments: Option<bool>,
         #[serde(default)]
         pub check_indexes: Option<bool>,
+        /// `auto` (default): inline when small, otherwise written to a temp file and returned
+        /// as a handle to grep/read. `inline` or `file` force either.
+        #[serde(default)]
+        pub output: OutputMode,
     }
 }
 
@@ -238,6 +254,10 @@ tool_args! {
         /// root + schema name, or that schema's folder override), e.g. `code/app/ORDERS.sql`.
         /// Absolute paths and `..` are refused. The file is read by Schemetry itself.
         pub file_path: String,
+        /// `auto` (default): inline when small, otherwise written to a temp file and returned
+        /// as a handle to grep/read. `inline` or `file` force either.
+        #[serde(default)]
+        pub output: OutputMode,
     }
 }
 
@@ -256,6 +276,15 @@ tool_args! {
         /// Row limit; capped by the connection's `max_rows`.
         #[serde(default)]
         pub limit: Option<u32>,
+        /// `auto` (default): inline when small, otherwise written to a temp file and returned
+        /// as a handle to grep/read. `inline` or `file` force either.
+        #[serde(default)]
+        pub output: OutputMode,
+        /// Write each LOB cell (BLOB, CLOB, bytea, …) and each cell over 4,000 characters
+        /// whole to its own temp file, typed by content (pdf, png, docx, json, …), and list
+        /// them in `lob_files`. Default false: such cells show as `<BLOB>`/`<CLOB>` or cut text.
+        #[serde(default)]
+        pub lob_files: bool,
     }
 }
 
@@ -267,6 +296,15 @@ tool_args! {
         /// Row limit; capped by the connection's `max_rows`.
         #[serde(default)]
         pub max_rows: Option<u32>,
+        /// `auto` (default): inline when small, otherwise written to a temp file and returned
+        /// as a handle to grep/read. `inline` or `file` force either.
+        #[serde(default)]
+        pub output: OutputMode,
+        /// Write each LOB cell (BLOB, CLOB, bytea, …) and each cell over 4,000 characters
+        /// whole to its own temp file, typed by content (pdf, png, docx, json, …), and list
+        /// them in `lob_files`. Default false: such cells show as `<BLOB>`/`<CLOB>` or cut text.
+        #[serde(default)]
+        pub lob_files: bool,
     }
 }
 
@@ -285,6 +323,43 @@ tool_args! {
         pub file: Option<String>,
     }
 }
+
+tool_args! {
+    pub struct ReadResultArgs {
+        /// `file.id` from a tool response that was written to a file.
+        pub id: String,
+        /// First line to return, 1-based (default 1).
+        #[serde(default)]
+        pub start_line: Option<u32>,
+        /// Lines to return (default 200, at most 2000; responses stop at 64 KB).
+        #[serde(default)]
+        pub max_lines: Option<u32>,
+    }
+}
+
+tool_args! {
+    pub struct GrepResultArgs {
+        /// `file.id` from a tool response that was written to a file.
+        pub id: String,
+        /// Text to look for; a literal string unless `regex` is true.
+        pub pattern: String,
+        /// Treat `pattern` as a regular expression (default false).
+        #[serde(default)]
+        pub regex: bool,
+        /// Ignore ASCII letter case (default true).
+        #[serde(default)]
+        pub ignore_case: Option<bool>,
+        /// Lines of context before and after each match (default 2, at most 10).
+        #[serde(default)]
+        pub context: Option<u32>,
+        /// Matching lines to return (default 50, at most 500); every match is still counted.
+        #[serde(default)]
+        pub max_matches: Option<u32>,
+    }
+}
+
+pub const READ_RESULT_TOOL: &str = "read_result";
+pub const GREP_RESULT_TOOL: &str = "grep_result";
 
 /// Per-call state the audit entry is built from.
 #[derive(Default)]
@@ -336,6 +411,30 @@ pub struct McpGateway {
     audit_svc: Arc<McpAuditService>,
     approvals: Arc<McpApprovalService>,
     settings: Arc<dyn GatewaySettings>,
+    /// Large results, written to temp files.
+    spill: Arc<SpillStore>,
+}
+
+/// Told to the agent whenever a result went to a file.
+const FILE_HINT: &str = "The result was written to a file instead of being returned inline. Grep or read `file.path` with your own file tools, or call grep_result / read_result with `file.id`; prefer searching over reading it whole.";
+/// Rows / discrepancies shown inline next to a result file.
+const FILE_SAMPLE_ITEMS: usize = 20;
+/// Diff lines kept when the diff goes to a file.
+const MAX_FILE_DIFF_LINES: usize = 100_000;
+/// What one `lob_files` call may read; LOB bytes are held in memory until written.
+const LOB_FILE_CAPTURE: LobCapture = LobCapture::On {
+    max_cells: 50,
+    max_cell_bytes: 32 * 1024 * 1024,
+    max_total_bytes: 64 * 1024 * 1024,
+};
+const LOB_TEXT_PREVIEW_CHARS: usize = 200;
+
+fn lob_capture(wanted: bool) -> LobCapture {
+    if wanted {
+        LOB_FILE_CAPTURE
+    } else {
+        LobCapture::Off
+    }
 }
 
 /// The schema a connection's objects live in.
@@ -539,7 +638,171 @@ impl McpGateway {
             audit_svc,
             approvals,
             settings,
+            spill: Arc::new(SpillStore::in_temp_dir()),
         }
+    }
+
+    /// Uses `store` for result files instead of the OS temp folder.
+    pub fn with_spill_store(mut self, store: Arc<SpillStore>) -> Self {
+        self.spill = store;
+        self
+    }
+
+    /// Writes a result file and records it (never its content) on the audit entry.
+    fn spill(
+        &self,
+        ctx: &mut Ctx,
+        meta: SpillMeta<'_>,
+        bytes: &[u8],
+    ) -> Result<SpillEntry, ToolError> {
+        let meta = SpillMeta {
+            target: ctx.target.clone(),
+            ..meta
+        };
+        let entry = self.spill.write(meta, bytes).map_err(ToolError::Failed)?;
+        note(ctx, "result_file", entry.audit_note());
+        Ok(entry)
+    }
+
+    /// The fields every file response carries.
+    fn file_fields(&self, entry: &SpillEntry) -> Map<String, Value> {
+        let mut out = Map::new();
+        out.insert("output".into(), json!("file"));
+        out.insert("file".into(), entry.handle(self.spill.ttl()));
+        out.insert("hint".into(), json!(FILE_HINT));
+        out
+    }
+
+    /// File fields plus a text preview and, for SQL, an outline.
+    fn text_file_fields(&self, entry: &SpillEntry, text: &str) -> Map<String, Value> {
+        let mut out = self.file_fields(entry);
+        out.insert("preview".into(), json!(mcp_spill::preview(text)));
+        if entry.format == SpillFormat::Sql {
+            let (outline, cut) = mcp_spill::outline_sql(text);
+            out.insert("outline".into(), json!(outline));
+            if cut {
+                out.insert("outline_truncated".into(), json!(true));
+            }
+        }
+        out
+    }
+
+    /// Writes each captured LOB cell to its own result file and points the cell at it
+    /// (`<BLOB file r_…>`). Returns the `lob_files` and `lob_files_skipped` lists; the audit
+    /// entry gets each file's id, size, type and sha256, never content.
+    fn write_lob_files(
+        &self,
+        ctx: &mut Ctx,
+        tool: McpTool,
+        connection_id: i64,
+        label: Option<&str>,
+        result: &mut ReadOnlyResult,
+    ) -> Result<(Vec<Value>, Vec<Value>), ToolError> {
+        let captured = std::mem::take(&mut result.lobs);
+        let column = |col: usize| result.columns.get(col).cloned().unwrap_or_default();
+        let mut files = Vec::new();
+        let mut audit = Vec::new();
+        for cell in captured.cells {
+            let column_name = column(cell.col);
+            let ty = mcp_spill::sniff(&cell.bytes);
+            let file_label = match label {
+                Some(label) => format!("{label}-{column_name}-row{}", cell.row + 1),
+                None => format!("{column_name}-row{}", cell.row + 1),
+            };
+            let entry = self
+                .spill
+                .write(
+                    SpillMeta {
+                        connection_ids: vec![connection_id],
+                        tool,
+                        format: SpillFormat::Lob(ty),
+                        label: Some(&file_label),
+                        target: ctx.target.clone(),
+                    },
+                    &cell.bytes,
+                )
+                .map_err(ToolError::Failed)?;
+            if let Some(slot) = result
+                .rows
+                .get_mut(cell.row)
+                .and_then(|row| row.get_mut(cell.col))
+            {
+                *slot = Some(format!("<{} file {}>", cell.source_type, entry.id));
+            }
+            let mut file = Map::new();
+            file.insert("row_index".into(), json!(cell.row));
+            file.insert("column".into(), json!(column_name));
+            file.insert("source_type".into(), json!(cell.source_type));
+            if let Value::Object(handle) = entry.handle(self.spill.ttl()) {
+                file.extend(handle);
+            }
+            if !ty.binary {
+                let text = String::from_utf8_lossy(&cell.bytes);
+                file.insert(
+                    "preview".into(),
+                    json!(truncate_chars(&text, LOB_TEXT_PREVIEW_CHARS)),
+                );
+            }
+            files.push(Value::Object(file));
+            let mut note = entry.audit_note();
+            note["row_index"] = json!(cell.row);
+            note["column"] = json!(column_name);
+            note["mime"] = json!(ty.mime);
+            audit.push(note);
+        }
+        let skipped: Vec<Value> = captured
+            .skipped
+            .iter()
+            .map(|s| json!({ "row_index": s.row, "column": column(s.col), "reason": s.reason }))
+            .collect();
+        if !audit.is_empty() {
+            note(ctx, "lob_files", Value::Array(audit));
+        }
+        if !skipped.is_empty() {
+            note(ctx, "lob_files_skipped", json!(skipped.len()));
+        }
+        Ok((files, skipped))
+    }
+
+    /// Query rows: inline as before, or JSONL in a file when large or asked for.
+    fn deliver_rows(
+        &self,
+        ctx: &mut Ctx,
+        mode: OutputMode,
+        meta: SpillMeta<'_>,
+        result: ReadOnlyResult,
+        limit: u32,
+    ) -> Result<Value, ToolError> {
+        if mode == OutputMode::Inline {
+            return Ok(rows_to_json(result, limit));
+        }
+        let (jsonl, written) = rows_to_jsonl(&result);
+        if !mode.spills(jsonl.len()) {
+            return Ok(rows_to_json(result, limit));
+        }
+        let entry = self.spill(ctx, meta, jsonl.as_bytes())?;
+        let mut out = self.file_fields(&entry);
+        let truncated = result.truncated || written < result.rows.len();
+        let shown = FILE_SAMPLE_ITEMS.min(written);
+        let sample: Vec<Value> = result
+            .rows
+            .into_iter()
+            .take(shown)
+            .map(|row| {
+                Value::Array(
+                    row.into_iter()
+                        .map(|c| c.map_or(Value::Null, Value::String))
+                        .collect(),
+                )
+            })
+            .collect();
+        out.insert("columns".into(), json!(result.columns));
+        out.insert("row_count".into(), json!(written));
+        out.insert("rows".into(), Value::Array(sample));
+        out.insert("rows_shown".into(), json!(shown));
+        out.insert("truncated".into(), json!(truncated));
+        out.insert("row_limit".into(), json!(limit));
+        Ok(Value::Object(out))
     }
 
     // ── plumbing ────────────────────────────────────────────────────────────────
@@ -775,8 +1038,30 @@ impl McpGateway {
                     }
                 };
                 ctx.row_count = Some(1);
-                let mut result =
-                    json!({ "object_name": name, "object_type": object_type, "ddl": ddl });
+                let mut result = json!({ "object_name": name, "object_type": object_type });
+                if args.output.spills(ddl.len()) {
+                    let entry = self.spill(
+                        ctx,
+                        SpillMeta {
+                            connection_ids: vec![conn.id],
+                            tool: McpTool::GetObjectDdl,
+                            format: SpillFormat::Sql,
+                            label: Some(name),
+                            target: None,
+                        },
+                        ddl.as_bytes(),
+                    )?;
+                    if let Value::Object(map) = &mut result {
+                        map.extend(self.text_file_fields(&entry, &ddl));
+                    }
+                } else if ddl.len() > MAX_DDL_BYTES {
+                    return denied(format!(
+                        "The DDL is {} bytes, over the 1 MB inline limit; call again with output \"file\".",
+                        ddl.len()
+                    ));
+                } else {
+                    result["ddl"] = json!(ddl);
+                }
                 if !includes.is_empty() {
                     result["includes"] = json!(includes);
                 }
@@ -1236,21 +1521,64 @@ impl McpGateway {
                 )?;
                 let total = cmp.discrepancies.len();
                 ctx.row_count = Some(total as i64);
+                let as_json = |d: &Discrepancy| {
+                    json!({
+                        "difference": d.difference,
+                        "element": d.element,
+                        "table": d.table_name,
+                        "column": d.column_name,
+                        "server_id": d.server_id,
+                        "server": d.server_name,
+                        "details": d.details,
+                    })
+                };
+                if args.output != OutputMode::Inline {
+                    let mut jsonl = String::new();
+                    for d in &cmp.discrepancies {
+                        jsonl.push_str(&as_json(d).to_string());
+                        jsonl.push('\n');
+                    }
+                    if args.output.spills(jsonl.len()) {
+                        let mut connection_ids = vec![args.source_id];
+                        connection_ids.extend(&args.target_ids);
+                        let entry = self.spill(
+                            ctx,
+                            SpillMeta {
+                                connection_ids,
+                                tool: McpTool::CompareSchemas,
+                                format: SpillFormat::Jsonl,
+                                label: None,
+                                target: None,
+                            },
+                            jsonl.as_bytes(),
+                        )?;
+                        let mut out = self.file_fields(&entry);
+                        out.insert(
+                            "discrepancies".into(),
+                            json!(
+                                cmp.discrepancies
+                                    .iter()
+                                    .take(FILE_SAMPLE_ITEMS)
+                                    .map(as_json)
+                                    .collect::<Vec<_>>()
+                            ),
+                        );
+                        out.insert(
+                            "discrepancies_shown".into(),
+                            json!(FILE_SAMPLE_ITEMS.min(total)),
+                        );
+                        out.insert("count".into(), json!(total));
+                        out.insert("truncated".into(), json!(false));
+                        out.insert("hidden_by_policy".into(), json!(cmp.hidden));
+                        out.insert("summary".into(), discrepancy_summary(&cmp.discrepancies));
+                        return Ok(Value::Object(out));
+                    }
+                }
                 let listed: Vec<Value> = cmp
                     .discrepancies
                     .iter()
                     .take(MAX_DISCREPANCIES)
-                    .map(|d| {
-                        json!({
-                            "difference": d.difference,
-                            "element": d.element,
-                            "table": d.table_name,
-                            "column": d.column_name,
-                            "server_id": d.server_id,
-                            "server": d.server_name,
-                            "details": d.details,
-                        })
-                    })
+                    .map(as_json)
                     .collect();
                 Ok(json!({
                     "discrepancies": listed,
@@ -1358,6 +1686,29 @@ impl McpGateway {
                     &dialects,
                 )?;
 
+                ctx.row_count = Some(result.generated_count as i64);
+                if args.output.spills(result.script.len()) {
+                    let mut connection_ids = vec![args.source_id];
+                    connection_ids.extend(&args.target_ids);
+                    let entry = self.spill(
+                        ctx,
+                        SpillMeta {
+                            connection_ids,
+                            tool: McpTool::GenerateFixScript,
+                            format: SpillFormat::Sql,
+                            label: None,
+                            target: None,
+                        },
+                        result.script.as_bytes(),
+                    )?;
+                    let mut out = self.text_file_fields(&entry, &result.script);
+                    out.insert("generated_count".into(), json!(result.generated_count));
+                    out.insert("skipped_count".into(), json!(result.skipped_count));
+                    out.insert("truncated".into(), json!(false));
+                    out.insert("hidden_by_policy".into(), json!(cmp.hidden));
+                    return Ok(Value::Object(out));
+                }
+
                 let truncated = result.script.len() > MAX_SCRIPT_BYTES;
                 let script = if truncated {
                     let mut end = MAX_SCRIPT_BYTES;
@@ -1449,13 +1800,14 @@ impl McpGateway {
 
                 let server = ddl_compare::normalize_ddl(&server_ddl, conn.db_type, &schema);
                 let file = ddl_compare::normalize_ddl(&file_text, conn.db_type, &schema);
-                let Some(diff) = ddl_compare::unified_diff(
-                    &server,
-                    &file,
-                    "server",
-                    "file",
-                    MAX_DIFF_OUTPUT_LINES,
-                ) else {
+                let max_lines = if args.output == OutputMode::Inline {
+                    MAX_DIFF_OUTPUT_LINES
+                } else {
+                    MAX_FILE_DIFF_LINES
+                };
+                let Some(diff) =
+                    ddl_compare::unified_diff(&server, &file, "server", "file", max_lines)
+                else {
                     ctx.details = Some(json!({ "result": "identical" }));
                     return Ok(json!({ "identical": true }));
                 };
@@ -1467,6 +1819,31 @@ impl McpGateway {
                     "diff_removed": diff.removed,
                     "diff_lines": diff.output_lines,
                 }));
+                let note = "'-' lines come from the server, '+' lines from the file; \
+                            both sides are normalised first (line endings, trailing \
+                            whitespace, and for Oracle the CREATE header).";
+                if args.output.spills(diff.unified.len()) {
+                    let entry = self.spill(
+                        ctx,
+                        SpillMeta {
+                            connection_ids: vec![conn.id],
+                            tool: McpTool::CompareObject,
+                            format: SpillFormat::Diff,
+                            label: Some(name),
+                            target: None,
+                        },
+                        diff.unified.as_bytes(),
+                    )?;
+                    let mut out = self.text_file_fields(&entry, &diff.unified);
+                    out.insert("identical".into(), json!(false));
+                    out.insert("added".into(), json!(diff.added));
+                    out.insert("removed".into(), json!(diff.removed));
+                    out.insert("hunks".into(), json!(diff.hunks));
+                    out.insert("diff_lines".into(), json!(diff.output_lines));
+                    out.insert("truncated".into(), json!(diff.truncated));
+                    out.insert("note".into(), json!(note));
+                    return Ok(Value::Object(out));
+                }
                 Ok(json!({
                     "identical": false,
                     "diff": diff.unified,
@@ -1475,9 +1852,7 @@ impl McpGateway {
                     "hunks": diff.hunks,
                     "diff_lines": diff.output_lines,
                     "truncated": diff.truncated,
-                    "note": "'-' lines come from the server, '+' lines from the file; \
-                             both sides are normalised first (line endings, trailing \
-                             whitespace, and for Oracle the CREATE header).",
+                    "note": note,
                 }))
             },
         )
@@ -1600,10 +1975,28 @@ impl McpGateway {
                     binds: built.binds,
                     max_rows: limit,
                     timeout_secs: policy.query_timeout_secs,
+                    lobs: lob_capture(args.lob_files),
                 };
-                let result = self.run_readonly(&resolved, &request)?;
+                let mut result = self.run_readonly(&resolved, &request)?;
                 ctx.row_count = Some(result.rows.len() as i64);
-                let mut out = rows_to_json(result, limit);
+                let lobs = self.write_lob_files(
+                    ctx,
+                    McpTool::QueryTable,
+                    conn.id,
+                    Some(&table_name),
+                    &mut result,
+                )?;
+                let meta = SpillMeta {
+                    connection_ids: vec![conn.id],
+                    tool: McpTool::QueryTable,
+                    format: SpillFormat::Jsonl,
+                    label: Some(&table_name),
+                    target: None,
+                };
+                let mut out = self.deliver_rows(ctx, args.output, meta, result, limit)?;
+                if args.lob_files {
+                    attach_lob_files(&mut out, lobs);
+                }
                 note_truncated(ctx, &out);
                 if omitted > 0 {
                     out["omitted_columns"] = json!(omitted);
@@ -1664,17 +2057,110 @@ impl McpGateway {
                     binds: Vec::new(),
                     max_rows: limit,
                     timeout_secs: policy.query_timeout_secs,
+                    lobs: lob_capture(args.lob_files),
                 };
-                let result = self.run_readonly(&resolved, &request)?;
+                let mut result = self.run_readonly(&resolved, &request)?;
                 ctx.row_count = Some(result.rows.len() as i64);
-                let out = rows_to_json(result, limit);
                 if let Some(target) = ctx.target.as_mut() {
                     target.insert("limit".into(), json!(limit));
+                }
+                let lobs =
+                    self.write_lob_files(ctx, McpTool::RunQuery, conn.id, None, &mut result)?;
+                let meta = SpillMeta {
+                    connection_ids: vec![conn.id],
+                    tool: McpTool::RunQuery,
+                    format: SpillFormat::Jsonl,
+                    label: None,
+                    target: None,
+                };
+                let mut out = self.deliver_rows(ctx, args.output, meta, result, limit)?;
+                if args.lob_files {
+                    attach_lob_files(&mut out, lobs);
                 }
                 note_truncated(ctx, &out);
                 Ok(out)
             },
         )
+    }
+
+    /// Reads a range of lines from a result file.
+    pub fn read_result(&self, client: &str, args: ReadResultArgs) -> ToolResult {
+        let arguments = serde_json::to_value(&args).unwrap_or_default();
+        self.audited(client, READ_RESULT_TOOL, None, arguments, |ctx| {
+            let entry = self.open_result(ctx, &args.id)?;
+            let start = args.start_line.unwrap_or(1).max(1) as usize;
+            let max = args.max_lines.unwrap_or(200).clamp(1, 2_000) as usize;
+            let out = mcp_spill::read_lines(&entry.path, start, max, entry.lines)
+                .map_err(ToolError::Failed)?;
+            ctx.row_count = Some(out.returned as i64);
+            Ok(json!({
+                "id": entry.id,
+                "text": out.text,
+                "start_line": out.start_line,
+                "end_line": out.end_line,
+                "total_lines": entry.lines,
+                "more": out.more,
+            }))
+        })
+    }
+
+    /// Searches a result file, `grep -n -C` style.
+    pub fn grep_result(&self, client: &str, args: GrepResultArgs) -> ToolResult {
+        let arguments = serde_json::to_value(&args).unwrap_or_default();
+        self.audited(client, GREP_RESULT_TOOL, None, arguments, |ctx| {
+            let entry = self.open_result(ctx, &args.id)?;
+            let matcher = mcp_spill::build_matcher(
+                &args.pattern,
+                args.regex,
+                args.ignore_case.unwrap_or(true),
+            )
+            .map_err(ToolError::Denied)?;
+            let context = args.context.unwrap_or(2).min(10) as usize;
+            let max = args.max_matches.unwrap_or(50).clamp(1, 500) as usize;
+            let out =
+                mcp_spill::grep(&entry.path, &matcher, context, max).map_err(ToolError::Failed)?;
+            ctx.row_count = Some(out.returned as i64);
+            note(ctx, "match_count", json!(out.match_count));
+            Ok(json!({
+                "id": entry.id,
+                "match_count": out.match_count,
+                "returned": out.returned,
+                "truncated": out.truncated,
+                "hunks": out.hunks,
+                "total_lines": entry.lines,
+            }))
+        })
+    }
+
+    /// Finds a result file and rechecks, for every connection it came from, the policy of
+    /// the tool that produced it: revoking that tool also stops reads of its files.
+    fn open_result(&self, ctx: &mut Ctx, id: &str) -> Result<SpillEntry, ToolError> {
+        let id = id.trim();
+        let Some(entry) = self.spill.get(id) else {
+            return denied(format!(
+                "Unknown or expired result id {:?}; run the original tool again.",
+                truncate_chars(id, 40)
+            ));
+        };
+        let mut target = entry.target.clone().unwrap_or_default();
+        target.insert("result_id".into(), json!(entry.id));
+        target.insert("source_tool".into(), json!(entry.tool.name()));
+        ctx.target = Some(target);
+        // The primary connection last, so the audit entry is filed under it.
+        for &connection_id in entry.connection_ids.iter().skip(1) {
+            self.resolve(ctx, connection_id, entry.tool)?;
+        }
+        if let Some(&primary) = entry.connection_ids.first() {
+            self.resolve(ctx, primary, entry.tool)?;
+        }
+        if entry.format.binary() {
+            return denied(format!(
+                "Result {} is a binary file ({}); open its path with your own tools.",
+                entry.id,
+                entry.format.mime()
+            ));
+        }
+        Ok(entry)
     }
 
     /// Deploys one validated `CREATE` statement (or a package spec + body) to the
@@ -1889,6 +2375,50 @@ fn actual_table_name(table: &str, db_type: DbType) -> String {
     }
 }
 
+/// Adds the LOB file lists to a query response.
+fn attach_lob_files(out: &mut Value, (files, skipped): (Vec<Value>, Vec<Value>)) {
+    let Value::Object(map) = out else {
+        return;
+    };
+    map.insert("lob_files".into(), Value::Array(files));
+    if !skipped.is_empty() {
+        map.insert("lob_files_skipped".into(), Value::Array(skipped));
+    }
+    map.insert(
+        "lob_hint".into(),
+        json!(
+            "LOB cells read `<TYPE file r_…>` and are listed in lob_files with their path. Open \
+             binary files (images, PDF, Office) with your own tools; text ones can also be read \
+             with grep_result / read_result."
+        ),
+    );
+}
+
+/// Counts per kind of difference and for the tables with the most discrepancies, so an
+/// agent can see the shape of a long list without reading the file.
+fn discrepancy_summary(discrepancies: &[Discrepancy]) -> Value {
+    const TOP_TABLES: usize = 50;
+    let mut by_difference: std::collections::BTreeMap<&str, usize> = Default::default();
+    let mut by_table: HashMap<&str, usize> = HashMap::new();
+    for d in discrepancies {
+        *by_difference.entry(d.difference.as_str()).or_default() += 1;
+        *by_table.entry(d.table_name.as_str()).or_default() += 1;
+    }
+    let mut tables: Vec<(&str, usize)> = by_table.into_iter().collect();
+    tables.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    let table_count = tables.len();
+    let top: Vec<Value> = tables
+        .into_iter()
+        .take(TOP_TABLES)
+        .map(|(table, count)| json!({ "table": table, "count": count }))
+        .collect();
+    json!({
+        "by_difference": by_difference,
+        "table_count": table_count,
+        "top_tables": top,
+    })
+}
+
 /// Records on the audit target whether the result was cut short by the row/byte caps.
 fn note_truncated(ctx: &mut Ctx, output: &Value) {
     if let (Some(target), Some(truncated)) = (ctx.target.as_mut(), output.get("truncated")) {
@@ -1922,6 +2452,30 @@ fn rows_to_json(result: ReadOnlyResult, limit: u32) -> Value {
     out.insert("truncated".into(), json!(truncated));
     out.insert("row_limit".into(), json!(limit));
     Value::Object(out)
+}
+
+/// Rows as JSON Lines: `{"columns":[…]}`, then one JSON array per row, so every row is
+/// one line an agent can grep. Stops before the file cap; returns the text and how many
+/// rows it holds.
+fn rows_to_jsonl(result: &ReadOnlyResult) -> (String, usize) {
+    let mut out = json!({ "columns": result.columns }).to_string();
+    out.push('\n');
+    let mut written = 0usize;
+    for row in &result.rows {
+        let line = Value::Array(
+            row.iter()
+                .map(|c| c.as_ref().map_or(Value::Null, |s| Value::String(s.clone())))
+                .collect(),
+        )
+        .to_string();
+        if out.len() + line.len() + 1 > mcp_spill::MAX_FILE_BYTES {
+            break;
+        }
+        out.push_str(&line);
+        out.push('\n');
+        written += 1;
+    }
+    (out, written)
 }
 
 #[cfg(test)]

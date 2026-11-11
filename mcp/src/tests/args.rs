@@ -45,3 +45,35 @@ fn help_and_version_short_circuit() {
     assert_eq!(parse(&["--version"]), Ok(Command::Version));
     assert_eq!(parse(&["-V"]), Ok(Command::Version));
 }
+
+#[test]
+fn tool_arguments_default_to_auto_output_and_parse_the_result_tools() {
+    use schemetry_core::services::mcp_gateway::{
+        GetObjectDdlArgs, GrepResultArgs, OutputMode, ReadResultArgs,
+    };
+    use serde_json::json;
+
+    let ddl: GetObjectDdlArgs = serde_json::from_value(
+        json!({ "connection_id": 1, "object_name": "X", "object_type": "VIEW" }),
+    )
+    .unwrap();
+    assert_eq!(ddl.output, OutputMode::Auto);
+    let ddl: GetObjectDdlArgs = serde_json::from_value(
+        json!({ "connection_id": 1, "object_name": "X", "object_type": "VIEW", "output": "file" }),
+    )
+    .unwrap();
+    assert_eq!(ddl.output, OutputMode::File);
+    assert!(
+        serde_json::from_value::<GetObjectDdlArgs>(
+            json!({ "connection_id": 1, "object_name": "X", "object_type": "VIEW", "output": "disk" })
+        )
+        .is_err()
+    );
+
+    let grep: GrepResultArgs =
+        serde_json::from_value(json!({ "id": "r_1", "pattern": "ORDERS" })).unwrap();
+    assert!(!grep.regex);
+    assert_eq!(grep.ignore_case, None);
+    let read: ReadResultArgs = serde_json::from_value(json!({ "id": "r_1" })).unwrap();
+    assert_eq!((read.start_line, read.max_lines), (None, None));
+}
