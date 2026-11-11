@@ -82,7 +82,7 @@ services:
       migrate
 
   postgres-source:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: schemetry-postgres-source
     environment:
       POSTGRES_USER: schemetry
@@ -100,7 +100,7 @@ services:
       start_period: 10s
 
   postgres-target:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: schemetry-postgres-target
     environment:
       POSTGRES_USER: schemetry
