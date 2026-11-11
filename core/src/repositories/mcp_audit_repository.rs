@@ -26,6 +26,12 @@ pub trait McpAuditRepository: Send + Sync {
 
 pub const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
+/// Serialises appends within this process. Without it, threads that lose the SQLite write
+/// lock poll for it with sleeps, and on a slow disk one of them can keep losing until its
+/// busy timeout runs out ("database is locked"). Other processes still wait through the
+/// busy timeout.
+static APPEND_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub struct SqliteMcpAuditRepository {
     /// Overrides the app-wide database path (used by tests for isolated files).
     path: Option<std::path::PathBuf>,
@@ -177,6 +183,8 @@ impl McpAuditRepository for SqliteMcpAuditRepository {
         &self,
         build: &mut dyn FnMut(i64, &str) -> McpAuditEntry,
     ) -> Result<McpAuditEntry> {
+        // The guard only orders writers; a panic while holding it leaves nothing to repair.
+        let _serialised = APPEND_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut conn = self.open()?;
         // IMMEDIATE takes the write lock up front so two processes can't read the same tail.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
