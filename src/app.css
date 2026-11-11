@@ -530,6 +530,12 @@
     display: flex; justify-content: space-between; align-items: center;
     margin-bottom: 14px;
   }
+  /* Keep the title and X visible while a tall modal scrolls. */
+  .modal-card > .modal-header {
+    position: sticky; top: 0; z-index: 5;
+    margin: -20px -20px 4px; padding: 20px 20px 10px;
+    background: var(--bg-surface);
+  }
   .modal-footer {
     display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
   }

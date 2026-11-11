@@ -498,8 +498,7 @@
 
 <!-- ── Import JSON modal ── -->
 {#if showImport}
-  <div class="modal-overlay" role="presentation" on:click|self={() => (showImport = false)} on:keydown={(e) => { if (e.key === 'Escape') showImport = false; }}>
-    <div class="modal-card" style="width:580px;">
+  <Modal width="580px" onClose={() => (showImport = false)}>
       <div class="modal-header">
         <span class="modal-title">Import Connections (JSON)</span>
         <button class="btn-secondary" style="padding:2px 8px;" on:click={() => (showImport = false)} title="Close"><Icon name="x" /></button>
@@ -533,8 +532,7 @@
           disabled={$busy || !importJson.trim()}
         >Import</button>
       </div>
-    </div>
-  </div>
+  </Modal>
 {/if}
 
 <!-- ── MCP policy modal ── -->

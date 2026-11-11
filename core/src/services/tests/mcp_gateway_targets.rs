@@ -171,3 +171,74 @@ fn an_oversized_argument_blob_keeps_the_target() {
     assert!(bounded.contains("\"truncated\":true"));
     assert_eq!(summarize(&bounded), "TABLE ORDERS");
 }
+
+#[test]
+fn listing_tools_audit_the_schema_and_type_filter() {
+    let h = harness();
+    h.gateway
+        .list_schema_objects(
+            CLIENT,
+            ListSchemaObjectsArgs {
+                connection_id: 1,
+                object_type: Some("view".into()),
+            },
+        )
+        .unwrap();
+    h.gateway
+        .list_invalid_objects(
+            CLIENT,
+            ListInvalidObjectsArgs {
+                connection_id: 1,
+                object_type: None,
+            },
+        )
+        .unwrap();
+
+    let entries = h.entries();
+    assert_eq!(summarize(&entries[0].arguments), "SCHEMA APP");
+    let first: Value = serde_json::from_str(&entries[0].arguments).unwrap();
+    assert_eq!(first["target"]["object_type_filter"], "VIEW");
+    assert_eq!(summarize(&entries[1].arguments), "SCHEMA APP");
+}
+
+#[test]
+fn object_tools_audit_the_object_even_when_refused() {
+    let h = harness();
+    // The fake has no errors for P_SYNC; only the audit entry matters here.
+    let _ = h.gateway.get_object_errors(
+        CLIENT,
+        GetObjectErrorsArgs {
+            connection_id: 1,
+            object_name: "P_SYNC".into(),
+            object_type: "procedure".into(),
+        },
+    );
+    // compare_object and apply_ddl are off by default, so both calls are refused.
+    let compared = h.gateway.compare_object(
+        CLIENT,
+        CompareObjectArgs {
+            connection_id: 1,
+            object_name: "ORDERS_V".into(),
+            object_type: "VIEW".into(),
+            file_path: "code/ORDERS_V.sql".into(),
+            output: Default::default(),
+        },
+    );
+    let applied = h.gateway.apply_ddl(
+        CLIENT,
+        ApplyDdlArgs {
+            connection_id: 1,
+            object_name: "PKG_ORDERS".into(),
+            object_type: "package  body".into(),
+            ddl: Some("CREATE OR REPLACE PACKAGE BODY PKG_ORDERS AS END;".into()),
+            file: None,
+        },
+    );
+    assert!(matches!(compared, Err(ToolError::Denied(_))));
+    assert!(matches!(applied, Err(ToolError::Denied(_))));
+
+    let entries = h.entries();
+    assert_eq!(summarize(&entries[0].arguments), "PROCEDURE P_SYNC");
+    assert_eq!(summarize(&entries[1].arguments), "VIEW ORDERS_V");
+    assert_eq!(summarize(&entries[2].arguments), "PACKAGE BODY PKG_ORDERS");
+}

@@ -533,6 +533,24 @@ fn target_of(object_type: &str, names: &[String]) -> Map<String, Value> {
     mcp_audit_target::object_target(object_type, names)
 }
 
+/// `SCHEMA <name>` for the listing tools, plus the object-type filter when one was given.
+fn schema_target(conn: &ConnectionRecord, object_type: Option<&str>) -> Map<String, Value> {
+    let mut target = target_of("SCHEMA", &[schema_of(conn)]);
+    if let Some(object_type) = object_type {
+        target.insert("object_type_filter".into(), json!(object_type));
+    }
+    target
+}
+
+/// The target of a call about one named object; set before any check so refusals have it too.
+fn object_arg_target(object_type: &str, object_name: &str) -> Map<String, Value> {
+    let object_type = object_type.split_whitespace().collect::<Vec<_>>().join(" ");
+    target_of(
+        &object_type.to_ascii_uppercase(),
+        &[object_name.trim().to_string()],
+    )
+}
+
 /// Upper bound for a source file copied by `save_migration_script` (inline DDL stays at 1 MB).
 const MAX_SOURCE_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
@@ -954,6 +972,7 @@ impl McpGateway {
                     .as_deref()
                     .map(|t| t.trim().to_ascii_uppercase())
                     .filter(|t| !t.is_empty());
+                ctx.target = Some(schema_target(&conn, wanted.as_deref()));
 
                 let objects: Vec<SchemaObject> = self
                     .diff_svc
@@ -1085,6 +1104,7 @@ impl McpGateway {
                     .as_deref()
                     .map(|t| t.trim().to_ascii_uppercase())
                     .filter(|t| !t.is_empty());
+                ctx.target = Some(schema_target(&conn, wanted.as_deref()));
                 if wanted.as_deref().is_some_and(|t| !valid_object_type(t)) {
                     return denied("object_type is not a recognised object type.");
                 }
@@ -1125,6 +1145,7 @@ impl McpGateway {
             Some(args.connection_id),
             arguments,
             |ctx| {
+                ctx.target = Some(object_arg_target(&args.object_type, &args.object_name));
                 let Resolved { conn, policy } =
                     self.resolve(ctx, args.connection_id, McpTool::GetObjectErrors)?;
                 let name = args.object_name.trim();
@@ -1739,6 +1760,7 @@ impl McpGateway {
             Some(args.connection_id),
             arguments,
             |ctx| {
+                ctx.target = Some(object_arg_target(&args.object_type, &args.object_name));
                 let Resolved { conn, policy } =
                     self.resolve(ctx, args.connection_id, McpTool::CompareObject)?;
                 let name = args.object_name.trim();
@@ -2180,6 +2202,7 @@ impl McpGateway {
             Some(args.connection_id),
             arguments,
             |ctx| {
+                ctx.target = Some(object_arg_target(&args.object_type, &args.object_name));
                 let Resolved { conn, policy } =
                     self.resolve(ctx, args.connection_id, McpTool::ApplyDdl)?;
                 let name = args.object_name.trim();
